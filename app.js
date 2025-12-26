@@ -23,6 +23,7 @@ class PianoHero {
         this.combo = 0;
         this.totalNotes = 0;
         this.hitNotes = 0;
+        this.missedNotes = 0;
         this.isPlaying = false;
         this.isPaused = false;
         this.startTime = 0;
@@ -265,6 +266,8 @@ class PianoHero {
         this.score = 0;
         this.combo = 0;
         this.hitNotes = 0;
+        this.missedNotes = 0;
+        this.totalNotes = 0;
         this.updateScore();
         this.startBtn.disabled = this.notes.length === 0;
         this.pauseBtn.disabled = true;
@@ -364,8 +367,9 @@ class PianoHero {
         this.scoreElement.textContent = this.score;
         this.comboElement.textContent = this.combo;
         
-        const accuracy = this.totalNotes > 0 ? 
-            Math.floor((this.hitNotes / this.totalNotes) * 100) : 0;
+        const processedNotes = this.hitNotes + this.missedNotes;
+        const accuracy = processedNotes > 0 ? 
+            Math.floor((this.hitNotes / processedNotes) * 100) : 0;
         this.accuracyElement.textContent = accuracy;
     }
     
@@ -386,6 +390,7 @@ class PianoHero {
                 // Check if note was missed
                 if (note.y > this.hitZoneY + this.hitTolerance) {
                     note.missed = true;
+                    this.missedNotes++;
                     this.combo = 0;
                     this.updateScore();
                 }
