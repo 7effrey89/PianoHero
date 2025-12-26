@@ -1,0 +1,340 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    font-size: 3em;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    animation: glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes glow {
+    from {
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5), 0 0 10px #fff;
+    }
+    to {
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5), 0 0 20px #fff, 0 0 30px #fff;
+    }
+}
+
+.controls {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.url-input-section {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+#youtubeUrl {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+}
+
+button {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+}
+
+#loadBtn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+#loadBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.status-section {
+    margin-bottom: 15px;
+}
+
+#statusMessage {
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+    overflow: hidden;
+    display: none;
+}
+
+.progress-bar.visible {
+    display: block;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    width: 0%;
+    transition: width 0.3s ease;
+    border-radius: 10px;
+}
+
+.game-controls {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 15px;
+}
+
+.game-controls button {
+    background: #4CAF50;
+    color: white;
+}
+
+.game-controls button:disabled {
+    background: #666;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.game-controls button:not(:disabled):hover {
+    background: #45a049;
+    transform: translateY(-2px);
+}
+
+#pauseBtn {
+    background: #ff9800;
+}
+
+#pauseBtn:not(:disabled):hover {
+    background: #e68900;
+}
+
+#resetBtn {
+    background: #f44336;
+}
+
+#resetBtn:hover {
+    background: #da190b;
+}
+
+.score-section {
+    display: flex;
+    justify-content: space-around;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.score, .combo, .accuracy {
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}
+
+#gameCanvas {
+    position: relative;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 15px;
+    margin-bottom: 20px;
+    height: 500px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+#notesCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+#hitZone {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 80px;
+    background: linear-gradient(to top, rgba(255, 255, 255, 0.3), transparent);
+    pointer-events: none;
+    border-bottom-left-radius: 15px;
+    border-bottom-right-radius: 15px;
+}
+
+#piano {
+    margin-bottom: 20px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.piano-keys {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    height: 200px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.key {
+    position: relative;
+    border: 2px solid #000;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    user-select: none;
+}
+
+.key.white {
+    width: 12.5%;
+    height: 100%;
+    background: linear-gradient(to bottom, #fff 0%, #f0f0f0 100%);
+    color: #333;
+    z-index: 1;
+}
+
+.key.white:hover {
+    background: linear-gradient(to bottom, #f0f0f0 0%, #e0e0e0 100%);
+}
+
+.key.white:active, .key.white.active {
+    background: linear-gradient(to bottom, #4CAF50 0%, #45a049 100%);
+    color: white;
+    transform: translateY(2px);
+    box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.3);
+}
+
+.key.black {
+    position: absolute;
+    width: 8%;
+    height: 60%;
+    background: linear-gradient(to bottom, #333 0%, #000 100%);
+    color: #fff;
+    z-index: 2;
+}
+
+.key.black:hover {
+    background: linear-gradient(to bottom, #444 0%, #111 100%);
+}
+
+.key.black:active, .key.black.active {
+    background: linear-gradient(to bottom, #4CAF50 0%, #45a049 100%);
+    transform: translateY(2px);
+    box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.5);
+}
+
+.key-label {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    pointer-events: none;
+}
+
+.key.black .key-label {
+    font-size: 10px;
+    bottom: 5px;
+}
+
+.instructions {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.instructions h3 {
+    margin-bottom: 15px;
+    color: #fff;
+}
+
+.instructions ol {
+    margin-left: 20px;
+    margin-bottom: 15px;
+}
+
+.instructions li {
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+
+.instructions p {
+    background: rgba(255, 193, 7, 0.2);
+    padding: 10px;
+    border-radius: 8px;
+    border-left: 4px solid #FFC107;
+}
+
+/* Animations for hitting notes */
+@keyframes hitSuccess {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.2);
+        box-shadow: 0 0 20px #4CAF50;
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.hit-success {
+    animation: hitSuccess 0.3s ease;
+}
+
+@keyframes hitMiss {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    25% {
+        transform: translateX(-5px);
+    }
+    75% {
+        transform: translateX(5px);
+    }
+}
+
+.hit-miss {
+    animation: hitMiss 0.3s ease;
+}
