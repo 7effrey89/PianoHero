@@ -185,7 +185,6 @@ class PianoHero {
         // Generate a sequence of notes for demo purposes
         // In a real implementation, this would come from audio analysis
         const notes = [];
-        const availableNotes = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
         const noteDuration = 0.5; // seconds between notes
         
         // Generate a simple melody pattern
@@ -324,32 +323,36 @@ class PianoHero {
         const note = this.keyToNote[key];
         if (!note) return;
         
-        // Find notes in the hit zone for this key
-        const currentTime = (Date.now() - this.startTime) / 1000;
+        // Find the closest note in the hit zone for this key
+        let closestNote = null;
+        let closestDistance = this.hitTolerance + 1;
         
         for (let i = 0; i < this.fallingNotes.length; i++) {
             const fallingNote = this.fallingNotes[i];
             
             if (fallingNote.note === note && !fallingNote.hit && !fallingNote.missed) {
-                // Check if note is in hit zone
                 const distance = Math.abs(fallingNote.y - this.hitZoneY);
                 
-                if (distance <= this.hitTolerance) {
-                    // Hit!
-                    fallingNote.hit = true;
-                    this.combo++;
-                    this.hitNotes++;
-                    
-                    // Calculate score based on accuracy
-                    const accuracy = 1 - (distance / this.hitTolerance);
-                    const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
-                    this.score += points;
-                    
-                    this.updateScore();
-                    this.showHitFeedback(note, true);
-                    break;
+                if (distance <= this.hitTolerance && distance < closestDistance) {
+                    closestNote = fallingNote;
+                    closestDistance = distance;
                 }
             }
+        }
+        
+        // Hit the closest note if found
+        if (closestNote) {
+            closestNote.hit = true;
+            this.combo++;
+            this.hitNotes++;
+            
+            // Calculate score based on accuracy
+            const accuracy = 1 - (closestDistance / this.hitTolerance);
+            const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
+            this.score += points;
+            
+            this.updateScore();
+            this.showHitFeedback(note, true);
         }
     }
     
