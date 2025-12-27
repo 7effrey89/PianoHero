@@ -90,34 +90,32 @@ class PianoHero {
         const container = document.getElementById('gameCanvas');
         this.canvas.width = container.clientWidth;
         this.canvas.height = container.clientHeight;
-        this.hitZoneY = this.canvas.height - 80;
+        this.hitZoneY = this.canvas.height - 20; // Hit zone at bottom, just above piano keys
         this.keyPositions = this.calculateKeyPositions();
     }
     
     calculateKeyPositions() {
-        const whiteKeys = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
-        const blackKeys = ['C#4', 'D#4', 'F#4', 'G#4', 'A#4'];
         const positions = {};
+        const allNotes = ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4', 'C5'];
         
-        const keyWidth = this.canvas.width / 8;
-        
-        // White keys
-        whiteKeys.forEach((note, index) => {
-            positions[note] = {
-                x: index * keyWidth + keyWidth / 2,
-                width: keyWidth,
-                isBlack: false
-            };
-        });
-        
-        // Black keys (approximate positions)
-        const blackKeyOffsets = [0.7, 1.7, 3.7, 4.7, 5.7];
-        blackKeys.forEach((note, index) => {
-            positions[note] = {
-                x: blackKeyOffsets[index] * keyWidth,
-                width: keyWidth * 0.6,
-                isBlack: true
-            };
+        // Get actual DOM positions of piano keys
+        allNotes.forEach(note => {
+            const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+            if (keyElement) {
+                const rect = keyElement.getBoundingClientRect();
+                const canvasRect = this.canvas.getBoundingClientRect();
+                
+                // Calculate position relative to canvas
+                const relativeLeft = rect.left - canvasRect.left;
+                const relativeWidth = rect.width;
+                
+                positions[note] = {
+                    x: relativeLeft + relativeWidth / 2,
+                    width: relativeWidth,
+                    left: relativeLeft,
+                    isBlack: note.includes('#')
+                };
+            }
         });
         
         return positions;
@@ -143,30 +141,42 @@ class PianoHero {
         this.updateProgress(10);
         
         try {
-            // Note: In a real implementation, you would need a backend service to download
-            // YouTube audio and perform analysis. For this demo, we'll simulate the process
-            // and generate sample notes.
+            this.statusMessage.textContent = 'Converting YouTube video to MIDI...';
+            this.updateProgress(30);
             
-            this.statusMessage.textContent = 'Analyzing audio and detecting notes...';
-            this.updateProgress(50);
+            // Call backend API to convert YouTube to MIDI
+            const response = await fetch('http://localhost:3000/api/convert', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ youtubeUrl: url })
+            });
             
-            // Simulate processing time
-            await this.sleep(2000);
+            if (!response.ok) {
+                throw new Error('Failed to convert YouTube video');
+            }
             
-            // Generate demo notes (in a real app, this would come from audio analysis)
-            this.notes = this.generateDemoNotes();
+            const data = await response.json();
             
-            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes. Click Start Game to play!`;
+            this.statusMessage.textContent = 'Analyzing notes...';
+            this.updateProgress(70);
+            
+            // Use notes from backend
+            this.notes = data.notes;
+            
+            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
             this.updateProgress(100);
             this.startBtn.disabled = false;
             
-            // Create a simple audio context for demo (in real app, would load actual audio)
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
         } catch (error) {
             console.error('Error loading YouTube audio:', error);
-            this.statusMessage.textContent = 'Error loading audio. Please try again.';
-            alert('Error: ' + error.message);
+            this.statusMessage.textContent = 'Error: Could not connect to backend server. Make sure the server is running (npm start).';
+            
+            // Fallback to demo notes if server is not available
+            this.statusMessage.textContent += ' Using demo notes instead.';
+            this.notes = this.generateDemoNotes();
+            this.startBtn.disabled = false;
         } finally {
             this.loadBtn.disabled = false;
             setTimeout(() => {
@@ -483,24 +493,24 @@ class PianoHero {
     }
     
     drawLanes() {
-        // Draw vertical lanes for each piano key similar to Guitar Hero
+        // Draw vertical lanes for each piano key, perfectly aligned with DOM elements
         const allNotes = ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4', 'C5'];
         
         allNotes.forEach(note => {
             const pos = this.keyPositions[note];
             if (!pos) return;
             
-            const laneWidth = pos.width * 0.85;
-            const x = pos.x - laneWidth / 2;
+            const laneWidth = pos.width;
+            const x = pos.left;
             
             // Draw lane background
             this.ctx.fillStyle = pos.isBlack ? 
-                'rgba(100, 50, 150, 0.1)' : 'rgba(255, 255, 255, 0.05)';
+                'rgba(80, 40, 120, 0.15)' : 'rgba(255, 255, 255, 0.08)';
             this.ctx.fillRect(x, 0, laneWidth, this.canvas.height);
             
             // Draw lane borders
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-            this.ctx.lineWidth = 1;
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            this.ctx.lineWidth = 2;
             this.ctx.beginPath();
             this.ctx.moveTo(x, 0);
             this.ctx.lineTo(x, this.canvas.height);
@@ -517,9 +527,9 @@ class PianoHero {
         const pos = this.keyPositions[note.note];
         if (!pos) return;
         
-        const noteWidth = pos.width * 0.8;
+        const noteWidth = pos.width * 0.9;
         const noteHeight = 30;
-        const x = pos.x - noteWidth / 2;
+        const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight / 2;
         
         // Draw note shadow
@@ -549,14 +559,24 @@ class PianoHero {
     }
     
     drawHitZoneIndicators() {
+        // Draw hit zone line at the bottom
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        this.ctx.fillRect(0, this.hitZoneY - 2, this.canvas.width, 4);
+        
+        // Draw indicator for each key
         Object.entries(this.keyPositions).forEach(([note, pos]) => {
-            const width = pos.width * 0.8;
-            const height = 5;
-            const x = pos.x - width / 2;
+            const width = pos.width * 0.9;
+            const height = 8;
+            const x = pos.left + (pos.width - width) / 2;
             const y = this.hitZoneY - height / 2;
             
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            this.ctx.fillStyle = pos.isBlack ? 
+                'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
             this.ctx.fillRect(x, y, width, height);
+            
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(x, y, width, height);
         });
     }
     

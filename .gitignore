@@ -1,0 +1,5 @@
+node_modules/
+midi_cache/
+*.log
+.DS_Store
+package-lock.json
