@@ -51,10 +51,19 @@ You can also click the piano keys with your mouse!
 
 This demo version includes:
 - Full game mechanics and UI
+- Piano key sound synthesis using Web Audio API
 - Simulated note generation for demonstration
-- Canvas-based rendering for falling notes
+- Canvas-based rendering with lanes for each key
 - Keyboard and mouse input handling
 - Scoring system with combo multipliers
+
+**Important Note on YouTube Audio Analysis:**
+The current implementation uses **simulated/demo notes** to demonstrate the game mechanics. Real YouTube audio analysis cannot be done directly in the browser due to:
+- Cross-Origin Resource Sharing (CORS) restrictions
+- YouTube's Terms of Service prohibiting direct audio extraction
+- Computational requirements for real-time pitch detection
+
+The demo generates a simple repeating pattern (C4→D4→E4→F4→G4→A4→B4→C5) to showcase the gameplay.
 
 ### Production Implementation Notes
 

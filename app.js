@@ -51,6 +51,14 @@ class PianoHero {
         // Piano key positions (for rendering)
         this.keyPositions = this.calculateKeyPositions();
         
+        // Audio synthesis for piano sounds
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        this.noteFrequencies = {
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13,
+            'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00,
+            'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88, 'C5': 523.25
+        };
+        
         this.init();
     }
     
@@ -307,9 +315,46 @@ class PianoHero {
             keyElement.classList.add('active');
         }
         
+        // Play the piano note sound
+        const note = this.keyToNote[key];
+        if (note) {
+            this.playNoteSound(note);
+        }
+        
         if (this.isPlaying && !this.isPaused) {
             this.checkHit(key);
         }
+    }
+    
+    playNoteSound(note) {
+        // Create audio context if not exists
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        const frequency = this.noteFrequencies[note];
+        if (!frequency) return;
+        
+        // Create oscillator for the note
+        const oscillator = this.audioContext.createOscillator();
+        const gainNode = this.audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(this.audioContext.destination);
+        
+        // Set frequency and wave type
+        oscillator.frequency.value = frequency;
+        oscillator.type = 'sine';
+        
+        // Envelope for natural piano-like sound
+        const now = this.audioContext.currentTime;
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(0.3, now + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        
+        // Play the note
+        oscillator.start(now);
+        oscillator.stop(now + 0.5);
     }
     
     releaseKey(key) {
@@ -421,6 +466,9 @@ class PianoHero {
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
+        // Draw lanes for each key
+        this.drawLanes();
+        
         // Draw falling notes
         this.fallingNotes.forEach(note => {
             if (!note.hit && note.y > -50 && note.y < this.canvas.height + 50) {
@@ -432,6 +480,37 @@ class PianoHero {
         this.drawHitZoneIndicators();
         
         requestAnimationFrame(() => this.render());
+    }
+    
+    drawLanes() {
+        // Draw vertical lanes for each piano key similar to Guitar Hero
+        const allNotes = ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4', 'C5'];
+        
+        allNotes.forEach(note => {
+            const pos = this.keyPositions[note];
+            if (!pos) return;
+            
+            const laneWidth = pos.width * 0.85;
+            const x = pos.x - laneWidth / 2;
+            
+            // Draw lane background
+            this.ctx.fillStyle = pos.isBlack ? 
+                'rgba(100, 50, 150, 0.1)' : 'rgba(255, 255, 255, 0.05)';
+            this.ctx.fillRect(x, 0, laneWidth, this.canvas.height);
+            
+            // Draw lane borders
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, this.canvas.height);
+            this.ctx.stroke();
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(x + laneWidth, 0);
+            this.ctx.lineTo(x + laneWidth, this.canvas.height);
+            this.ctx.stroke();
+        });
     }
     
     drawNote(note) {
