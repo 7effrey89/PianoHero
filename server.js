@@ -1,10 +1,18 @@
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Rate limiting to prevent abuse
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.'
+});
 
 // Middleware - Configure CORS for production
 const corsOptions = {
@@ -15,7 +23,16 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(express.json());
-app.use(express.static(__dirname));
+
+// Serve only specific static files, not the entire directory
+app.use(express.static(__dirname, {
+    index: 'index.html',
+    dotfiles: 'ignore', // Ignore hidden files
+    extensions: ['html', 'css', 'js'],
+}));
+
+// Apply rate limiting to API routes
+app.use('/api/', apiLimiter);
 
 // Create midi_cache directory if it doesn't exist
 const midiCacheDir = path.join(__dirname, 'midi_cache');
