@@ -22,6 +22,9 @@ CORS(app)
 MIDI_CACHE_DIR = Path(__file__).parent / 'midi_cache'
 MIDI_CACHE_DIR.mkdir(exist_ok=True)
 
+# Audio formats that yt-dlp might produce for our downloads
+AUDIO_FILE_EXTENSIONS = ['.mp3', '.m4a', '.webm', '.opus', '.wav']
+
 # Supported backends
 BACKENDS = {
     'youtube2midi': 'YouTube2MIDI (Audio Analysis)',
@@ -147,11 +150,19 @@ def convert_with_youtube2midi(video_id):
         
         # Find the actual audio file (yt-dlp adds extension)
         audio_file = None
-        for ext in ['.mp3', '.m4a', '.webm']:
+        for ext in AUDIO_FILE_EXTENSIONS:
             potential_file = Path(str(audio_path) + ext)
             if potential_file.exists():
                 audio_file = potential_file
                 break
+
+        # Fall back to scanning the tmp directory in case yt-dlp altered the filename
+        if not audio_file:
+            for candidate in Path(tmpdir).glob(f"{video_id}*"):
+                suffix = candidate.suffix.lower()
+                if candidate.is_file() and suffix in AUDIO_FILE_EXTENSIONS and not candidate.name.endswith('.part'):
+                    audio_file = candidate
+                    break
         
         if not audio_file:
             print("Audio file not found after download")
