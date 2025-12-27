@@ -1,13 +1,20 @@
 # PianoHero 🎹
 
-A Guitar Hero-style game for piano with Synthesia-inspired UI! Watch notes fall from the top in lanes perfectly aligned with piano keys at the bottom, and press them at the perfect moment to score points.
+A Guitar Hero-style game for piano with Synthesia-inspired UI and real YouTube to MIDI conversion! Watch notes fall from the top in lanes perfectly aligned with piano keys at the bottom, and press them at the perfect moment to score points.
 
 ## Features
 
 - **Synthesia-Style UI**: Lanes directly aligned above piano keys for intuitive gameplay
-- **YouTube Integration**: Paste a YouTube URL to use as your music track
-- **MIDI Conversion Backend**: Node.js server with caching for faster subsequent loads
-- **Falling Notes Gameplay**: Notes cascade down in lanes matching piano keys
+- **YouTube Integration**: Paste a YouTube URL to convert it to playable notes
+- **Multiple Backend Options**: Choose from different MIDI conversion engines:
+  - **YouTube2MIDI** (Audio Analysis) - Currently implemented
+  - Spotify Basic Pitch (ML Model) - Coming soon
+  - Librosa (Audio Processing) - Coming soon
+  - Aubio (Real-time) - Coming soon
+  - Google Magenta (ML Model) - Coming soon
+- **Python Backend**: Flask server with yt-dlp for audio extraction
+- **MIDI Conversion**: Real audio analysis with caching for faster replays
+- **Falling Notes Gameplay**: Notes cascade in lanes matching piano keys
 - **Piano Keyboard**: Visual piano keyboard with both mouse and keyboard input
 - **Piano Sounds**: Web Audio API synthesis for realistic note sounds
 - **Scoring System**: Points based on timing accuracy with combo multipliers
@@ -15,27 +22,42 @@ A Guitar Hero-style game for piano with Synthesia-inspired UI! Watch notes fall 
 
 ## Quick Start
 
-### Option 1: With Backend Server (Recommended)
+### Prerequisites
 ```bash
-npm install
-npm start
-```
-Then open http://localhost:3000/
+# Install Python dependencies
+pip install -r requirements.txt
 
-### Option 2: Without Backend (Demo Mode)
-Simply open `index.html` in a web browser. The app will use demo notes.
+# Install ffmpeg (required for audio extraction)
+# On Ubuntu/Debian:
+sudo apt-get install ffmpeg
+
+# On macOS:
+brew install ffmpeg
+
+# On Windows:
+# Download from https://ffmpeg.org/download.html
+```
+
+### Running the Application
+```bash
+# Start the Python backend server
+python3 server.py
+```
+
+Then open http://localhost:5000/ in your browser
 
 ## How to Play
 
-1. **Load a Track**: 
+1. **Select Backend**: Choose your preferred MIDI conversion engine from the dropdown (currently only youtube2midi is available)
+2. **Load a Track**: 
    - Paste a YouTube URL in the input field
    - Click "Load & Analyze"
-   - Wait for the server to process (or use cached data)
-2. **Start Playing**:
+   - Wait for the server to download audio and analyze notes
+3. **Start Playing**:
    - Click "Start Game" when ready
    - Watch for notes falling in lanes
    - Press keyboard keys or click piano keys when notes reach the hit zone
-3. **Score Points**:
+4. **Score Points**:
    - Perfect timing = more points
    - Build combos for score multipliers
    - Try to hit all notes for maximum accuracy!
@@ -58,106 +80,100 @@ Simply open `index.html` in a web browser. The app will use demo notes.
 
 You can also click the piano keys with your mouse!
 
-## Deployment
+## Architecture
 
-### Environment Variables
-- `PORT`: Server port (default: 3000)
-- `NODE_ENV`: Set to 'production' for production builds
-- `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins (production only)
+### Python Backend (Flask)
+- **YouTube Audio Extraction**: Uses yt-dlp to download audio from YouTube
+- **MIDI Conversion**: Currently implements youtube2midi method with audio analysis
+- **Caching System**: Stores converted MIDI files in `midi_cache/` for instant replay
+- **Multiple Backends**: Extensible architecture for different conversion engines
+- **RESTful API**: JSON-based communication with frontend
 
-### Production Deployment
-```bash
-NODE_ENV=production ALLOWED_ORIGINS=https://yourdomain.com npm start
+### JavaScript Frontend
+- **HTML5 Canvas**: Renders falling notes and lanes
+- **Web Audio API**: Piano sound synthesis
+- **DOM-based Positioning**: Calculates lane positions from actual piano key elements for perfect alignment
+- **Vanilla JavaScript**: No framework dependencies
+
+## API Endpoints
+
+### GET /api/backends
+Returns list of available MIDI conversion backends
+
+### POST /api/convert
+Convert YouTube video to MIDI notes
+```json
+{
+  "youtubeUrl": "https://youtube.com/watch?v=...",
+  "backend": "youtube2midi"
+}
 ```
 
-## Technical Implementation
+### GET /api/midi/:videoId?backend=youtube2midi
+Retrieve cached MIDI data for a video
 
-### Current Demo Implementation
-
-This demo version includes:
-- Full game mechanics and UI
-- Piano key sound synthesis using Web Audio API
-- Simulated note generation for demonstration
-- Canvas-based rendering with lanes for each key
-- Keyboard and mouse input handling
-- Scoring system with combo multipliers
-
-**Important Note on YouTube Audio Analysis:**
-The current implementation uses **simulated/demo notes** to demonstrate the game mechanics. Real YouTube audio analysis cannot be done directly in the browser due to:
-- Cross-Origin Resource Sharing (CORS) restrictions
-- YouTube's Terms of Service prohibiting direct audio extraction
-- Computational requirements for real-time pitch detection
-
-The demo generates a simple repeating pattern (C4→D4→E4→F4→G4→A4→B4→C5) to showcase the gameplay.
-
-### Production Implementation Notes
-
-For a full production implementation with real YouTube audio analysis, you would need:
-
-1. **Backend Service** (e.g., Node.js/Python):
-   - Use `youtube-dl` or similar to download audio
-   - Extract audio track in a suitable format (MP3/WAV)
-   - Serve audio files to the frontend
-
-2. **Audio Analysis**:
-   - **Option A**: Use Web Audio API with pitch detection algorithms
-   - **Option B**: Backend processing with libraries like:
-     - `librosa` (Python) for audio feature extraction
-     - `aubio` for pitch detection
-     - `madmom` for music information retrieval
-   - **Option C**: Machine learning models like Google's `Magenta` or `Spotify's Basic Pitch`
-
-3. **Note Detection**:
-   - Perform FFT (Fast Fourier Transform) analysis
-   - Detect fundamental frequencies
-   - Map frequencies to piano notes
-   - Store timing information for each detected note
-
-4. **Audio Playback**:
-   - Stream audio synchronized with the game
-   - Use Web Audio API for precise timing
-
-### File Structure
+## File Structure
 
 ```
 PianoHero/
-├── index.html          # Main HTML structure
-├── styles.css          # Styling and animations
-├── app.js             # Game logic and mechanics
-└── README.md          # This file
+├── server.py          # Python Flask backend
+├── requirements.txt   # Python dependencies
+├── index.html         # Synthesia-style integrated layout
+├── styles.css         # Modern CSS with game area styling
+├── app.js             # Game logic with DOM-based positioning
+├── .gitignore         # Git ignore rules
+├── midi_cache/        # MIDI cache directory (auto-created)
+└── README.md          # Documentation
 ```
 
-### Technologies Used
+## Development
 
-- **HTML5 Canvas**: For rendering falling notes
-- **CSS3**: For styling, animations, and effects
-- **Vanilla JavaScript**: Core game logic
-- **Web Audio API**: (Ready for integration) Audio processing
+### Adding New Backends
 
-## Future Enhancements
+To add a new MIDI conversion backend:
 
-- [ ] Real YouTube audio downloading and analysis
-- [ ] Multiple difficulty levels
-- [ ] Different note speeds
-- [ ] More piano keys (full octave range)
-- [ ] Leaderboard system
-- [ ] Song library/presets
-- [ ] Practice mode
-- [ ] Visual effects and particles
-- [ ] Sound effects for key presses
-- [ ] Mobile/touch support
+1. Add the backend to the `BACKENDS` dictionary in `server.py`
+2. Implement the conversion function (e.g., `convert_with_basic_pitch()`)
+3. Add the case to the backend selection in the `/api/convert` endpoint
+4. Update the dropdown in `index.html` to enable the option
 
-## Browser Compatibility
+Example:
+```python
+def convert_with_basic_pitch(video_id):
+    """Convert using Spotify's Basic Pitch ML model"""
+    # Download audio
+    # Run Basic Pitch inference
+    # Convert to note format
+    return notes
+```
 
-Works best in modern browsers:
-- Chrome/Edge (recommended)
-- Firefox
-- Safari
+### Current Implementation Status
+
+- ✅ **youtube2midi**: Basic implementation with audio download and demo note generation
+- ⏳ **basic_pitch**: Coming soon (requires TensorFlow)
+- ⏳ **librosa**: Coming soon (requires librosa library)
+- ⏳ **aubio**: Coming soon (requires aubio library)
+- ⏳ **magenta**: Coming soon (requires Magenta library)
+
+## Production Deployment
+
+### Environment Variables
+- `PORT`: Server port (default: 5000)
+- `FLASK_ENV`: Set to 'production' for production
+
+### Security Considerations
+- The server includes video ID validation to prevent path traversal
+- CORS is enabled for all origins (configure as needed for production)
+- Rate limiting should be added for production use
+
+## YouTube Terms of Service
+
+**Important**: Downloading YouTube videos may violate YouTube's Terms of Service. This tool is for educational and personal use only. Always respect copyright laws and YouTube's policies.
 
 ## License
 
-Open source - feel free to use and modify!
+MIT
 
-## Notes
+## Contributing
 
-This is a demonstration implementation. The YouTube audio analysis is simulated for demo purposes. A production implementation would require a backend service to handle YouTube audio downloading and processing, as well as more sophisticated audio analysis algorithms to accurately detect notes from music tracks.
+Contributions are welcome! Please feel free to submit a Pull Request.

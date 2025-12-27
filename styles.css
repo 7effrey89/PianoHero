@@ -84,6 +84,44 @@ button {
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
 }
 
+.settings-section {
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.settings-section label {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+#backendSelect {
+    padding: 8px 15px;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    background: rgba(0, 0, 0, 0.3);
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#backendSelect:hover {
+    border-color: rgba(255, 255, 255, 0.5);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+#backendSelect option {
+    background: #2d3748;
+    color: white;
+}
+
+#backendSelect option:disabled {
+    color: #718096;
+}
+
 .status-section {
     margin-bottom: 15px;
 }

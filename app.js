@@ -15,6 +15,7 @@ class PianoHero {
         this.scoreElement = document.getElementById('score');
         this.comboElement = document.getElementById('combo');
         this.accuracyElement = document.getElementById('accuracy');
+        this.backendSelect = document.getElementById('backendSelect');
         
         // Game state
         this.notes = [];
@@ -38,7 +39,7 @@ class PianoHero {
         this.hitTolerance = 50; // pixels tolerance for hitting notes
         
         // API configuration
-        this.apiBaseUrl = window.location.origin; // Use same origin as the page
+        this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
         
         // Note to key mapping
         this.noteToKey = {
@@ -147,13 +148,19 @@ class PianoHero {
             this.statusMessage.textContent = 'Converting YouTube video to MIDI...';
             this.updateProgress(30);
             
+            // Get selected backend
+            const backend = this.backendSelect.value;
+            
             // Call backend API to convert YouTube to MIDI
             const response = await fetch(`${this.apiBaseUrl}/api/convert`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ youtubeUrl: url })
+                body: JSON.stringify({ 
+                    youtubeUrl: url,
+                    backend: backend
+                })
             });
             
             if (!response.ok) {
@@ -168,13 +175,13 @@ class PianoHero {
             // Use notes from backend
             this.notes = data.notes;
             
-            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
+            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
             this.updateProgress(100);
             this.startBtn.disabled = false;
             
         } catch (error) {
             console.error('Error loading YouTube audio:', error);
-            this.statusMessage.textContent = 'Error: Could not connect to backend server. Make sure the server is running (npm start).';
+            this.statusMessage.textContent = 'Error: Could not connect to Python backend server. Make sure to run: python3 server.py';
             
             // Fallback to demo notes if server is not available
             this.statusMessage.textContent += ' Using demo notes instead.';

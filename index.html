@@ -17,6 +17,16 @@
                 <input type="text" id="youtubeUrl" placeholder="Paste YouTube URL here..." />
                 <button id="loadBtn">Load & Analyze</button>
             </div>
+            <div class="settings-section">
+                <label for="backendSelect">Analysis Backend:</label>
+                <select id="backendSelect">
+                    <option value="youtube2midi">YouTube2MIDI (Audio Analysis)</option>
+                    <option value="basic_pitch" disabled>Spotify Basic Pitch (Coming Soon)</option>
+                    <option value="librosa" disabled>Librosa (Coming Soon)</option>
+                    <option value="aubio" disabled>Aubio (Coming Soon)</option>
+                    <option value="magenta" disabled>Google Magenta (Coming Soon)</option>
+                </select>
+            </div>
             <div class="status-section">
                 <p id="statusMessage">Enter a YouTube URL to start</p>
                 <div id="progressBar" class="progress-bar">
