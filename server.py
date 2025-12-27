@@ -61,7 +61,8 @@ def download_youtube_audio(video_id, output_path):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'outtmpl': str(output_path),
+        # Force yt-dlp to append the real file extension so we can locate the output
+        'outtmpl': f"{output_path}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
     }
