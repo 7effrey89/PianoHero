@@ -163,6 +163,16 @@ def convert_with_youtube2midi(video_id):
                 if candidate.is_file() and suffix in AUDIO_FILE_EXTENSIONS and not candidate.name.endswith('.part'):
                     audio_file = candidate
                     break
+
+        if not audio_file:
+            # Debug logging to help diagnose why downloads aren't being detected
+            print("Could not locate downloaded audio. Temp directory contents:")
+            for candidate in Path(tmpdir).iterdir():
+                print(f"  - {candidate.name}")
+                if candidate.is_file() and not candidate.name.endswith('.part'):
+                    audio_file = candidate
+                    print("  -> Falling back to", candidate.name)
+                    break
         
         if not audio_file:
             print("Audio file not found after download")
