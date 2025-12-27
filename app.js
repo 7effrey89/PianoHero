@@ -51,8 +51,8 @@ class PianoHero {
         // Piano key positions (for rendering)
         this.keyPositions = this.calculateKeyPositions();
         
-        // Audio synthesis for piano sounds
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Audio synthesis for piano sounds (lazy initialization)
+        this.audioContext = null;
         this.noteFrequencies = {
             'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13,
             'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00,
