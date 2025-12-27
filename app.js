@@ -37,6 +37,9 @@ class PianoHero {
         this.hitZoneY = this.canvas.height - 80;
         this.hitTolerance = 50; // pixels tolerance for hitting notes
         
+        // API configuration
+        this.apiBaseUrl = window.location.origin; // Use same origin as the page
+        
         // Note to key mapping
         this.noteToKey = {
             'C4': 'A', 'C#4': 'W', 'D4': 'S', 'D#4': 'E',
@@ -145,7 +148,7 @@ class PianoHero {
             this.updateProgress(30);
             
             // Call backend API to convert YouTube to MIDI
-            const response = await fetch('http://localhost:3000/api/convert', {
+            const response = await fetch(`${this.apiBaseUrl}/api/convert`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

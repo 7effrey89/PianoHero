@@ -6,8 +6,14 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Middleware - Configure CORS for production
+const corsOptions = {
+    origin: process.env.NODE_ENV === 'production' 
+        ? process.env.ALLOWED_ORIGINS?.split(',') || 'http://localhost:3000'
+        : '*',
+    optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
@@ -15,6 +21,11 @@ app.use(express.static(__dirname));
 const midiCacheDir = path.join(__dirname, 'midi_cache');
 if (!fs.existsSync(midiCacheDir)) {
     fs.mkdirSync(midiCacheDir);
+}
+
+// Validate YouTube video ID format
+function isValidVideoId(videoId) {
+    return /^[a-zA-Z0-9_-]{11}$/.test(videoId);
 }
 
 // Endpoint to convert YouTube to MIDI
@@ -28,8 +39,8 @@ app.post('/api/convert', async (req, res) => {
     try {
         // Extract video ID
         const videoId = extractVideoId(youtubeUrl);
-        if (!videoId) {
-            return res.status(400).json({ error: 'Invalid YouTube URL' });
+        if (!videoId || !isValidVideoId(videoId)) {
+            return res.status(400).json({ error: 'Invalid YouTube URL or video ID' });
         }
         
         // Check if MIDI file already exists in cache
@@ -58,6 +69,12 @@ app.post('/api/convert', async (req, res) => {
 // Serve cached MIDI files
 app.get('/api/midi/:videoId', (req, res) => {
     const { videoId } = req.params;
+    
+    // Validate video ID to prevent path traversal
+    if (!isValidVideoId(videoId)) {
+        return res.status(400).json({ error: 'Invalid video ID format' });
+    }
+    
     const midiFilePath = path.join(midiCacheDir, `${videoId}.json`);
     
     if (fs.existsSync(midiFilePath)) {

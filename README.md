@@ -1,28 +1,41 @@
 # PianoHero 🎹
 
-A Guitar Hero-style game for piano! Watch notes fall from the top of the screen and press the corresponding piano keys at the perfect moment to score points.
+A Guitar Hero-style game for piano with Synthesia-inspired UI! Watch notes fall from the top in lanes perfectly aligned with piano keys at the bottom, and press them at the perfect moment to score points.
 
 ## Features
 
+- **Synthesia-Style UI**: Lanes directly aligned above piano keys for intuitive gameplay
 - **YouTube Integration**: Paste a YouTube URL to use as your music track
-- **Audio Analysis**: Automatically detects notes from the audio (simulated in demo)
-- **Falling Notes Gameplay**: Notes cascade down the screen Guitar Hero-style
+- **MIDI Conversion Backend**: Node.js server with caching for faster subsequent loads
+- **Falling Notes Gameplay**: Notes cascade down in lanes matching piano keys
 - **Piano Keyboard**: Visual piano keyboard with both mouse and keyboard input
+- **Piano Sounds**: Web Audio API synthesis for realistic note sounds
 - **Scoring System**: Points based on timing accuracy with combo multipliers
 - **Real-time Feedback**: Visual feedback for successful and missed notes
 
+## Quick Start
+
+### Option 1: With Backend Server (Recommended)
+```bash
+npm install
+npm start
+```
+Then open http://localhost:3000/
+
+### Option 2: Without Backend (Demo Mode)
+Simply open `index.html` in a web browser. The app will use demo notes.
+
 ## How to Play
 
-1. **Open the Game**: Open `index.html` in a web browser
-2. **Load a Track**: 
+1. **Load a Track**: 
    - Paste a YouTube URL in the input field
-   - Click "Load & Analyze" (this simulates audio analysis)
-   - Wait for the processing to complete
-3. **Start Playing**:
+   - Click "Load & Analyze"
+   - Wait for the server to process (or use cached data)
+2. **Start Playing**:
    - Click "Start Game" when ready
-   - Watch for falling notes
-   - Press the corresponding keyboard keys or click piano keys when notes reach the hit zone at the bottom
-4. **Score Points**:
+   - Watch for notes falling in lanes
+   - Press keyboard keys or click piano keys when notes reach the hit zone
+3. **Score Points**:
    - Perfect timing = more points
    - Build combos for score multipliers
    - Try to hit all notes for maximum accuracy!
@@ -44,6 +57,18 @@ A Guitar Hero-style game for piano! Watch notes fall from the top of the screen 
 - **K** = C5
 
 You can also click the piano keys with your mouse!
+
+## Deployment
+
+### Environment Variables
+- `PORT`: Server port (default: 3000)
+- `NODE_ENV`: Set to 'production' for production builds
+- `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins (production only)
+
+### Production Deployment
+```bash
+NODE_ENV=production ALLOWED_ORIGINS=https://yourdomain.com npm start
+```
 
 ## Technical Implementation
 
