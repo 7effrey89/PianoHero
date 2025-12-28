@@ -27,7 +27,12 @@ MIDI_CACHE_DIR = Path(__file__).parent / 'midi_cache'
 MIDI_CACHE_DIR.mkdir(exist_ok=True)
 
 # Get environment configuration
-ENABLE_DEMO_FALLBACK = os.getenv('ENABLE_DEMO_FALLBACK', 'true').lower() == 'true'
+def parse_bool_env(env_var, default='true'):
+    """Parse boolean environment variable, handling various formats"""
+    value = os.getenv(env_var, default).lower()
+    return value in ('true', '1', 'yes', 'on', 'enabled')
+
+ENABLE_DEMO_FALLBACK = parse_bool_env('ENABLE_DEMO_FALLBACK', 'true')
 
 # Audio formats that yt-dlp might produce for our downloads
 AUDIO_FILE_EXTENSIONS = ['.mp3', '.m4a', '.webm', '.opus', '.wav']
@@ -280,7 +285,7 @@ def convert_video():
             return jsonify({'error': 'Failed to convert video'}), 500
         else:
             return jsonify({
-                'error': 'Real pitch detection not yet implemented. Enable ENABLE_DEMO_FALLBACK in .env for demo notes.'
+                'error': 'Real pitch detection not yet implemented. To use demo notes, copy .env.example to .env and set ENABLE_DEMO_FALLBACK=true'
             }), 501
     
     # Cache the results
