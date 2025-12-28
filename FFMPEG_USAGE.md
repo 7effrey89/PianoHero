@@ -64,7 +64,10 @@ brew install ffmpeg
 ```
 
 ### Windows
-Download from https://ffmpeg.org/download.html
+1. Download precompiled binaries from https://ffmpeg.org/download.html
+2. Extract the archive to a directory (e.g., `C:\ffmpeg`)
+3. Add the `bin` folder to your system PATH environment variable
+4. Verify installation by running `ffmpeg -version` in Command Prompt
 
 ## Workflow
 
