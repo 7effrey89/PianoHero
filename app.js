@@ -32,6 +32,7 @@ class PianoHero {
         this.audioBuffer = null;
         this.audioSource = null;
         this.pauseTime = 0;
+        this.enableDemoFallback = true; // Default to true, will be updated from backend
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
@@ -69,6 +70,9 @@ class PianoHero {
     init() {
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
+        
+        // Load backend configuration
+        this.loadBackendConfig();
         
         // Event listeners
         this.loadBtn.addEventListener('click', () => this.loadYouTubeAudio());
@@ -123,6 +127,20 @@ class PianoHero {
         });
         
         return positions;
+    }
+    
+    async loadBackendConfig() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/backends`);
+            if (response.ok) {
+                const data = await response.json();
+                this.enableDemoFallback = data.enableDemoFallback !== undefined ? 
+                    data.enableDemoFallback : true;
+                console.log('Backend config loaded. Demo fallback enabled:', this.enableDemoFallback);
+            }
+        } catch (error) {
+            console.log('Could not load backend config, using defaults');
+        }
     }
     
     async loadYouTubeAudio() {
@@ -183,10 +201,14 @@ class PianoHero {
             console.error('Error loading YouTube audio:', error);
             this.statusMessage.textContent = 'Error: Could not connect to Python backend server. Make sure to run: python3 server.py';
             
-            // Fallback to demo notes if server is not available
-            this.statusMessage.textContent += ' Using demo notes instead.';
-            this.notes = this.generateDemoNotes();
-            this.startBtn.disabled = false;
+            // Fallback to demo notes if server is not available and fallback is enabled
+            if (this.enableDemoFallback) {
+                this.statusMessage.textContent += ' Using demo notes instead.';
+                this.notes = this.generateDemoNotes();
+                this.startBtn.disabled = false;
+            } else {
+                this.statusMessage.textContent += ' Demo fallback is disabled.';
+            }
         } finally {
             this.loadBtn.disabled = false;
             setTimeout(() => {

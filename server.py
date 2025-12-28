@@ -14,6 +14,10 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import mido
 import yt_dlp
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
@@ -21,6 +25,9 @@ CORS(app)
 # Configuration
 MIDI_CACHE_DIR = Path(__file__).parent / 'midi_cache'
 MIDI_CACHE_DIR.mkdir(exist_ok=True)
+
+# Get environment configuration
+ENABLE_DEMO_FALLBACK = os.getenv('ENABLE_DEMO_FALLBACK', 'true').lower() == 'true'
 
 # Audio formats that yt-dlp might produce for our downloads
 AUDIO_FILE_EXTENSIONS = ['.mp3', '.m4a', '.webm', '.opus', '.wav']
@@ -181,9 +188,14 @@ def convert_with_youtube2midi(video_id):
         print(f"Audio downloaded to: {audio_file}")
         
         # Convert to MIDI using basic pitch detection
-        # For now, generate a demo pattern based on audio length
+        # For now, generate a demo pattern based on audio length if fallback is enabled
         # In production, you would use actual pitch detection here
-        notes = generate_demo_notes_from_audio(audio_file)
+        if ENABLE_DEMO_FALLBACK:
+            notes = generate_demo_notes_from_audio(audio_file)
+        else:
+            # No fallback - would implement real pitch detection here
+            print("Demo fallback disabled - real pitch detection not yet implemented")
+            return None
         
         return notes
 
@@ -223,7 +235,8 @@ def get_backends():
     """Get list of available backends"""
     return jsonify({
         'backends': [{'id': k, 'name': v} for k, v in BACKENDS.items()],
-        'default': 'youtube2midi'
+        'default': 'youtube2midi',
+        'enableDemoFallback': ENABLE_DEMO_FALLBACK
     })
 
 @app.route('/api/convert', methods=['POST'])
@@ -263,7 +276,12 @@ def convert_video():
         }), 501
     
     if notes is None:
-        return jsonify({'error': 'Failed to convert video'}), 500
+        if ENABLE_DEMO_FALLBACK:
+            return jsonify({'error': 'Failed to convert video'}), 500
+        else:
+            return jsonify({
+                'error': 'Real pitch detection not yet implemented. Enable ENABLE_DEMO_FALLBACK in .env for demo notes.'
+            }), 501
     
     # Cache the results
     cache_data = {'notes': notes, 'backend': backend}
@@ -298,4 +316,5 @@ if __name__ == '__main__':
     print(f"Piano Hero Python server starting on port {port}")
     print(f"MIDI cache directory: {MIDI_CACHE_DIR}")
     print(f"Available backends: {', '.join(BACKENDS.keys())}")
+    print(f"Demo fallback enabled: {ENABLE_DEMO_FALLBACK}")
     app.run(host='0.0.0.0', port=port, debug=True)

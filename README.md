@@ -158,8 +158,19 @@ def convert_with_basic_pitch(video_id):
 ## Production Deployment
 
 ### Environment Variables
+
+The application uses a `.env` file for configuration. Copy `.env.example` to `.env` and adjust as needed:
+
+```bash
+cp .env.example .env
+```
+
+Available environment variables:
 - `PORT`: Server port (default: 5000)
 - `FLASK_ENV`: Set to 'production' for production
+- `ENABLE_DEMO_FALLBACK`: Enable fallback to demo notes when real pitch detection is not available (default: true)
+  - Set to `true` to enable demo note generation as a fallback
+  - Set to `false` to disable fallbacks and return errors when pitch detection is unavailable
 
 ### Security Considerations
 - The server includes video ID validation to prevent path traversal
