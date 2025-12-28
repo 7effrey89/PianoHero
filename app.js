@@ -134,7 +134,9 @@ class PianoHero {
             const response = await fetch(`${this.apiBaseUrl}/api/backends`);
             if (response.ok) {
                 const data = await response.json();
-                this.enableDemoFallback = data.enableDemoFallback ?? true;
+                // Use explicit check for better browser compatibility
+                this.enableDemoFallback = data.enableDemoFallback !== undefined ? 
+                    data.enableDemoFallback : true;
                 console.log('Backend config loaded. Demo fallback enabled:', this.enableDemoFallback);
             }
         } catch (error) {

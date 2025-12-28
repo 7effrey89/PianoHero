@@ -28,7 +28,20 @@ MIDI_CACHE_DIR.mkdir(exist_ok=True)
 
 # Get environment configuration
 def parse_bool_env(env_var, default='true'):
-    """Parse boolean environment variable, handling various formats"""
+    """
+    Parse boolean environment variable, handling various formats.
+    
+    Args:
+        env_var (str): Name of the environment variable
+        default (str): Default value if env_var is not set
+    
+    Returns:
+        bool: True if value is 'true', '1', 'yes', 'on', or 'enabled' (case-insensitive)
+    
+    Examples:
+        >>> parse_bool_env('MY_VAR', 'true')  # MY_VAR='1' returns True
+        >>> parse_bool_env('MY_VAR', 'false') # MY_VAR='no' returns False
+    """
     value = os.getenv(env_var, default).lower()
     return value in ('true', '1', 'yes', 'on', 'enabled')
 
@@ -285,7 +298,7 @@ def convert_video():
             return jsonify({'error': 'Failed to convert video'}), 500
         else:
             return jsonify({
-                'error': 'Real pitch detection not yet implemented. To use demo notes, copy .env.example to .env and set ENABLE_DEMO_FALLBACK=true'
+                'error': 'Pitch detection not implemented. Set ENABLE_DEMO_FALLBACK=true in .env to use demo notes.'
             }), 501
     
     # Cache the results
