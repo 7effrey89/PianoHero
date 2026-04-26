@@ -443,6 +443,25 @@ button {
     animation: hitMiss 0.3s ease;
 }
 
+/* Practice mode: pulse the target key */
+.key.practice-target {
+    animation: practiceGlow 0.8s ease-in-out infinite alternate;
+}
+
+.key.white.practice-target {
+    background: linear-gradient(to bottom, #FFD600 0%, #FFC107 100%) !important;
+    color: #333;
+}
+
+.key.black.practice-target {
+    background: linear-gradient(to bottom, #FFD600 0%, #FFA000 100%) !important;
+}
+
+@keyframes practiceGlow {
+    from { box-shadow: 0 0 8px #FFD600; }
+    to { box-shadow: 0 0 20px #FFD600, 0 0 40px rgba(255, 214, 0, 0.4); }
+}
+
 /* Sound Settings Panel */
 .sound-panel {
     margin-bottom: 20px;
@@ -570,6 +589,126 @@ button {
 }
 
 /* ── BitMidi browse tab ────────────────────────── */
+
+/* ── Game Settings Panel ────────────────────────── */
+.game-settings-panel {
+    margin-bottom: 20px;
+}
+
+.game-settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.game-settings-header h3 {
+    margin: 0;
+}
+
+.game-settings-body {
+    margin-top: 15px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    max-height: 500px;
+    opacity: 1;
+    overflow: hidden;
+}
+
+.game-settings-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.setting-row label {
+    min-width: 80px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.setting-row input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.2);
+    outline: none;
+}
+
+.setting-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #667eea;
+    cursor: pointer;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+.setting-row input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #667eea;
+    cursor: pointer;
+    border: none;
+}
+
+.setting-number {
+    width: 60px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    background: rgba(0, 0, 0, 0.3);
+    color: white;
+    font-size: 13px;
+    text-align: center;
+}
+
+.setting-number:focus {
+    border-color: #667eea;
+    outline: none;
+}
+
+.setting-row select {
+    flex: 1;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    background: rgba(0, 0, 0, 0.3);
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.setting-row select option {
+    background: #2d3748;
+    color: white;
+}
+
+.setting-row span {
+    font-size: 13px;
+    opacity: 0.8;
+    min-width: 20px;
+}
+
+.setting-info {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+    margin-left: 90px;
+}
 
 .bitmidi-search-section {
     display: flex;

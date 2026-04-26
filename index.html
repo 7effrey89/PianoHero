@@ -115,6 +115,42 @@
             </div>
         </div>
 
+        <!-- Game Settings Panel -->
+        <div class="controls game-settings-panel">
+            <div class="game-settings-header" id="gameSettingsToggle">
+                <h3>Game Settings</h3>
+                <span class="toggle-arrow">&#9660;</span>
+            </div>
+            <div class="game-settings-body" id="gameSettingsBody">
+                <!-- Key Scale / Zoom -->
+                <div class="setting-row">
+                    <label for="keyScaleSlider">Key Scale</label>
+                    <input type="range" id="keyScaleSlider" min="0.5" max="3" step="0.1" value="1">
+                    <input type="number" id="keyScaleInput" min="0.5" max="3" step="0.1" value="1" class="setting-number">
+                    <span>×</span>
+                </div>
+                <!-- Speed Control -->
+                <div class="setting-row">
+                    <label for="speedSlider">Speed</label>
+                    <input type="range" id="speedSlider" min="25" max="150" step="5" value="100">
+                    <input type="number" id="speedInput" min="25" max="150" step="5" value="100" class="setting-number">
+                    <span id="speedUnit">%</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-info" id="bpmDisplay">BPM: --</span>
+                </div>
+                <!-- Game Mode -->
+                <div class="setting-row">
+                    <label for="gameModeSelect">Mode</label>
+                    <select id="gameModeSelect">
+                        <option value="normal">Normal</option>
+                        <option value="easy">Easy (fewer keys)</option>
+                        <option value="practice">Practice (wait for correct note)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
         <!-- Game Canvas with Piano Keys Integrated -->
         <div id="gameArea">
             <div id="gameCanvas">

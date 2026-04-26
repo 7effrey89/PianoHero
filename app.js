@@ -45,6 +45,30 @@ class PianoHero {
         this.noteSpeed = 200; // pixels per second
         this.hitZoneY = this.canvas.height - 80;
         this.hitTolerance = 50; // pixels tolerance for hitting notes
+
+        // Performance: cached static layers
+        this._laneCanvas = null; // offscreen canvas for lanes + hit zone
+        this._laneCacheDirty = true;
+        this._boundRender = () => this._renderFrame();
+
+        // Key scale / zoom
+        this.keyScale = 1.0;
+
+        // Speed control
+        this.speedMultiplier = 1.0;
+        this.songBPM = null; // detected from loaded notes
+
+        // Game mode: 'normal', 'easy', 'practice'
+        this.gameMode = 'normal';
+        this.originalNotes = []; // unmodified notes from loader
+        this.practiceWaiting = false; // true when waiting for player input
+        this.practiceExpectedNotes = new Set(); // notes that must be pressed (chord support)
+        this.practiceHitNotes = new Set(); // notes already pressed in current chord
+
+        // Hold-note tracking
+        this.heldKeys = new Set();                // keyboard keys currently held down
+        this.activeNoteSources = new Map();       // note name → { source, noteGain, fadeStart, fadeEnd }
+        this.heldFallingNotes = new Map();        // note name → falling note being held
         
         // API configuration
         this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
@@ -112,6 +136,7 @@ class PianoHero {
         this.initTabs();
         this.initBitMidi();
         this.initSoundPanel();
+        this.initGameSettings();
         
         // Event listeners
         this.loadBtn.addEventListener('click', () => this.loadYouTubeAudio());
@@ -133,7 +158,7 @@ class PianoHero {
         });
         
         // Start render loop
-        this.render();
+        requestAnimationFrame(this._boundRender);
     }
     
     // Convert a note name like "C#3" to a semitone index (C0 = 0)
@@ -197,8 +222,8 @@ class PianoHero {
             if (!note.includes('#')) whiteCount++;
         }
 
-        // Each white key is at least 35px wide
-        const MIN_WHITE_KEY_PX = 35;
+        // Each white key is at least 35px wide, scaled by keyScale
+        const MIN_WHITE_KEY_PX = 35 * this.keyScale;
         const pianoMinWidth = whiteCount * MIN_WHITE_KEY_PX;
         this.pianoMinWidth = pianoMinWidth;
 
@@ -208,6 +233,9 @@ class PianoHero {
         if (pianoDiv) pianoDiv.style.minWidth = pianoMinWidth + 'px';
         const gameCanvas = document.getElementById('gameCanvas');
         if (gameCanvas) gameCanvas.style.minWidth = pianoMinWidth + 'px';
+
+        // When scale > 1, prevent flex from making keys smaller than the scaled size
+        const useFixedWidth = this.keyScale > 1;
 
         // Create white keys (flex children)
         const whiteKeys = [];
@@ -221,6 +249,10 @@ class PianoHero {
             const noteName = note.replace(/\d+/, '');
             const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
             btn.innerHTML = `<span class="key-label">${label}</span>`;
+            if (useFixedWidth) {
+                btn.style.flex = '0 0 ' + MIN_WHITE_KEY_PX + 'px';
+                btn.style.minWidth = MIN_WHITE_KEY_PX + 'px';
+            }
             container.appendChild(btn);
             whiteKeys.push(btn);
         }
@@ -288,6 +320,7 @@ class PianoHero {
         this.canvas.height = container.clientHeight;
         this.hitZoneY = this.canvas.height - 20;
         this.keyPositions = this.calculateKeyPositions();
+        this._laneCacheDirty = true;
     }
     
     calculateKeyPositions() {
@@ -380,8 +413,10 @@ class PianoHero {
             }
 
             const data = await response.json();
-            this.notes = data.notes;
-            this.rebuildKeyboardForNotes(this.notes);
+            this.originalNotes = data.notes;
+            this.songBPM = this.estimateBPM(data.notes);
+            this.updateBPMDisplay();
+            this.applyGameMode();
             this.updateProgress(100);
             this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Click Start Game to play!`;
             this.startBtn.disabled = false;
@@ -464,8 +499,10 @@ class PianoHero {
             }
 
             const data = await resp.json();
-            this.notes = data.notes;
-            this.rebuildKeyboardForNotes(this.notes);
+            this.originalNotes = data.notes;
+            this.songBPM = this.estimateBPM(data.notes);
+            this.updateBPMDisplay();
+            this.applyGameMode();
             this.updateProgress(100);
             this.statusMessage.textContent = `Loaded "${name}" — ${data.noteCount} notes. Click Start Game!`;
             this.startBtn.disabled = false;
@@ -528,7 +565,7 @@ class PianoHero {
             previewNotes.forEach(note => {
                 const tid = setTimeout(() => {
                     if (this.previewSlug !== slug) return;
-                    this.playNoteSound(note.note);
+                    this.playNoteSound(note.note, note.duration);
                 }, note.time * 1000);
                 this.previewTimeouts.push(tid);
             });
@@ -555,7 +592,7 @@ class PianoHero {
         // Toggle panel
         document.getElementById('soundPanelToggle').addEventListener('click', () => {
             document.getElementById('soundPanelBody').classList.toggle('collapsed');
-            document.querySelector('.toggle-arrow').classList.toggle('open');
+            document.querySelector('.sound-panel-header .toggle-arrow').classList.toggle('open');
         });
 
         // Instrument selector — loads soundfont when changed
@@ -579,6 +616,146 @@ class PianoHero {
 
         // Auto-load the default instrument soundfont
         this.loadSoundfont(this.currentInstrument);
+    }
+
+    initGameSettings() {
+        // Toggle panel
+        document.getElementById('gameSettingsToggle').addEventListener('click', () => {
+            document.getElementById('gameSettingsBody').classList.toggle('collapsed');
+            // Toggle the arrow inside this panel specifically
+            document.querySelector('.game-settings-header .toggle-arrow').classList.toggle('open');
+        });
+
+        // ── Key Scale ──
+        const scaleSlider = document.getElementById('keyScaleSlider');
+        const scaleInput = document.getElementById('keyScaleInput');
+
+        const applyScale = (val) => {
+            this.keyScale = Math.max(0.5, Math.min(3, parseFloat(val) || 1));
+            scaleSlider.value = this.keyScale;
+            scaleInput.value = this.keyScale;
+            this.buildPianoKeys();
+        };
+
+        scaleSlider.addEventListener('input', () => applyScale(scaleSlider.value));
+        scaleInput.addEventListener('change', () => applyScale(scaleInput.value));
+
+        // ── Speed Control ──
+        const speedSlider = document.getElementById('speedSlider');
+        const speedInput = document.getElementById('speedInput');
+
+        const applySpeed = (val) => {
+            const pct = Math.max(25, Math.min(150, parseInt(val) || 100));
+            this.speedMultiplier = pct / 100;
+            speedSlider.value = pct;
+            speedInput.value = pct;
+            this.updateBPMDisplay();
+
+            // If auto-play is in progress, reschedule timeouts with new speed
+            if (this.isAutoPlay && this.isPlaying && !this.isPaused) {
+                this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+                this.autoPlayTimeouts = [];
+                const currentTime = (Date.now() - this.startTime) / 1000;
+                const speed = this.speedMultiplier;
+                this.fallingNotes.forEach(note => {
+                    if (note.hit || note.missed) return;
+                    const delay = Math.max(0, (note.time / speed - currentTime) * 1000);
+                    const key = this.noteToKey[note.note];
+                    const holdMs = Math.max(80, ((note.duration || 0.15) / speed) * 1000);
+                    const tid = setTimeout(() => {
+                        if (!this.isPlaying || this.isPaused) return;
+                        if (!note.hit && !note.missed) {
+                            note.hit = true;
+                            note.holdStart = (Date.now() - this.startTime) / 1000;
+                            this.combo++;
+                            this.hitNotes++;
+                            this.score += Math.floor(100 * (1 + this.combo * 0.1));
+                            this.updateScore();
+                            this.showHitFeedback(note.note, true);
+                            this.heldFallingNotes.set(note.note, note);
+                        }
+                        const keyElement = key
+                            ? document.querySelector(`.key[data-key="${key}"]`)
+                            : document.querySelector(`.key[data-note="${note.note}"]`);
+                        if (keyElement) keyElement.classList.add('active');
+                        this.playNoteSound(note.note, note.duration);
+                        const releaseTid = setTimeout(() => {
+                            if (keyElement) keyElement.classList.remove('active');
+                            this.heldFallingNotes.delete(note.note);
+                        }, holdMs);
+                        this.autoPlayTimeouts.push(releaseTid);
+                    }, delay);
+                    this.autoPlayTimeouts.push(tid);
+                });
+            }
+        };
+
+        speedSlider.addEventListener('input', () => applySpeed(speedSlider.value));
+        speedInput.addEventListener('change', () => applySpeed(speedInput.value));
+
+        // ── Game Mode ──
+        const modeSelect = document.getElementById('gameModeSelect');
+        modeSelect.addEventListener('change', () => {
+            this.gameMode = modeSelect.value;
+            // Re-apply notes if a song is loaded
+            if (this.originalNotes.length > 0) {
+                this.applyGameMode();
+            }
+        });
+    }
+
+    updateBPMDisplay() {
+        const el = document.getElementById('bpmDisplay');
+        if (this.songBPM) {
+            const effectiveBPM = Math.round(this.songBPM * this.speedMultiplier);
+            el.textContent = `BPM: ${effectiveBPM} (original ${this.songBPM})`;
+        } else {
+            el.textContent = 'BPM: --';
+        }
+    }
+
+    estimateBPM(notes) {
+        if (!notes || notes.length < 2) return null;
+        // Estimate BPM from average inter-note time
+        const times = notes.map(n => n.time).sort((a, b) => a - b);
+        const gaps = [];
+        for (let i = 1; i < times.length; i++) {
+            const gap = times[i] - times[i - 1];
+            if (gap > 0.05 && gap < 2) gaps.push(gap); // filter out tiny/huge gaps
+        }
+        if (gaps.length === 0) return null;
+        const median = gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+        return Math.round(60 / median);
+    }
+
+    applyGameMode() {
+        if (this.gameMode === 'easy') {
+            this.notes = this.remapToEasyMode(this.originalNotes);
+        } else {
+            // Normal or practice — use original notes
+            this.notes = this.originalNotes.map(n => ({ ...n }));
+        }
+        this.rebuildKeyboardForNotes(this.notes);
+    }
+
+    remapToEasyMode(notes) {
+        // Collapse all notes into a 2-octave range (C3–B4) which has keyboard bindings
+        // Preserves relative pitch order but within a smaller range
+        const semitones = notes.map(n => this.noteToSemitone(n.note));
+        const minS = Math.min(...semitones);
+        const maxS = Math.max(...semitones);
+        const range = maxS - minS || 1;
+
+        // Target range: C3 (36) to B4 (59) = 24 semitones
+        const targetLow = 36;  // C3
+        const targetRange = 23; // C3 to B4
+
+        return notes.map(n => {
+            const s = this.noteToSemitone(n.note);
+            const normalized = (s - minS) / range;
+            const newS = targetLow + Math.round(normalized * targetRange);
+            return { ...n, note: this.semitoneToNote(newS) };
+        });
     }
 
     async loadSoundfont(instrument) {
@@ -718,8 +895,10 @@ class PianoHero {
             this.updateProgress(70);
             
             // Use notes from backend
-            this.notes = data.notes;
-            this.rebuildKeyboardForNotes(this.notes);
+            this.originalNotes = data.notes;
+            this.songBPM = this.estimateBPM(data.notes);
+            this.updateBPMDisplay();
+            this.applyGameMode();
             
             this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
             this.updateProgress(100);
@@ -807,11 +986,20 @@ class PianoHero {
         this.isPaused = false;
         this.startTime = Date.now();
         this.startBtn.disabled = true;
-        this.autoPlayBtn.disabled = true;
+        this.autoPlayBtn.disabled = this.gameMode !== 'practice'; // keep enabled in practice mode
         this.pauseBtn.disabled = false;
-        this.statusMessage.textContent = 'Game in progress...';
+
+        // Practice mode setup
+        this.practiceWaiting = false;
+        this.practiceExpectedNotes = new Set();
+        this.practiceHitNotes = new Set();
+        this.practicePauseOffset = 0;
+
+        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
+                          this.gameMode === 'easy' ? 'Easy mode' : 'Game';
+        this.statusMessage.textContent = `${modeLabel} in progress...`;
         
-        // Create falling notes
+        // Create falling notes (keep original times; speed is applied live in update())
         this.fallingNotes = this.notes.map(note => ({
             ...note,
             y: -50,
@@ -831,14 +1019,39 @@ class PianoHero {
     }
 
     startAutoPlay() {
-        this.startGame();
-        this.isAutoPlay = true;
-        this.statusMessage.textContent = 'Auto Play — watch and listen!';
+        // If already playing (e.g. practice mode), continue from current position
+        const continuing = this.isPlaying && this.fallingNotes.length > 0;
 
-        // Schedule automatic key presses for every note
+        if (!continuing) {
+            this.startGame();
+        } else {
+            // Clear practice mode state
+            this.practiceWaiting = false;
+            this.practiceExpectedNotes = new Set();
+            this.practiceHitNotes = new Set();
+            document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+        }
+
+        this.isAutoPlay = true;
+
+        // Find the first unhit note to calculate time offset
+        const firstUnhit = this.fallingNotes.find(n => !n.hit && !n.missed);
+        const currentTime = continuing && firstUnhit
+            ? (Date.now() - this.startTime) / 1000
+            : 0;
+
+        this.statusMessage.textContent = continuing
+            ? 'Auto Play — continuing from current position!'
+            : 'Auto Play — watch and listen!';
+
+        // Schedule automatic key presses for remaining notes
+        const speed = this.speedMultiplier;
         this.fallingNotes.forEach(note => {
-            const delay = note.time * 1000; // convert to ms
+            if (note.hit || note.missed) return; // skip already played notes
+
+            const delay = Math.max(0, (note.time / speed - currentTime) * 1000);
             const key = this.noteToKey[note.note];
+            const holdMs = Math.max(80, ((note.duration || 0.15) / speed) * 1000);
 
             const tid = setTimeout(() => {
                 if (!this.isPlaying || this.isPaused) return;
@@ -846,29 +1059,27 @@ class PianoHero {
                 // Directly mark the note as hit (bypasses timing-sensitive position check)
                 if (!note.hit && !note.missed) {
                     note.hit = true;
+                    note.holdStart = (Date.now() - this.startTime) / 1000;
                     this.combo++;
                     this.hitNotes++;
                     this.score += Math.floor(100 * (1 + this.combo * 0.1));
                     this.updateScore();
                     this.showHitFeedback(note.note, true);
+                    this.heldFallingNotes.set(note.note, note);
                 }
 
-                // Play sound + visual
-                if (key) {
-                    const keyElement = document.querySelector(`.key[data-key="${key}"]`);
-                    if (keyElement) keyElement.classList.add('active');
-                    this.playNoteSound(note.note);
-                    setTimeout(() => {
-                        if (keyElement) keyElement.classList.remove('active');
-                    }, 120);
-                } else {
-                    this.playNoteSound(note.note);
-                    const el = document.querySelector(`.key[data-note="${note.note}"]`);
-                    if (el) {
-                        el.classList.add('active');
-                        setTimeout(() => el.classList.remove('active'), 120);
-                    }
-                }
+                // Play sound + visual (hold for note duration)
+                const keyElement = key
+                    ? document.querySelector(`.key[data-key="${key}"]`)
+                    : document.querySelector(`.key[data-note="${note.note}"]`);
+                if (keyElement) keyElement.classList.add('active');
+                this.playNoteSound(note.note, note.duration);
+
+                const releaseTid = setTimeout(() => {
+                    if (keyElement) keyElement.classList.remove('active');
+                    this.heldFallingNotes.delete(note.note);
+                }, holdMs);
+                this.autoPlayTimeouts.push(releaseTid);
             }, delay);
             this.autoPlayTimeouts.push(tid);
         });
@@ -896,11 +1107,21 @@ class PianoHero {
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
+        this.heldFallingNotes.clear();
+        this.heldKeys.clear();
+        // Stop all active note sounds
+        for (const note of this.activeNoteSources.keys()) {
+            this.stopNoteSound(note);
+        }
         this.score = 0;
         this.combo = 0;
         this.hitNotes = 0;
         this.missedNotes = 0;
         this.totalNotes = 0;
+        this.practiceWaiting = false;
+        this.practiceExpectedNotes = new Set();
+        this.practiceHitNotes = new Set();
+        document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
         this.updateScore();
         this.startBtn.disabled = this.notes.length === 0;
         this.autoPlayBtn.disabled = this.notes.length === 0;
@@ -937,7 +1158,14 @@ class PianoHero {
             const note = keyElement.dataset.note;
             if (note) {
                 keyElement.classList.add('active');
+                this.stopNoteSound(note);
                 this.playNoteSound(note);
+                // Check for practice mode hit on unbound keys
+                if (this.gameMode === 'practice' && this.practiceWaiting && this.isPlaying) {
+                    if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
+                        this._practiceHitNote(note);
+                    }
+                }
             }
         }
     }
@@ -948,18 +1176,27 @@ class PianoHero {
             this.releaseKey(key);
         } else {
             keyElement.classList.remove('active');
+            const note = keyElement.dataset.note;
+            if (note) {
+                this.stopNoteSound(note);
+                this.heldFallingNotes.delete(note);
+            }
         }
     }
     
     pressKey(key) {
+        if (this.heldKeys.has(key)) return; // ignore key repeat
+        this.heldKeys.add(key);
+
         const keyElement = document.querySelector(`.key[data-key="${key}"]`);
         if (keyElement) {
             keyElement.classList.add('active');
         }
         
-        // Play the piano note sound
+        // Play the piano note sound (sustained until release)
         const note = this.keyToNote[key];
         if (note) {
+            this.stopNoteSound(note); // stop any prior sound for this note
             this.playNoteSound(note);
         }
         
@@ -968,7 +1205,7 @@ class PianoHero {
         }
     }
     
-    playNoteSound(note) {
+    playNoteSound(note, duration) {
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.setupAudioGraph();
@@ -989,29 +1226,68 @@ class PianoHero {
         const p = this.soundParams;
         const now = this.audioContext.currentTime;
 
-        // Update persistent graph levels
-        this.masterGain.gain.value = p.volume;
-        this.dryGain.gain.value = 1 - p.reverb * 0.5;
-        this.wetGain.gain.value = p.reverb * 0.5;
+        // Update persistent graph levels smoothly (avoid clicks)
+        this.masterGain.gain.setTargetAtTime(p.volume, now, 0.01);
+        this.dryGain.gain.setTargetAtTime(1 - p.reverb * 0.5, now, 0.01);
+        this.wetGain.gain.setTargetAtTime(p.reverb * 0.5, now, 0.01);
 
         // Create a source from the sample buffer
         const source = this.audioContext.createBufferSource();
         source.buffer = buffer;
 
         const noteGain = this.audioContext.createGain();
-        noteGain.gain.value = 1.4;  // Boost for fuller body
+        noteGain.gain.setValueAtTime(1.4, now);
         source.connect(noteGain);
         noteGain.connect(this.dryGain);
         if (p.reverb > 0.01) noteGain.connect(this.wetGain);
 
         source.start(now);
 
-        // Fade out the note to avoid the long natural sustain of the sample
-        const fadeStart = now + 1.2;   // hold for 1.2s
-        const fadeEnd   = fadeStart + 0.8; // then fade over 0.8s
-        noteGain.gain.setValueAtTime(1.4, fadeStart);
-        noteGain.gain.linearRampToValueAtTime(0, fadeEnd);
-        source.stop(fadeEnd);
+        // If explicit duration (auto-play), schedule fixed fade
+        // Otherwise (user-played), sustain until stopNoteSound is called
+        if (duration != null) {
+            const speed = this.speedMultiplier;
+            const holdTime = Math.max(0.15, Math.min(8, duration / speed));
+            const fadeTime = Math.min(0.6, holdTime * 0.4);
+            const fadeStart = now + holdTime;
+            const fadeEnd   = fadeStart + fadeTime;
+            noteGain.gain.setValueAtTime(1.4, fadeStart);
+            noteGain.gain.linearRampToValueAtTime(0, fadeEnd);
+            source.stop(fadeEnd);
+        } else {
+            // Sustain for up to 10s max (safety cap); will be cut short by stopNoteSound
+            const maxSustain = now + 10;
+            noteGain.gain.setValueAtTime(1.4, maxSustain);
+            noteGain.gain.linearRampToValueAtTime(0, maxSustain + 0.3);
+            source.stop(maxSustain + 0.3);
+        }
+
+        // Track for later stop-on-release
+        this.activeNoteSources.set(note, { source, noteGain });
+
+        // Disconnect nodes after playback to prevent memory leaks
+        source.onended = () => {
+            source.disconnect();
+            noteGain.disconnect();
+            // Clean up tracking if this source is still the active one
+            const active = this.activeNoteSources.get(note);
+            if (active && active.source === source) {
+                this.activeNoteSources.delete(note);
+            }
+        };
+    }
+
+    stopNoteSound(note) {
+        const active = this.activeNoteSources.get(note);
+        if (!active) return;
+        const { noteGain, source } = active;
+        const now = this.audioContext.currentTime;
+        // Quick fade-out to avoid click
+        noteGain.gain.cancelScheduledValues(now);
+        noteGain.gain.setValueAtTime(noteGain.gain.value, now);
+        noteGain.gain.linearRampToValueAtTime(0, now + 0.08);
+        try { source.stop(now + 0.08); } catch (e) { /* already stopped */ }
+        this.activeNoteSources.delete(note);
     }
 
     setupAudioGraph() {
@@ -1091,15 +1367,30 @@ class PianoHero {
     }
     
     releaseKey(key) {
+        this.heldKeys.delete(key);
         const keyElement = document.querySelector(`.key[data-key="${key}"]`);
         if (keyElement) {
             keyElement.classList.remove('active');
+        }
+        // Stop the sustained sound
+        const note = this.keyToNote[key];
+        if (note) {
+            this.stopNoteSound(note);
+            this.heldFallingNotes.delete(note);
         }
     }
     
     checkHit(key) {
         const note = this.keyToNote[key];
         if (!note) return;
+
+        // ── Practice mode: check if it's one of the expected notes ──
+        if (this.gameMode === 'practice' && this.practiceWaiting) {
+            if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
+                this._practiceHitNote(note);
+            }
+            return; // In practice mode, only expected notes count
+        }
         
         // Find the closest note in the hit zone for this key
         let closestNote = null;
@@ -1121,6 +1412,7 @@ class PianoHero {
         // Hit the closest note if found
         if (closestNote) {
             closestNote.hit = true;
+            closestNote.holdStart = (Date.now() - this.startTime) / 1000; // when the key was pressed
             this.combo++;
             this.hitNotes++;
             
@@ -1131,6 +1423,9 @@ class PianoHero {
             
             this.updateScore();
             this.showHitFeedback(note, true);
+
+            // Track this as a held note for visual feedback
+            this.heldFallingNotes.set(note, closestNote);
         }
     }
     
@@ -1156,18 +1451,25 @@ class PianoHero {
     
     update() {
         if (!this.isPlaying || this.isPaused) return;
+
+        // ── Practice mode: freeze time until correct note is played ──
+        if (this.gameMode === 'practice' && !this.isAutoPlay) {
+            return this.updatePracticeMode();
+        }
         
         const currentTime = (Date.now() - this.startTime) / 1000;
+        const speed = this.speedMultiplier;
         
         // Update falling notes
         for (let i = this.fallingNotes.length - 1; i >= 0; i--) {
             const note = this.fallingNotes[i];
             
+            // Always update Y position so notes keep scrolling (even after hit/missed)
+            const scaledNoteTime = note.time / speed;
+            const timeUntilHit = scaledNoteTime - currentTime;
+            note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
+
             if (!note.hit && !note.missed) {
-                // Calculate Y position based on time
-                const timeUntilHit = note.time - currentTime;
-                note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed);
-                
                 // Check if note was missed
                 if (note.y > this.hitZoneY + this.hitTolerance) {
                     note.missed = true;
@@ -1177,8 +1479,10 @@ class PianoHero {
                 }
             }
             
-            // Remove notes that are far past the hit zone
-            if (note.y > this.canvas.height + 100) {
+            // Remove notes that have fully scrolled off the bottom
+            const dur = note.duration || 0.15;
+            const noteHeight = Math.max(12, dur * this.noteSpeed * speed);
+            if ((note.y - noteHeight) > this.canvas.height + 50) {
                 this.fallingNotes.splice(i, 1);
             }
         }
@@ -1196,113 +1500,310 @@ class PianoHero {
             this.pauseBtn.disabled = true;
         }
     }
-    
-    render() {
-        this.update();
-        
-        // Clear canvas
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        // Draw lanes for each key
-        this.drawLanes();
-        
-        // Draw falling notes
-        this.fallingNotes.forEach(note => {
-            if (!note.hit && note.y > -50 && note.y < this.canvas.height + 50) {
-                this.drawNote(note);
-            }
-        });
-        
-        // Draw hit zone indicators
-        this.drawHitZoneIndicators();
-        
-        requestAnimationFrame(() => this.render());
+
+    updatePracticeMode() {
+        // Find the next unhit note
+        const nextNote = this.fallingNotes.find(n => !n.hit && !n.missed);
+        if (!nextNote) {
+            // All done
+            this.isPlaying = false;
+            document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+            this.statusMessage.textContent = 
+                `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
+            this.startBtn.disabled = false;
+            this.autoPlayBtn.disabled = false;
+            this.pauseBtn.disabled = true;
+            return;
+        }
+
+        // Freeze the virtual clock at the next note's time
+        const virtualTime = nextNote.time;
+
+        // Find ALL unhit notes at the same time (chord) — tolerance of 0.03s
+        const chordNotes = this.fallingNotes.filter(
+            n => !n.hit && !n.missed && Math.abs(n.time - virtualTime) < 0.03
+        );
+
+        for (const note of this.fallingNotes) {
+            if (note.hit) continue;
+            if (note.missed) continue;
+            const timeUntilHit = note.time - virtualTime;
+            note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed);
+        }
+
+        // Build the set of expected notes for this chord
+        const expectedSet = new Set(chordNotes.map(n => n.note));
+
+        // Only reset tracking if the chord changed
+        if (!this.practiceWaiting || !this._setsEqual(expectedSet, this.practiceExpectedNotes)) {
+            this.practiceExpectedNotes = expectedSet;
+            this.practiceHitNotes = new Set();
+        }
+
+        this.practiceWaiting = true;
+
+        // Highlight expected keys on the piano
+        document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+        for (const noteName of this.practiceExpectedNotes) {
+            if (this.practiceHitNotes.has(noteName)) continue; // already pressed
+            const targetKey = document.querySelector(`.key[data-note="${noteName}"]`);
+            if (targetKey) targetKey.classList.add('practice-target');
+        }
+
+        const remaining = [...this.practiceExpectedNotes].filter(n => !this.practiceHitNotes.has(n));
+        this.statusMessage.textContent = `Practice: play ${remaining.join(' + ')}`;
+    }
+
+    _setsEqual(a, b) {
+        if (a.size !== b.size) return false;
+        for (const v of a) if (!b.has(v)) return false;
+        return true;
+    }
+
+    _practiceHitNote(noteName) {
+        // Mark the matching falling note as hit
+        const target = this.fallingNotes.find(
+            n => !n.hit && !n.missed && n.note === noteName &&
+                 this.practiceExpectedNotes.has(noteName)
+        );
+        if (!target) return false;
+
+        target.hit = true;
+        this.combo++;
+        this.hitNotes++;
+        this.score += Math.floor(100 * (1 + this.combo * 0.1));
+        this.updateScore();
+        this.showHitFeedback(noteName, true);
+        this.practiceHitNotes.add(noteName);
+
+        // Remove highlight from this key
+        const keyEl = document.querySelector(`.key[data-note="${noteName}"]`);
+        if (keyEl) keyEl.classList.remove('practice-target');
+
+        // If all chord notes are hit, advance
+        if (this.practiceHitNotes.size >= this.practiceExpectedNotes.size) {
+            this.practiceWaiting = false;
+            this.practiceExpectedNotes = new Set();
+            this.practiceHitNotes = new Set();
+        }
+        return true;
     }
     
-    drawLanes() {
-        // Draw vertical lanes for each piano key, perfectly aligned with DOM elements
-        this.allNotes.forEach(note => {
+    _renderFrame() {
+        this.update();
+        
+        const w = this.canvas.width, h = this.canvas.height;
+        const ctx = this.ctx;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, w, h);
+        
+        // Draw cached static layer (lanes + hit zone)
+        if (this._laneCacheDirty || !this._laneCanvas) {
+            this._rebuildLaneCache();
+        }
+        if (this._laneCanvas) {
+            ctx.drawImage(this._laneCanvas, 0, 0);
+        }
+        
+        // Draw vertical timeline
+        this._drawTimeline();
+
+        // Draw falling notes (including hit notes — they stay visible until scrolled off)
+        const canvasH = h + 50;
+        const speed = this.speedMultiplier;
+        for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+            const note = this.fallingNotes[i];
+            // note.y = bottom edge; top edge = note.y - noteHeight
+            const dur = note.duration || 0.15;
+            const noteH = Math.max(12, dur * this.noteSpeed * speed);
+            const topEdge = note.y - noteH;
+            // Visible if top edge is above bottom of canvas AND bottom edge is below top
+            if (topEdge < canvasH && note.y > -50) {
+                this.drawNote(note);
+            }
+        }
+        
+        requestAnimationFrame(this._boundRender);
+    }
+    
+    _rebuildLaneCache() {
+        // Render lanes + hit zone to an offscreen canvas (redrawn only on resize)
+        const w = this.canvas.width, h = this.canvas.height;
+        if (!this._laneCanvas || this._laneCanvas.width !== w || this._laneCanvas.height !== h) {
+            this._laneCanvas = document.createElement('canvas');
+            this._laneCanvas.width = w;
+            this._laneCanvas.height = h;
+        }
+        const lctx = this._laneCanvas.getContext('2d');
+        lctx.clearRect(0, 0, w, h);
+
+        // Draw vertical lanes
+        for (const note of this.allNotes) {
             const pos = this.keyPositions[note];
-            if (!pos) return;
+            if (!pos) continue;
             
-            const laneWidth = pos.width;
-            const x = pos.left;
-            
-            // Draw lane background
-            this.ctx.fillStyle = pos.isBlack ? 
+            lctx.fillStyle = pos.isBlack ? 
                 'rgba(80, 40, 120, 0.15)' : 'rgba(255, 255, 255, 0.08)';
-            this.ctx.fillRect(x, 0, laneWidth, this.canvas.height);
+            lctx.fillRect(pos.left, 0, pos.width, h);
             
-            // Draw lane borders
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-            this.ctx.lineWidth = 2;
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, 0);
-            this.ctx.lineTo(x, this.canvas.height);
-            this.ctx.stroke();
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(x + laneWidth, 0);
-            this.ctx.lineTo(x + laneWidth, this.canvas.height);
-            this.ctx.stroke();
-        });
+            lctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            lctx.lineWidth = 2;
+            lctx.beginPath();
+            lctx.moveTo(pos.left, 0);
+            lctx.lineTo(pos.left, h);
+            lctx.moveTo(pos.left + pos.width, 0);
+            lctx.lineTo(pos.left + pos.width, h);
+            lctx.stroke();
+        }
+
+        // Draw hit zone line
+        lctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        lctx.fillRect(0, this.hitZoneY - 2, w, 4);
+
+        // Draw hit zone indicators
+        for (const [note, pos] of Object.entries(this.keyPositions)) {
+            const iw = pos.width * 0.9;
+            const ih = 8;
+            const ix = pos.left + (pos.width - iw) / 2;
+            const iy = this.hitZoneY - ih / 2;
+            lctx.fillStyle = pos.isBlack ? 
+                'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
+            lctx.fillRect(ix, iy, iw, ih);
+            lctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            lctx.lineWidth = 2;
+            lctx.strokeRect(ix, iy, iw, ih);
+        }
+
+        this._laneCacheDirty = false;
     }
     
     drawNote(note) {
         const pos = this.keyPositions[note.note];
         if (!pos) return;
+        const ctx = this.ctx;
         
         const noteWidth = pos.width * 0.9;
-        const noteHeight = 30;
+        // Height based on duration: duration(s) * noteSpeed(px/s) * speed, min 12px
+        const dur = note.duration || 0.15;
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
         const x = pos.left + (pos.width - noteWidth) / 2;
-        const y = note.y - noteHeight / 2;
+        // note.y is the bottom edge (hit zone arrival point)
+        const y = note.y - noteHeight;
+        const r = Math.min(6, noteHeight / 2, noteWidth / 2); // corner radius
         
-        // Draw note shadow
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-        this.ctx.fillRect(x + 3, y + 3, noteWidth, noteHeight);
-        
-        // Draw note
+        // Pick colour
+        let fill;
+        const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
         if (note.missed) {
-            this.ctx.fillStyle = '#f44336';
+            fill = '#f44336';
+        } else if (note.hit && isHeld) {
+            fill = '#4CAF50'; // green — actively held
+        } else if (note.hit) {
+            fill = 'rgba(76, 175, 80, 0.4)'; // faded green — was hit, released
+        } else if (this.gameMode === 'practice' && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
+            fill = '#FFD600';
         } else {
-            this.ctx.fillStyle = pos.isBlack ? '#9C27B0' : '#2196F3';
+            fill = pos.isBlack ? '#9C27B0' : '#2196F3';
         }
         
-        this.ctx.fillRect(x, y, noteWidth, noteHeight);
+        // Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+        this._roundRect(ctx, x + 2, y + 2, noteWidth, noteHeight, r);
+        ctx.fill();
+
+        // Body
+        ctx.fillStyle = fill;
+        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 1.5;
+        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        ctx.stroke();
+
+        // Gradient highlight on top edge
+        if (noteHeight > 16) {
+            const grad = ctx.createLinearGradient(x, y, x, y + Math.min(10, noteHeight * 0.3));
+            grad.addColorStop(0, 'rgba(255,255,255,0.35)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = grad;
+            this._roundRect(ctx, x, y, noteWidth, Math.min(10, noteHeight * 0.3), r);
+            ctx.fill();
+        }
         
-        // Draw note border
-        this.ctx.strokeStyle = '#fff';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(x, y, noteWidth, noteHeight);
-        
-        // Draw note label
-        this.ctx.fillStyle = '#fff';
-        this.ctx.font = 'bold 9px Arial';
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(note.note, pos.x, note.y);
+        // Label (only if note is tall enough)
+        if (noteHeight > 18) {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 9px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(note.note, pos.x, y + noteHeight / 2);
+        }
+    }
+
+    _roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.arcTo(x + w, y, x + w, y + r, r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+        ctx.lineTo(x + r, y + h);
+        ctx.arcTo(x, y + h, x, y + h - r, r);
+        ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r);
+        ctx.closePath();
     }
     
-    drawHitZoneIndicators() {
-        // Draw hit zone line at the bottom
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-        this.ctx.fillRect(0, this.hitZoneY - 2, this.canvas.width, 4);
-        
-        // Draw indicator for each key
-        Object.entries(this.keyPositions).forEach(([note, pos]) => {
-            const width = pos.width * 0.9;
-            const height = 8;
-            const x = pos.left + (pos.width - width) / 2;
-            const y = this.hitZoneY - height / 2;
-            
-            this.ctx.fillStyle = pos.isBlack ? 
-                'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
-            this.ctx.fillRect(x, y, width, height);
-            
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(x, y, width, height);
-        });
+    _drawTimeline() {
+        if (!this.isPlaying || this.isPaused) return;
+        const ctx = this.ctx;
+        const speed = this.speedMultiplier;
+        const currentTime = (Date.now() - this.startTime) / 1000;
+        const pxPerSec = this.noteSpeed * speed;
+
+        // Determine tick interval: 1s, 5s, or 10s depending on zoom
+        let tickSec = 1;
+        if (pxPerSec < 60) tickSec = 5;
+        else if (pxPerSec < 30) tickSec = 10;
+
+        // Original song-time range visible on canvas
+        const timeAtTop = (currentTime + this.hitZoneY / pxPerSec) * speed;
+        const timeAtBottom = (currentTime - (this.canvas.height - this.hitZoneY) / pxPerSec) * speed;
+
+        const firstTick = Math.ceil(Math.max(0, timeAtBottom) / tickSec) * tickSec;
+        const lastTick = Math.floor(timeAtTop / tickSec) * tickSec;
+
+        ctx.save();
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        for (let t = firstTick; t <= lastTick; t += tickSec) {
+            const scaledT = t / speed;
+            const yy = this.hitZoneY - (scaledT - currentTime) * pxPerSec;
+            if (yy < 0 || yy > this.canvas.height) continue;
+
+            // Horizontal grid line
+            ctx.strokeStyle = (t % 5 === 0) ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, yy);
+            ctx.lineTo(this.canvas.width, yy);
+            ctx.stroke();
+
+            // Time label
+            const mins = Math.floor(t / 60);
+            const secs = Math.floor(t % 60);
+            const label = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : `${secs}s`;
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillRect(2, yy - 8, ctx.measureText(label).width + 6, 16);
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.fillText(label, 5, yy);
+        }
+        ctx.restore();
     }
     
     updateProgress(percent) {
