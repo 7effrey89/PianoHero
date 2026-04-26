@@ -820,6 +820,7 @@ class PianoHero {
     }
     
     handleKeyDown(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
         const key = e.key.toUpperCase();
         if (this.keyToNote[key]) {
             e.preventDefault();
@@ -828,6 +829,7 @@ class PianoHero {
     }
     
     handleKeyUp(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
         const key = e.key.toUpperCase();
         if (this.keyToNote[key]) {
             e.preventDefault();

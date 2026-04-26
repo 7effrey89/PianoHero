@@ -414,15 +414,15 @@ def bitmidi_search():
     resp.raise_for_status()
 
     # Parse result links from the HTML
-    # Each result is an <a> pointing to a slug like /pokemon-pokemon-center-theme-mid
+    # Each result is an <a> with a title attribute and href like /pokemon-pokemon-center-theme-mid
     results = []
     for m in re.finditer(
-        r'<a\s[^>]*href="(/[a-z0-9][a-z0-9\-]*-mid)"[^>]*>([^<]+)</a>',
+        r'<a\s[^>]*href="(/[a-z0-9][a-z0-9\-]*-mid)"[^>]*title="([^"]+)"',
         resp.text,
         re.IGNORECASE,
     ):
-        slug = m.group(1)        # e.g. /pokemon-pokemon-center-theme-mid
-        name = m.group(2).strip()  # e.g. Pokemon - Pokemon Center Theme.mid
+        slug = m.group(1)
+        name = m.group(2).strip()
         if name and slug not in [r['slug'] for r in results]:
             results.append({'slug': slug, 'name': name})
 
