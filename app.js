@@ -6,9 +6,9 @@ class PianoHero {
         this.ctx = this.canvas.getContext('2d');
         this.youtubeUrlInput = document.getElementById('youtubeUrl');
         this.loadBtn = document.getElementById('loadBtn');
-        this.startBtn = document.getElementById('startBtn');
-        this.pauseBtn = document.getElementById('pauseBtn');
-        this.resetBtn = document.getElementById('resetBtn');
+        this.startBtn = document.getElementById('playPauseBtn');
+        this.pauseBtn = document.getElementById('playPauseBtn'); // alias
+        this.resetBtn = document.getElementById('stopBtn');
         this.statusMessage = document.getElementById('statusMessage');
         this.progressBar = document.getElementById('progressBar');
         this.progressFill = document.getElementById('progressFill');
@@ -23,7 +23,11 @@ class PianoHero {
         this.backendSelect = document.getElementById('backendSelect');
         this.midiFileSelect = document.getElementById('midiFileSelect');
         this.loadMidiBtn = document.getElementById('loadMidiBtn');
-        this.autoPlayBtn = document.getElementById('autoPlayBtn');
+        this.autoPlayBtn = document.getElementById('modeToggleSwitch');
+        this.modeToggleBtn = document.getElementById('modeToggleSwitch');
+        this.modeToggleSwitch = document.getElementById('modeToggleSwitch');
+        this.playPauseBtn = document.getElementById('playPauseBtn');
+        this.stopBtn = document.getElementById('stopBtn');
         
         // Game state
         this.notes = [];
@@ -65,7 +69,7 @@ class PianoHero {
         this.speedMultiplier = 1.0;
         this.songBPM = null; // detected from loaded notes
 
-        // Game mode: 'normal', 'easy', 'practice'
+        // Game mode: 'normal', 'simple', 'coplay', 'practice'
         this.gameMode = 'normal';
         this.originalNotes = []; // unmodified notes from loader
         this.practiceWaiting = false; // true when waiting for player input
@@ -76,6 +80,9 @@ class PianoHero {
         this.heldKeys = new Set();                // keyboard keys currently held down
         this.activeNoteSources = new Map();       // note name → { source, noteGain, fadeStart, fadeEnd }
         this.heldFallingNotes = new Map();        // note name → falling note being held
+
+        // Co-Play mode: lanes the player chose to play manually
+        this.coPlayManualNotes = new Set();       // note names the player toggles as "manual"
         
         // API configuration
         this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
@@ -149,10 +156,9 @@ class PianoHero {
         this.loadBtn.addEventListener('click', () => this.loadYouTubeAudio());
         this.loadMidiBtn.addEventListener('click', () => this.loadMidiFile());
         this.midiFileSelect.addEventListener('change', () => { if (this.midiFileSelect.value) this.loadMidiFile(); });
-        this.startBtn.addEventListener('click', () => this.startGame());
-        this.autoPlayBtn.addEventListener('click', () => this.startAutoPlay());
-        this.pauseBtn.addEventListener('click', () => this.togglePause());
-        this.resetBtn.addEventListener('click', () => this.reset());
+        this.modeToggleSwitch.addEventListener('change', () => this.toggleManualAuto());
+        this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
+        this.stopBtn.addEventListener('click', () => this.reset());
 
         // Song timeline seek
         this.songTimeline.addEventListener('click', (e) => this.seekTimeline(e));
@@ -428,9 +434,8 @@ class PianoHero {
             this.updateBPMDisplay();
             this.applyGameMode();
             this.updateProgress(100);
-            this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Click Start Game to play!`;
-            this.startBtn.disabled = false;
-            this.autoPlayBtn.disabled = false;
+            this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Press Play!`;
+            this._updateControlButtons();
         } catch (error) {
             console.error('Error loading MIDI file:', error);
             this.statusMessage.textContent = 'Error: ' + error.message;
@@ -514,9 +519,8 @@ class PianoHero {
             this.updateBPMDisplay();
             this.applyGameMode();
             this.updateProgress(100);
-            this.statusMessage.textContent = `Loaded "${name}" — ${data.noteCount} notes. Click Start Game!`;
-            this.startBtn.disabled = false;
-            this.autoPlayBtn.disabled = false;
+            this.statusMessage.textContent = `Loaded "${name}" — ${data.noteCount} notes. Press Play!`;
+            this._updateControlButtons();
         } catch (err) {
             console.error('BitMidi load error:', err);
             this.statusMessage.textContent = 'Error: ' + err.message;
@@ -683,8 +687,16 @@ class PianoHero {
 
         // ── Game Mode ──
         const modeSelect = document.getElementById('gameModeSelect');
+        const coplayHint = document.getElementById('coplayHint');
         modeSelect.addEventListener('change', () => {
             this.gameMode = modeSelect.value;
+
+            // Show/hide co-play hint
+            if (coplayHint) coplayHint.style.display = this.gameMode === 'coplay' ? '' : 'none';
+
+            // Update co-play visual on keys
+            this._updateCoPlayKeyVisuals();
+
             // Re-apply notes if a song is loaded
             if (this.originalNotes.length > 0) {
                 this.applyGameMode();
@@ -722,16 +734,21 @@ class PianoHero {
     }
 
     applyGameMode() {
-        if (this.gameMode.startsWith('easy')) {
-            this.notes = this.remapToEasyMode(this.originalNotes, this.gameMode);
+        if (this.gameMode === 'simple') {
+            this.notes = this._simplifyByMerge(this.originalNotes);
         } else {
-            // Normal or practice — use original notes
+            // Normal, coplay, practice — use original notes
             this.notes = this.originalNotes.map(n => ({ ...n }));
         }
         // Compute song duration from the latest note end time
         this.songDuration = this.notes.reduce((max, n) => Math.max(max, n.time + (n.duration || 0.15)), 0);
         this.updateSongTimeline(0);
         this.rebuildKeyboardForNotes(this.notes);
+        // Re-apply co-play lane visuals after keyboard rebuild
+        if (this.gameMode === 'coplay') {
+            // Defer so _placeBlackKeys (rAF) finishes first
+            requestAnimationFrame(() => this._updateCoPlayKeyVisuals());
+        }
     }
 
     _remapFallingNotes() {
@@ -770,292 +787,43 @@ class PianoHero {
         }
     }
 
-    remapToEasyMode(notes, level = 'easy3') {
-        // ── Step 1: Simplify note density based on difficulty level ──
-        const simplified = this._simplifyNotes(notes, level);
-
-        // ── Step 2: Remap to keyboard range C3–B4 ──
-        const semitones = simplified.map(n => this.noteToSemitone(n.note));
-        const minS = Math.min(...semitones);
-        const maxS = Math.max(...semitones);
-        const noteRange = maxS - minS;
-
-        // Target: C3 (36) to B4 (59) = 24 semitones
-        const targetLow = 36;
-        const targetHigh = 59;
-        const targetRange = targetHigh - targetLow;
-
-        if (noteRange <= targetRange) {
-            const mid = Math.round((minS + maxS) / 2);
-            const targetMid = Math.round((targetLow + targetHigh) / 2);
-            const shift = targetMid - mid;
-            return simplified.map(n => {
-                const s = this.noteToSemitone(n.note);
-                const newS = Math.max(targetLow, Math.min(targetHigh, s + shift));
-                return { ...n, note: this.semitoneToNote(newS) };
-            });
-        }
-
-        // Rank-based mapping for wider songs
-        const uniqueSemitones = [...new Set(semitones)].sort((a, b) => a - b);
-        const count = uniqueSemitones.length;
-        const pitchMap = new Map();
-        if (count <= targetRange + 1) {
-            const step = count > 1 ? targetRange / (count - 1) : 0;
-            uniqueSemitones.forEach((s, i) => {
-                pitchMap.set(s, targetLow + Math.round(i * step));
-            });
-        } else {
-            uniqueSemitones.forEach(s => {
-                const normalized = (s - minS) / noteRange;
-                pitchMap.set(s, targetLow + Math.round(normalized * targetRange));
-            });
-        }
-
-        return simplified.map(n => {
-            const s = this.noteToSemitone(n.note);
-            const newS = pitchMap.get(s);
-            return { ...n, note: this.semitoneToNote(newS) };
+    /**
+     * Simple mode: aggressively merge sequential same-pitch notes into long
+     * held notes.  Any note on the same pitch that starts within 10ms after
+     * the previous note ends is absorbed, extending the duration.
+     * Original pitches are kept — the keyboard expands to fit.
+     */
+    _simplifyByMerge(notes) {
+        let work = notes.map(n => ({ ...n }));
+        work.sort((a, b) => {
+            if (a.note !== b.note) return a.note < b.note ? -1 : 1;
+            return a.time - b.time;
         });
-    }
 
-    /**
-     * Progressive note simplification pipeline.
-     *
-     * Level 1 — Melody only:
-     *   Quantize timing to 1/8 grid, extract melody (highest note per group),
-     *   merge rapid repeats, cap unique pitches at 8.
-     *
-     * Level 2 — Melody + Bass:
-     *   Quantize to 1/16 grid, keep highest + lowest per chord,
-     *   remove octave doubles, merge repeats.
-     *
-     * Level 3 — Simplified (full):
-     *   Group simultaneous notes, keep top + bottom, remove octave doubles,
-     *   merge repeats. (Previous easy mode behavior.)
-     */
-    _simplifyNotes(notes, level = 'easy3') {
-        if (!notes.length) return notes;
-
-        // ── 0. Estimate BPM for quantization grid ──
-        const beatDur = this._estimateBeatDuration(notes);
-
-        let result;
-        if (level === 'easy1') {
-            result = this._simplifyLevel1(notes, beatDur);
-        } else if (level === 'easy2') {
-            result = this._simplifyLevel2(notes, beatDur);
-        } else {
-            result = this._simplifyLevel3(notes);
-        }
-        return result;
-    }
-
-    /** Estimate beat duration (seconds) from inter-onset intervals */
-    _estimateBeatDuration(notes) {
-        if (notes.length < 2) return 0.5;
-        const iois = [];
-        for (let i = 1; i < Math.min(notes.length, 200); i++) {
-            const dt = notes[i].time - notes[i - 1].time;
-            if (dt > 0.05 && dt < 2.0) iois.push(dt);
-        }
-        if (!iois.length) return 0.5;
-        iois.sort((a, b) => a - b);
-        // Median IOI is a reasonable beat proxy
-        return iois[Math.floor(iois.length / 2)];
-    }
-
-    /** Snap time to nearest grid division */
-    _quantize(time, grid) {
-        return Math.round(time / grid) * grid;
-    }
-
-    /**
-     * Level 1: Melody Only
-     * - Quantize to 1/8-note grid
-     * - Keep ONLY the highest note per time slot (melody extraction)
-     * - Merge rapid repeats
-     * - Cap unique pitches to 8
-     */
-    _simplifyLevel1(notes, beatDur) {
-        const grid = beatDur / 2; // 1/8 note grid
-
-        // Quantize all note times
-        const quantized = notes.map(n => ({
-            ...n,
-            time: this._quantize(n.time, grid),
-            duration: Math.max(n.duration || 0.15, grid) // minimum duration = grid
-        }));
-
-        // Group by quantized time
-        const byTime = new Map();
-        for (const n of quantized) {
-            const key = n.time.toFixed(4);
-            if (!byTime.has(key)) byTime.set(key, []);
-            byTime.get(key).push(n);
-        }
-
-        // Keep only melody (highest note) per time slot
-        const melody = [];
-        for (const [, group] of byTime) {
-            let highest = group[0];
-            let highestS = this.noteToSemitone(highest.note);
-            for (let i = 1; i < group.length; i++) {
-                const s = this.noteToSemitone(group[i].note);
-                if (s > highestS) { highest = group[i]; highestS = s; }
-            }
-            melody.push(highest);
-        }
-        melody.sort((a, b) => a.time - b.time);
-
-        // Merge rapid repeated notes
-        const merged = this._mergeRepeats(melody, grid * 1.5);
-
-        // Cap unique pitches to 8 most common
-        return this._capUniquePitches(merged, 8);
-    }
-
-    /**
-     * Level 2: Melody + Bass
-     * - Quantize to 1/16-note grid
-     * - Keep highest (melody) + lowest (bass) per group
-     * - Remove octave doubles
-     * - Merge rapid repeats
-     */
-    _simplifyLevel2(notes, beatDur) {
-        const grid = beatDur / 4; // 1/16 note grid
-
-        // Quantize
-        const quantized = notes.map(n => ({
-            ...n,
-            time: this._quantize(n.time, grid),
-            duration: Math.max(n.duration || 0.15, grid * 0.8)
-        }));
-
-        // Group by quantized time
-        const byTime = new Map();
-        for (const n of quantized) {
-            const key = n.time.toFixed(4);
-            if (!byTime.has(key)) byTime.set(key, []);
-            byTime.get(key).push(n);
-        }
-
-        const reduced = [];
-        for (const [, group] of byTime) {
-            // Remove octave doubles first
-            const deduped = this._removeOctaveDoubles(group);
-
-            if (deduped.length <= 2) {
-                reduced.push(...deduped);
-            } else {
-                // Keep melody + bass
-                const sorted = deduped.sort((a, b) =>
-                    this.noteToSemitone(a.note) - this.noteToSemitone(b.note));
-                reduced.push(sorted[0]); // bass
-                reduced.push(sorted[sorted.length - 1]); // melody
-            }
-        }
-        reduced.sort((a, b) => a.time - b.time);
-
-        return this._mergeRepeats(reduced, grid * 1.5);
-    }
-
-    /**
-     * Level 3: Simplified (original behavior — most notes retained)
-     * - Group simultaneous notes (30ms window)
-     * - Remove octave doubles
-     * - Keep top + bottom
-     * - Merge rapid repeats
-     */
-    _simplifyLevel3(notes) {
-        // Group simultaneous notes (within 30ms)
-        const groups = [];
-        let currentGroup = [notes[0]];
-        for (let i = 1; i < notes.length; i++) {
-            if (notes[i].time - currentGroup[0].time <= 0.03) {
-                currentGroup.push(notes[i]);
-            } else {
-                groups.push(currentGroup);
-                currentGroup = [notes[i]];
-            }
-        }
-        groups.push(currentGroup);
-
-        const reduced = [];
-        for (const group of groups) {
-            const deduped = this._removeOctaveDoubles(group);
-            if (deduped.length <= 2) {
-                reduced.push(...deduped);
-            } else {
-                const sorted = deduped.sort((a, b) =>
-                    this.noteToSemitone(a.note) - this.noteToSemitone(b.note));
-                reduced.push(sorted[0]);
-                reduced.push(sorted[sorted.length - 1]);
-            }
-        }
-
-        return this._mergeRepeats(reduced, 0.15);
-    }
-
-    /** Remove octave doubles from a group: for each pitch class, keep only the highest */
-    _removeOctaveDoubles(group) {
-        const byPitchClass = new Map();
-        for (const n of group) {
-            const s = this.noteToSemitone(n.note);
-            const pc = s % 12;
-            const existing = byPitchClass.get(pc);
-            if (!existing || s > this.noteToSemitone(existing.note)) {
-                byPitchClass.set(pc, n);
-            }
-        }
-        return [...byPitchClass.values()];
-    }
-
-    /** Merge consecutive notes on the same pitch within a time gap */
-    _mergeRepeats(notes, maxGap) {
         const merged = [];
-        for (let i = 0; i < notes.length; i++) {
-            const note = { ...notes[i] };
-            while (i + 1 < notes.length
-                && notes[i + 1].note === note.note
-                && notes[i + 1].time - (note.time + (note.duration || 0.15)) < maxGap) {
-                const next = notes[i + 1];
-                note.duration = (next.time + (next.duration || 0.15)) - note.time;
-                i++;
+        let i = 0;
+        while (i < work.length) {
+            const n = { ...work[i] };
+            let nEnd = n.time + (n.duration || 0.15);
+            while (i + 1 < work.length && work[i + 1].note === n.note) {
+                const nxt = work[i + 1];
+                if (nxt.time <= nEnd + 0.01) {
+                    const nxtEnd = nxt.time + (nxt.duration || 0.15);
+                    if (nxtEnd > nEnd) {
+                        n.duration = nxtEnd - n.time;
+                        nEnd = nxtEnd;
+                    }
+                    i++;
+                } else {
+                    break;
+                }
             }
-            merged.push(note);
+            merged.push(n);
+            i++;
         }
+
+        merged.sort((a, b) => a.time - b.time);
         return merged;
-    }
-
-    /** Keep only the N most frequently used pitches — remap or drop the rest */
-    _capUniquePitches(notes, maxPitches) {
-        // Count frequency of each note name
-        const freq = new Map();
-        for (const n of notes) {
-            freq.set(n.note, (freq.get(n.note) || 0) + 1);
-        }
-        if (freq.size <= maxPitches) return notes;
-
-        // Keep top N most common pitches
-        const ranked = [...freq.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, maxPitches)
-            .map(e => e[0]);
-        const keepSet = new Set(ranked);
-
-        // For notes not in the set, snap to nearest kept pitch
-        const keptSemitones = ranked.map(n => this.noteToSemitone(n)).sort((a, b) => a - b);
-        return notes.map(n => {
-            if (keepSet.has(n.note)) return n;
-            const s = this.noteToSemitone(n.note);
-            let bestDist = Infinity, bestS = keptSemitones[0];
-            for (const ks of keptSemitones) {
-                const d = Math.abs(s - ks);
-                if (d < bestDist) { bestDist = d; bestS = ks; }
-            }
-            return { ...n, note: this.semitoneToNote(bestS) };
-        });
     }
 
     async loadSoundfont(instrument) {
@@ -1200,10 +968,9 @@ class PianoHero {
             this.updateBPMDisplay();
             this.applyGameMode();
             
-            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
+            this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Press Play!`;
             this.updateProgress(100);
-            this.startBtn.disabled = false;
-            this.autoPlayBtn.disabled = false;
+            this._updateControlButtons();
             
         } catch (error) {
             console.error('Error loading YouTube audio:', error);
@@ -1213,8 +980,7 @@ class PianoHero {
             if (this.enableDemoFallback) {
                 this.statusMessage.textContent += ' Using demo notes instead.';
                 this.notes = this.generateDemoNotes();
-                this.startBtn.disabled = false;
-                this.autoPlayBtn.disabled = false;
+                this._updateControlButtons();
             } else {
                 this.statusMessage.textContent += ' Demo fallback is disabled.';
             }
@@ -1272,7 +1038,7 @@ class PianoHero {
     
     startGame() {
         if (this.notes.length === 0) {
-            alert('Please load a YouTube video first');
+            alert('Please load a MIDI file first');
             return;
         }
 
@@ -1290,12 +1056,28 @@ class PianoHero {
 
         this.isPlaying = true;
         this.isPaused = false;
-        // Lead-in: offset start so notes scroll from top before first note reaches hit zone
-        const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
-        this.startTime = Date.now() + leadInSec * 1000;
-        this.startBtn.disabled = false;
-        this.autoPlayBtn.disabled = false;
-        this.pauseBtn.disabled = false;
+
+        // If user pre-seeked on the timeline, fallingNotes and startTime are already set.
+        // Otherwise start from the beginning with a lead-in.
+        const preSeeked = this.fallingNotes.length > 0 && this.startTime;
+        if (!preSeeked) {
+            const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
+            this.startTime = Date.now() + leadInSec * 1000;
+
+            this.fallingNotes = this.notes.map(note => ({
+                ...note,
+                y: -50,
+                hit: false,
+                missed: false
+            }));
+        } else {
+            // Shift startTime so the game clock picks up from the pre-seeked position
+            const refTime = this.pauseTime || Date.now();
+            const gameClockSec = (refTime - this.startTime) / 1000;
+            this.startTime = Date.now() - gameClockSec * 1000;
+        }
+
+        this._updateControlButtons();
 
         // Practice mode setup
         this.practiceWaiting = false;
@@ -1304,19 +1086,18 @@ class PianoHero {
         this.practicePauseOffset = 0;
 
         const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode.startsWith('easy') ? `Easy mode (${this.gameMode.slice(-1)})` : 'Game';
+                          this.gameMode === 'coplay' ? 'Co-Play' :
+                          this.gameMode === 'simple' ? 'Simple mode' : 'Game';
         this.statusMessage.textContent = `${modeLabel} in progress...`;
-        
-        // Create falling notes (keep original times; speed is applied live in update())
-        this.fallingNotes = this.notes.map(note => ({
-            ...note,
-            y: -50,
-            hit: false,
-            missed: false
-        }));
         
         this.totalNotes = this.fallingNotes.length;
         
+        // Co-Play: auto-start auto-play for non-manual lanes
+        if (this.gameMode === 'coplay' && this.coPlayManualNotes.size > 0) {
+            this.isAutoPlay = true;
+            this._scheduleAutoPlayNotes();
+        }
+
         // In a real implementation, start playing the actual audio here
         this.playDemoAudio();
     }
@@ -1325,7 +1106,6 @@ class PianoHero {
         // Cancel auto-play timeouts and clear active keys
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
-        this.isAutoPlay = false;
         document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
         // Stop all currently sounding notes
         for (const note of this.activeNoteSources.keys()) {
@@ -1336,22 +1116,41 @@ class PianoHero {
         // Unpause if paused
         if (this.isPaused) {
             this.isPaused = false;
-            this.pauseBtn.textContent = 'Pause';
             const pauseDuration = Date.now() - this.pauseTime;
             this.startTime += pauseDuration;
         }
 
-        this.startBtn.disabled = false;
-        this.autoPlayBtn.disabled = false;
-        this.pauseBtn.disabled = false;
+        // Co-Play: keep auto-playing non-manual lanes
+        if (this.gameMode === 'coplay' && this.coPlayManualNotes.size > 0) {
+            this.isAutoPlay = true;
+            this._scheduleAutoPlayNotes();
+        } else {
+            this.isAutoPlay = false;
+        }
+
+        this._updateControlButtons();
         const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode.startsWith('easy') ? `Easy mode (${this.gameMode.slice(-1)})` : 'Manual play';
+                          this.gameMode === 'coplay' ? 'Co-Play' :
+                          this.gameMode === 'simple' ? 'Simple mode' : 'Manual play';
         this.statusMessage.textContent = `${modeLabel} — continuing from current position!`;
     }
     
     playDemoAudio() {
         // In a real implementation, this would play the YouTube audio
         // For demo, we just track time
+    }
+
+    /** Apply or remove coplay-manual CSS class on all piano keys */
+    _updateCoPlayKeyVisuals() {
+        document.querySelectorAll('.key').forEach(k => {
+            const note = k.dataset.note;
+            if (this.gameMode === 'coplay' && this.coPlayManualNotes.has(note)) {
+                k.classList.add('coplay-manual');
+            } else {
+                k.classList.remove('coplay-manual');
+            }
+        });
+        this._laneCacheDirty = true;
     }
 
     startAutoPlay() {
@@ -1379,22 +1178,107 @@ class PianoHero {
             // Unpause if paused
             if (this.isPaused) {
                 this.isPaused = false;
-                this.pauseBtn.textContent = 'Pause';
                 const pauseDuration = Date.now() - this.pauseTime;
                 this.startTime += pauseDuration;
             }
         }
 
         this.isAutoPlay = true;
-        this.startBtn.disabled = false;
-        this.autoPlayBtn.disabled = false;
-        this.pauseBtn.disabled = false;
+        this._updateControlButtons();
 
-        this.statusMessage.textContent = continuing
-            ? 'Auto Play — continuing from current position!'
-            : 'Auto Play — watch and listen!';
+        const isCoPlay = this.gameMode === 'coplay';
+        const manualCount = this.coPlayManualNotes.size;
+        if (isCoPlay && manualCount > 0) {
+            this.statusMessage.textContent = continuing
+                ? `Co-Play — ${manualCount} manual lane${manualCount > 1 ? 's' : ''}, continuing!`
+                : `Co-Play — ${manualCount} manual lane${manualCount > 1 ? 's' : ''}, go!`;
+        } else {
+            this.statusMessage.textContent = continuing
+                ? 'Auto Play — continuing from current position!'
+                : 'Auto Play — watch and listen!';
+        }
 
         this._scheduleAutoPlayNotes();
+    }
+
+    /** Toggle between Manual and Auto play mode */
+    toggleManualAuto() {
+        if (this.isPaused || (!this.isPlaying && !this.isPaused)) {
+            // While paused or before game starts, just flip the flag — don't start/resume
+            this.isAutoPlay = this.modeToggleSwitch.checked;
+            this._updateControlButtons();
+            return;
+        }
+        if (this.modeToggleSwitch.checked) {
+            this.startAutoPlay();
+        } else {
+            this._switchToManual();
+        }
+        this._updateControlButtons();
+    }
+
+    /** Play/Pause toggle — starts game if not yet started */
+    togglePlayPause() {
+        if (!this.isPlaying && !this.isPaused) {
+            // Not started — begin
+            if (this.isAutoPlay) {
+                this.startAutoPlay();
+            } else {
+                this.startGame();
+            }
+            this._updateControlButtons();
+            return;
+        }
+
+        // Toggle pause
+        this.isPaused = !this.isPaused;
+
+        if (this.isPaused) {
+            this.pauseTime = Date.now();
+            if (this.isAutoPlay) {
+                this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+                this.autoPlayTimeouts = [];
+                document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+                for (const note of this.activeNoteSources.keys()) {
+                    this.stopNoteSound(note);
+                }
+                this.heldFallingNotes.clear();
+            }
+            this.statusMessage.textContent = 'Paused — press Play to continue';
+        } else {
+            const pauseDuration = Date.now() - this.pauseTime;
+            this.startTime += pauseDuration;
+            if (this.isAutoPlay) {
+                this._scheduleAutoPlayNotes();
+                this.statusMessage.textContent = 'Auto Play in progress...';
+            } else {
+                this.statusMessage.textContent = 'Game in progress...';
+            }
+        }
+        this._updateControlButtons();
+    }
+
+    /** Update all control button states and labels */
+    _updateControlButtons() {
+        const hasNotes = this.notes.length > 0;
+        const playing = this.isPlaying && !this.isPaused;
+
+        // Mode toggle: always enabled
+        this.modeToggleSwitch.disabled = false;
+        this.modeToggleSwitch.checked = this.isAutoPlay;
+
+        // Play / Pause
+        this.playPauseBtn.disabled = !hasNotes;
+        if (playing) {
+            this.playPauseBtn.innerHTML = '&#10074;&#10074; Pause';
+            this.playPauseBtn.classList.add('playing');
+        } else {
+            this.playPauseBtn.innerHTML = '&#9654; Play';
+            this.playPauseBtn.classList.remove('playing');
+        }
+
+        // Stop
+        this.stopBtn.disabled = !this.isPlaying && !this.isPaused;
     }
 
     _scheduleAutoPlayNotes() {
@@ -1403,8 +1287,12 @@ class PianoHero {
 
         // Schedule automatic key presses for remaining notes
         const speed = this.speedMultiplier;
+        const isCoPlay = this.gameMode === 'coplay';
         this.fallingNotes.forEach(note => {
             if (note.hit || note.missed) return; // skip already played notes
+
+            // Co-Play: skip notes on manual lanes — player must hit them
+            if (isCoPlay && this.coPlayManualNotes.has(note.note)) return;
 
             const delay = Math.max(0, (note.time / speed - currentTime) * 1000);
             const key = this.noteToKey[note.note];
@@ -1442,36 +1330,7 @@ class PianoHero {
         });
     }
     
-    togglePause() {
-        this.isPaused = !this.isPaused;
-        
-        if (this.isPaused) {
-            this.pauseBtn.textContent = 'Resume';
-            this.pauseTime = Date.now();
-            // Stop auto-play sounds/visuals while paused
-            if (this.isAutoPlay) {
-                this.autoPlayTimeouts.forEach(t => clearTimeout(t));
-                this.autoPlayTimeouts = [];
-                document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
-                for (const note of this.activeNoteSources.keys()) {
-                    this.stopNoteSound(note);
-                }
-                this.heldFallingNotes.clear();
-            }
-            this.statusMessage.textContent = 'Game paused — press Start Game or Auto Play to continue';
-        } else {
-            this.pauseBtn.textContent = 'Pause';
-            const pauseDuration = Date.now() - this.pauseTime;
-            this.startTime += pauseDuration;
-            // If resuming auto-play, reschedule remaining notes
-            if (this.isAutoPlay) {
-                this._scheduleAutoPlayNotes();
-                this.statusMessage.textContent = 'Auto Play in progress...';
-            } else {
-                this.statusMessage.textContent = 'Game in progress...';
-            }
-        }
-    }
+    // togglePause is now handled by togglePlayPause()
     
     reset() {
         this.isPlaying = false;
@@ -1499,12 +1358,9 @@ class PianoHero {
         document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
         this.updateScore();
         this.updateSongTimeline(0);
-        this.startBtn.disabled = this.notes.length === 0;
-        this.autoPlayBtn.disabled = this.notes.length === 0;
-        this.pauseBtn.disabled = true;
-        this.pauseBtn.textContent = 'Pause';
+        this._updateControlButtons();
         this.statusMessage.textContent = this.notes.length > 0 ? 
-            'Ready to play! Click Start Game.' : 'Enter a YouTube URL to start';
+            'Ready to play! Press Play.' : 'Load a MIDI file to start';
     }
     
     handleKeyDown(e) {
@@ -1526,6 +1382,28 @@ class PianoHero {
     }
     
     handlePianoKeyPress(keyElement) {
+        // Co-Play lane toggle: clicking a key toggles it as manual
+        if (this.gameMode === 'coplay') {
+            const note = keyElement.dataset.note;
+            if (note) {
+                if (this.coPlayManualNotes.has(note)) {
+                    this.coPlayManualNotes.delete(note);
+                    keyElement.classList.remove('coplay-manual');
+                } else {
+                    this.coPlayManualNotes.add(note);
+                    keyElement.classList.add('coplay-manual');
+                }
+                this._laneCacheDirty = true;
+                // If mid-game, reschedule auto-play so toggled lanes update immediately
+                if (this.isPlaying && !this.isPaused && this.isAutoPlay) {
+                    this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+                    this.autoPlayTimeouts = [];
+                    this._scheduleAutoPlayNotes();
+                }
+                return; // don't play the note on toggle click
+            }
+        }
+
         const key = keyElement.dataset.key;
         if (key) {
             this.pressKey(key);
@@ -1785,22 +1663,18 @@ class PianoHero {
             }
         }
         
-        // Hit the closest note if found
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (Date.now() - this.startTime) / 1000; // when the key was pressed
+            closestNote.holdStart = (Date.now() - this.startTime) / 1000;
             this.combo++;
             this.hitNotes++;
             
-            // Calculate score based on accuracy
             const accuracy = 1 - (closestDistance / this.hitTolerance);
             const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
             this.score += points;
             
             this.updateScore();
             this.showHitFeedback(note, true);
-
-            // Track this as a held note for visual feedback
             this.heldFallingNotes.set(note, closestNote);
         }
     }
@@ -1843,7 +1717,7 @@ class PianoHero {
 
     seekTimeline(e) {
         if (!this.songDuration || this.songDuration <= 0) return;
-        if (!this.isPlaying && !this.isPaused) return;
+        if (!this.notes || this.notes.length === 0) return;
 
         const rect = this.songTimeline.getBoundingClientRect();
         const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -1851,10 +1725,12 @@ class PianoHero {
         const speed = this.speedMultiplier;
         // Game clock = seekTimeSec / speed (since update uses scaledNoteTime = note.time / speed)
         const gameClockSec = seekTimeSec / speed;
+        const notYetStarted = !this.isPlaying && !this.isPaused;
 
         // Adjust startTime so the game clock reads gameClockSec
-        if (this.isPaused) {
-            this.startTime = this.pauseTime - gameClockSec * 1000;
+        if (this.isPaused || notYetStarted) {
+            const refTime = this.pauseTime || Date.now();
+            this.startTime = refTime - gameClockSec * 1000;
         } else {
             this.startTime = Date.now() - gameClockSec * 1000;
         }
@@ -1891,6 +1767,22 @@ class PianoHero {
         if (this.isAutoPlay && !this.isPaused) {
             this._scheduleAutoPlayNotes();
         }
+
+        // If paused or not yet started, force a single render frame so notes are visible
+        if (this.isPaused || notYetStarted) {
+            this._renderAtTime(gameClockSec);
+        }
+    }
+
+    /** Compute note Y positions for a given game clock time and draw one frame */
+    _renderAtTime(gameClockSec) {
+        const speed = this.speedMultiplier;
+        for (const note of this.fallingNotes) {
+            const scaledNoteTime = note.time / speed;
+            const timeUntilHit = scaledNoteTime - gameClockSec;
+            note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
+        }
+        this.draw();
     }
     
     update() {
@@ -1943,9 +1835,7 @@ class PianoHero {
             this.updateSongTimeline(this.songDuration);
             this.statusMessage.textContent = 
                 `Game Over! Final Score: ${this.score} | Best Streak: ${this.maxCombo} | Accuracy: ${this.accuracyElement.textContent}%`;
-            this.startBtn.disabled = false;
-            this.autoPlayBtn.disabled = false;
-            this.pauseBtn.disabled = true;
+            this._updateControlButtons();
         }
     }
 
@@ -1958,9 +1848,7 @@ class PianoHero {
             document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
             this.statusMessage.textContent = 
                 `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
-            this.startBtn.disabled = false;
-            this.autoPlayBtn.disabled = false;
-            this.pauseBtn.disabled = true;
+            this._updateControlButtons();
             return;
         }
 
@@ -2086,16 +1974,23 @@ class PianoHero {
         const lctx = this._laneCanvas.getContext('2d');
         lctx.clearRect(0, 0, w, h);
 
+        const isCoPlay = this.gameMode === 'coplay';
+
         // Draw vertical lanes
         for (const note of this.allNotes) {
             const pos = this.keyPositions[note];
             if (!pos) continue;
-            
-            lctx.fillStyle = pos.isBlack ? 
-                'rgba(80, 40, 120, 0.15)' : 'rgba(255, 255, 255, 0.08)';
+
+            const isManual = isCoPlay && this.coPlayManualNotes.has(note);
+            if (isManual) {
+                lctx.fillStyle = 'rgba(255, 165, 0, 0.18)'; // orange tint for manual lanes
+            } else {
+                lctx.fillStyle = pos.isBlack ? 
+                    'rgba(80, 40, 120, 0.15)' : 'rgba(255, 255, 255, 0.08)';
+            }
             lctx.fillRect(pos.left, 0, pos.width, h);
             
-            lctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            lctx.strokeStyle = isManual ? 'rgba(255, 165, 0, 0.4)' : 'rgba(255, 255, 255, 0.2)';
             lctx.lineWidth = 2;
             lctx.beginPath();
             lctx.moveTo(pos.left, 0);
@@ -2140,19 +2035,31 @@ class PianoHero {
         const y = note.y - noteHeight;
         const r = Math.min(6, noteHeight / 2, noteWidth / 2); // corner radius
         
-        // Pick colour
+        // Pick colour — hand-aware like Synthesia
+        // hand 0 = right hand (green tones), hand 1 = left hand (blue tones)
         let fill;
         const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
+        const isCoPlayManual = this.gameMode === 'coplay' && this.coPlayManualNotes.has(note.note);
+        const hand = note.hand || 0;
         if (note.missed) {
             fill = '#f44336';
         } else if (note.hit && isHeld) {
-            fill = '#4CAF50'; // green — actively held
+            fill = hand === 0 ? '#66BB6A' : '#42A5F5'; // brighter when held
         } else if (note.hit) {
-            fill = 'rgba(76, 175, 80, 0.4)'; // faded green — was hit, released
+            fill = hand === 0 ? 'rgba(102, 187, 106, 0.4)' : 'rgba(66, 165, 245, 0.4)';
         } else if (this.gameMode === 'practice' && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
             fill = '#FFD600';
+        } else if (isCoPlayManual) {
+            fill = '#FF9800';
+        } else if (this.gameMode === 'coplay') {
+            fill = hand === 0 ? 'rgba(76, 175, 80, 0.45)' : 'rgba(33, 150, 243, 0.45)';
         } else {
-            fill = pos.isBlack ? '#9C27B0' : '#2196F3';
+            // Normal mode: right hand = green, left hand = blue/purple
+            if (hand === 0) {
+                fill = pos.isBlack ? '#388E3C' : '#4CAF50';
+            } else {
+                fill = pos.isBlack ? '#1565C0' : '#2196F3';
+            }
         }
         
         // Shadow

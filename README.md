@@ -248,3 +248,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## MIDI sources:
 https://onlinesequencer.net/playlist/23554/1989077
+
+Linkin Park - Numb - Piano Tutorial Synthesia (Download MIDI)
+https://www.youtube.com/watch?v=_3dAxBfGWK4

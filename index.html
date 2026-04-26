@@ -60,10 +60,14 @@
             </div>
             <div class="controls-row">
                 <div class="game-controls">
-                    <button id="startBtn" disabled>Start Game</button>
-                    <button id="autoPlayBtn" disabled>Auto Play</button>
-                    <button id="pauseBtn" disabled>Pause</button>
-                    <button id="resetBtn">Reset</button>
+                    <label class="mode-toggle">
+                        <span class="toggle-label toggle-label-manual">Manual</span>
+                        <input type="checkbox" id="modeToggleSwitch">
+                        <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        <span class="toggle-label toggle-label-auto">Auto</span>
+                    </label>
+                    <button id="playPauseBtn" disabled>&#9654; Play</button>
+                    <button id="stopBtn" disabled>&#9632; Stop</button>
                 </div>
             </div>
         </div>
@@ -139,11 +143,13 @@
                     <label for="gameModeSelect">Mode</label>
                     <select id="gameModeSelect">
                         <option value="normal">Normal</option>
-                        <option value="easy1">Easy 1 — Melody Only</option>
-                        <option value="easy2">Easy 2 — Melody + Bass</option>
-                        <option value="easy3">Easy 3 — Simplified</option>
+                        <option value="simple">Simple (merged notes)</option>
+                        <option value="coplay">Co-Play (pick your lanes)</option>
                         <option value="practice">Practice (wait for input)</option>
                     </select>
+                </div>
+                <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
+                    <span class="setting-info">Click piano keys to toggle manual lanes. Unselected lanes auto-play.</span>
                 </div>
             </div>
             </div>

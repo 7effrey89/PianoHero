@@ -137,36 +137,135 @@ def download_youtube_audio(video_id, output_path):
         return False
 
 def convert_midi_to_notes(midi_path):
-    """Convert MIDI file to note events for the game"""
+    """Convert MIDI file to note events for the game.
+
+    Uses mido.merge_tracks() so that tempo meta-events (which typically
+    live in track 0 of Type-1 files) are interleaved correctly with note
+    events from all other tracks.  active_notes is keyed by (channel, note)
+    so the same pitch on different channels doesn't collide.
+    """
     try:
         mid = mido.MidiFile(midi_path)
         notes = []
         tempo = 500000  # Default tempo (120 BPM)
-        
-        for track in mid.tracks:
-            current_time = 0
-            active_notes = {}
-            for msg in track:
-                current_time += mido.tick2second(msg.time, mid.ticks_per_beat, tempo)
-                
-                if msg.type == 'set_tempo':
-                    tempo = msg.tempo
-                elif msg.type == 'note_on' and msg.velocity > 0:
-                    active_notes[msg.note] = current_time
-                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                    if msg.note in active_notes:
-                        start_time = active_notes[msg.note]
-                        duration = current_time - start_time
+
+        current_time = 0
+        active_notes = {}  # (channel, midi_note) -> (start_time, channel)
+        # Track which channels carry notes (for hand assignment)
+        note_channels = set()
+
+        for msg in mido.merge_tracks(mid.tracks):
+            current_time += mido.tick2second(msg.time, mid.ticks_per_beat, tempo)
+
+            if msg.type == 'set_tempo':
+                tempo = msg.tempo
+            elif msg.type == 'note_on' and msg.velocity > 0:
+                key = (msg.channel, msg.note)
+                note_channels.add(msg.channel)
+                # Re-trigger: close the previous instance of this note first
+                if key in active_notes:
+                    start_time = active_notes[key]
+                    duration = current_time - start_time
+                    if duration > 0:
                         note_name = midi_note_to_game_note(msg.note)
-                        
                         if note_name:
                             notes.append({
                                 'note': note_name,
                                 'time': start_time,
-                                'duration': duration
+                                'duration': duration,
+                                'ch': msg.channel
                             })
-                        del active_notes[msg.note]
-        
+                active_notes[key] = current_time
+            elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                key = (msg.channel, msg.note)
+                if key in active_notes:
+                    start_time = active_notes[key]
+                    duration = current_time - start_time
+                    note_name = midi_note_to_game_note(msg.note)
+                    if note_name and duration > 0:
+                        notes.append({
+                            'note': note_name,
+                            'time': start_time,
+                            'duration': duration,
+                            'ch': msg.channel
+                        })
+                    del active_notes[key]
+
+        # Flush notes that never received a note_off
+        for (channel, midi_note), start_time in active_notes.items():
+            note_name = midi_note_to_game_note(midi_note)
+            if note_name:
+                notes.append({
+                    'note': note_name,
+                    'time': start_time,
+                    'duration': 0.25,
+                    'ch': channel
+                })
+
+        # Assign hand labels based on channel median pitch
+        if len(note_channels) >= 2:
+            ch_list = sorted(note_channels)
+            ch_pitches = {c: [] for c in ch_list}
+            for n in notes:
+                ch_pitches[n['ch']].append(n['note'])
+            
+            note_order = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+            def pitch_val(name):
+                oct = int(name[-1])
+                base = name[:-1]
+                return oct * 12 + note_order.index(base)
+            
+            ch_median = {}
+            for c, pitches in ch_pitches.items():
+                if pitches:
+                    vals = sorted(pitch_val(p) for p in pitches)
+                    ch_median[c] = vals[len(vals) // 2]
+                else:
+                    ch_median[c] = 0
+            
+            sorted_chs = sorted(ch_median.keys(), key=lambda c: ch_median[c], reverse=True)
+            hand_map = {}
+            for i, c in enumerate(sorted_chs):
+                hand_map[c] = i
+            
+            for n in notes:
+                n['hand'] = hand_map.get(n['ch'], 0)
+        else:
+            for n in notes:
+                n['hand'] = 0
+
+        # Remove internal ch field
+        for n in notes:
+            del n['ch']
+
+        # Merge truly overlapping same-pitch notes (one starts while the
+        # other is still sounding).  Sequential notes that merely abut
+        # (end == start) must stay separate — they are repeated key presses.
+        notes.sort(key=lambda x: (x['note'], x['time']))
+        merged = []
+        i = 0
+        while i < len(notes):
+            n = dict(notes[i])
+            n_end = n['time'] + n['duration']
+            # Only absorb notes that start DURING the current note (true overlap)
+            while i + 1 < len(notes) and notes[i + 1]['note'] == n['note']:
+                nxt = notes[i + 1]
+                nxt_start = nxt['time']
+                # Strict overlap: next note starts before current note ends
+                # Small tolerance (10ms) for MIDI timing jitter only
+                if nxt_start < n_end - 0.01:
+                    # Extend to cover the later note
+                    nxt_end = nxt_start + nxt['duration']
+                    if nxt_end > n_end:
+                        n['duration'] = nxt_end - n['time']
+                        n_end = nxt_end
+                    i += 1
+                else:
+                    break
+            merged.append(n)
+            i += 1
+        notes = merged
+
         # Sort by time
         notes.sort(key=lambda x: x['time'])
         return notes

@@ -266,29 +266,90 @@ button {
     transform: translateY(-2px);
 }
 
-#autoPlayBtn {
+/* Manual / Auto toggle switch */
+.mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.mode-toggle input[type="checkbox"] {
+    display: none;
+}
+
+.toggle-track {
+    position: relative;
+    width: 44px;
+    height: 24px;
     background: #2196F3;
+    border-radius: 12px;
+    transition: background 0.3s;
+    flex-shrink: 0;
 }
 
-#autoPlayBtn:not(:disabled):hover {
-    background: #1976D2;
-    transform: translateY(-2px);
+.mode-toggle input:checked ~ .toggle-track {
+    background: #4CAF50;
 }
 
-#pauseBtn {
+.toggle-knob {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.3s;
+}
+
+.mode-toggle input:checked ~ .toggle-track .toggle-knob {
+    transform: translateX(20px);
+}
+
+.toggle-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.4);
+    transition: color 0.3s;
+}
+
+/* Unchecked: Manual is active */
+.mode-toggle input:not(:checked) ~ .toggle-label-manual {
+    color: #fff;
+}
+
+/* Checked: Auto is active */
+.mode-toggle input:checked ~ .toggle-label-auto {
+    color: #fff;
+}
+
+.mode-toggle input:disabled ~ .toggle-track {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+#playPauseBtn {
+    background: #4CAF50;
+}
+
+#playPauseBtn.playing {
     background: #ff9800;
 }
 
-#pauseBtn:not(:disabled):hover {
-    background: #e68900;
+#playPauseBtn:not(:disabled):hover {
+    filter: brightness(1.15);
+    transform: translateY(-2px);
 }
 
-#resetBtn {
+#stopBtn {
     background: #f44336;
 }
 
-#resetBtn:hover {
+#stopBtn:not(:disabled):hover {
     background: #da190b;
+    transform: translateY(-2px);
 }
 
 .score-section {
@@ -551,6 +612,30 @@ button {
 @keyframes practiceGlow {
     from { box-shadow: 0 0 8px #FFD600; }
     to { box-shadow: 0 0 20px #FFD600, 0 0 40px rgba(255, 214, 0, 0.4); }
+}
+
+/* Co-Play mode: manual lane keys */
+.key.coplay-manual {
+    animation: coplayPulse 1.2s ease-in-out infinite alternate;
+}
+
+.key.white.coplay-manual {
+    background: linear-gradient(to bottom, #FF9800 0%, #F57C00 100%) !important;
+    color: #fff;
+}
+
+.key.black.coplay-manual {
+    background: linear-gradient(to bottom, #FF9800 0%, #E65100 100%) !important;
+}
+
+@keyframes coplayPulse {
+    from { box-shadow: 0 0 6px rgba(255, 152, 0, 0.6); }
+    to { box-shadow: 0 0 16px rgba(255, 152, 0, 0.9), 0 0 30px rgba(255, 152, 0, 0.3); }
+}
+
+.coplay-hint .setting-info {
+    color: #FF9800;
+    font-style: italic;
 }
 
 /* Settings Toolbar: Sound + Game side by side */
