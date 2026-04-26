@@ -15,6 +15,11 @@ class PianoHero {
         this.scoreElement = document.getElementById('score');
         this.comboElement = document.getElementById('combo');
         this.accuracyElement = document.getElementById('accuracy');
+        this.streakElement = document.getElementById('streak');
+        this.songTimeline = document.getElementById('songTimeline');
+        this.songTimelineFill = document.getElementById('songTimelineFill');
+        this.songTimelineThumb = document.getElementById('songTimelineThumb');
+        this.songTimeLabel = document.getElementById('songTimeLabel');
         this.backendSelect = document.getElementById('backendSelect');
         this.midiFileSelect = document.getElementById('midiFileSelect');
         this.loadMidiBtn = document.getElementById('loadMidiBtn');
@@ -25,12 +30,14 @@ class PianoHero {
         this.fallingNotes = [];
         this.score = 0;
         this.combo = 0;
+        this.maxCombo = 0;
         this.totalNotes = 0;
         this.hitNotes = 0;
         this.missedNotes = 0;
         this.isPlaying = false;
         this.isPaused = false;
         this.startTime = 0;
+        this.songDuration = 0; // total song length in seconds
         this.audioContext = null;
         this.audioBuffer = null;
         this.audioSource = null;
@@ -146,6 +153,9 @@ class PianoHero {
         this.autoPlayBtn.addEventListener('click', () => this.startAutoPlay());
         this.pauseBtn.addEventListener('click', () => this.togglePause());
         this.resetBtn.addEventListener('click', () => this.reset());
+
+        // Song timeline seek
+        this.songTimeline.addEventListener('click', (e) => this.seekTimeline(e));
         
         // Keyboard events
         document.addEventListener('keydown', (e) => this.handleKeyDown(e));
@@ -589,10 +599,10 @@ class PianoHero {
     }
 
     initSoundPanel() {
-        // Toggle panel
-        document.getElementById('soundPanelToggle').addEventListener('click', () => {
-            document.getElementById('soundPanelBody').classList.toggle('collapsed');
-            document.querySelector('.sound-panel-header .toggle-arrow').classList.toggle('open');
+        // Shared settings toggle (expands/collapses both panels together)
+        document.getElementById('settingsToggle').addEventListener('click', () => {
+            document.getElementById('settingsPanelsBody').classList.toggle('collapsed');
+            document.querySelector('#settingsToggle .toggle-arrow').classList.toggle('open');
         });
 
         // Instrument selector — loads soundfont when changed
@@ -619,13 +629,6 @@ class PianoHero {
     }
 
     initGameSettings() {
-        // Toggle panel
-        document.getElementById('gameSettingsToggle').addEventListener('click', () => {
-            document.getElementById('gameSettingsBody').classList.toggle('collapsed');
-            // Toggle the arrow inside this panel specifically
-            document.querySelector('.game-settings-header .toggle-arrow').classList.toggle('open');
-        });
-
         // ── Key Scale ──
         const scaleSlider = document.getElementById('keyScaleSlider');
         const scaleInput = document.getElementById('keyScaleInput');
@@ -646,7 +649,23 @@ class PianoHero {
 
         const applySpeed = (val) => {
             const pct = Math.max(25, Math.min(150, parseInt(val) || 100));
-            this.speedMultiplier = pct / 100;
+            const newSpeed = pct / 100;
+            const oldSpeed = this.speedMultiplier;
+
+            // Adjust startTime to preserve current song position when speed changes mid-song
+            if (this.isPlaying && oldSpeed !== newSpeed) {
+                const now = this.isPaused ? this.pauseTime : Date.now();
+                const currentTime = (now - this.startTime) / 1000;
+                // songPos = currentTime * oldSpeed; newCurrentTime = songPos / newSpeed
+                const newCurrentTime = currentTime * oldSpeed / newSpeed;
+                if (this.isPaused) {
+                    this.startTime = this.pauseTime - newCurrentTime * 1000;
+                } else {
+                    this.startTime = Date.now() - newCurrentTime * 1000;
+                }
+            }
+
+            this.speedMultiplier = newSpeed;
             speedSlider.value = pct;
             speedInput.value = pct;
             this.updateBPMDisplay();
@@ -655,38 +674,7 @@ class PianoHero {
             if (this.isAutoPlay && this.isPlaying && !this.isPaused) {
                 this.autoPlayTimeouts.forEach(t => clearTimeout(t));
                 this.autoPlayTimeouts = [];
-                const currentTime = (Date.now() - this.startTime) / 1000;
-                const speed = this.speedMultiplier;
-                this.fallingNotes.forEach(note => {
-                    if (note.hit || note.missed) return;
-                    const delay = Math.max(0, (note.time / speed - currentTime) * 1000);
-                    const key = this.noteToKey[note.note];
-                    const holdMs = Math.max(80, ((note.duration || 0.15) / speed) * 1000);
-                    const tid = setTimeout(() => {
-                        if (!this.isPlaying || this.isPaused) return;
-                        if (!note.hit && !note.missed) {
-                            note.hit = true;
-                            note.holdStart = (Date.now() - this.startTime) / 1000;
-                            this.combo++;
-                            this.hitNotes++;
-                            this.score += Math.floor(100 * (1 + this.combo * 0.1));
-                            this.updateScore();
-                            this.showHitFeedback(note.note, true);
-                            this.heldFallingNotes.set(note.note, note);
-                        }
-                        const keyElement = key
-                            ? document.querySelector(`.key[data-key="${key}"]`)
-                            : document.querySelector(`.key[data-note="${note.note}"]`);
-                        if (keyElement) keyElement.classList.add('active');
-                        this.playNoteSound(note.note, note.duration);
-                        const releaseTid = setTimeout(() => {
-                            if (keyElement) keyElement.classList.remove('active');
-                            this.heldFallingNotes.delete(note.note);
-                        }, holdMs);
-                        this.autoPlayTimeouts.push(releaseTid);
-                    }, delay);
-                    this.autoPlayTimeouts.push(tid);
-                });
+                this._scheduleAutoPlayNotes();
             }
         };
 
@@ -735,6 +723,9 @@ class PianoHero {
             // Normal or practice — use original notes
             this.notes = this.originalNotes.map(n => ({ ...n }));
         }
+        // Compute song duration from the latest note end time
+        this.songDuration = this.notes.reduce((max, n) => Math.max(max, n.time + (n.duration || 0.15)), 0);
+        this.updateSongTimeline(0);
         this.rebuildKeyboardForNotes(this.notes);
     }
 
@@ -975,6 +966,12 @@ class PianoHero {
             alert('Please load a YouTube video first');
             return;
         }
+
+        // If already playing/paused, switch from auto-play to manual
+        if (this.isPlaying || this.isPaused) {
+            this._switchToManual();
+            return;
+        }
         
         this.stopPreview();
 
@@ -984,9 +981,11 @@ class PianoHero {
 
         this.isPlaying = true;
         this.isPaused = false;
-        this.startTime = Date.now();
-        this.startBtn.disabled = true;
-        this.autoPlayBtn.disabled = this.gameMode !== 'practice'; // keep enabled in practice mode
+        // Lead-in: offset start so notes scroll from top before first note reaches hit zone
+        const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
+        this.startTime = Date.now() + leadInSec * 1000;
+        this.startBtn.disabled = false;
+        this.autoPlayBtn.disabled = false;
         this.pauseBtn.disabled = false;
 
         // Practice mode setup
@@ -1012,6 +1011,34 @@ class PianoHero {
         // In a real implementation, start playing the actual audio here
         this.playDemoAudio();
     }
+
+    _switchToManual() {
+        // Cancel auto-play timeouts and clear active keys
+        this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+        this.autoPlayTimeouts = [];
+        this.isAutoPlay = false;
+        document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+        // Stop all currently sounding notes
+        for (const note of this.activeNoteSources.keys()) {
+            this.stopNoteSound(note);
+        }
+        this.heldFallingNotes.clear();
+
+        // Unpause if paused
+        if (this.isPaused) {
+            this.isPaused = false;
+            this.pauseBtn.textContent = 'Pause';
+            const pauseDuration = Date.now() - this.pauseTime;
+            this.startTime += pauseDuration;
+        }
+
+        this.startBtn.disabled = false;
+        this.autoPlayBtn.disabled = false;
+        this.pauseBtn.disabled = false;
+        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
+                          this.gameMode === 'easy' ? 'Easy mode' : 'Manual play';
+        this.statusMessage.textContent = `${modeLabel} — continuing from current position!`;
+    }
     
     playDemoAudio() {
         // In a real implementation, this would play the YouTube audio
@@ -1019,30 +1046,51 @@ class PianoHero {
     }
 
     startAutoPlay() {
-        // If already playing (e.g. practice mode), continue from current position
-        const continuing = this.isPlaying && this.fallingNotes.length > 0;
+        // If already playing/paused, switch to auto-play from current position
+        const continuing = this.isPlaying || this.isPaused;
 
         if (!continuing) {
             this.startGame();
         } else {
+            // Cancel any existing auto-play timeouts
+            this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+            this.autoPlayTimeouts = [];
+            document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+            for (const note of this.activeNoteSources.keys()) {
+                this.stopNoteSound(note);
+            }
+            this.heldFallingNotes.clear();
+
             // Clear practice mode state
             this.practiceWaiting = false;
             this.practiceExpectedNotes = new Set();
             this.practiceHitNotes = new Set();
             document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+
+            // Unpause if paused
+            if (this.isPaused) {
+                this.isPaused = false;
+                this.pauseBtn.textContent = 'Pause';
+                const pauseDuration = Date.now() - this.pauseTime;
+                this.startTime += pauseDuration;
+            }
         }
 
         this.isAutoPlay = true;
-
-        // Find the first unhit note to calculate time offset
-        const firstUnhit = this.fallingNotes.find(n => !n.hit && !n.missed);
-        const currentTime = continuing && firstUnhit
-            ? (Date.now() - this.startTime) / 1000
-            : 0;
+        this.startBtn.disabled = false;
+        this.autoPlayBtn.disabled = false;
+        this.pauseBtn.disabled = false;
 
         this.statusMessage.textContent = continuing
             ? 'Auto Play — continuing from current position!'
             : 'Auto Play — watch and listen!';
+
+        this._scheduleAutoPlayNotes();
+    }
+
+    _scheduleAutoPlayNotes() {
+        // Use real game clock (negative during lead-in) so sounds sync with visual notes
+        const currentTime = (Date.now() - this.startTime) / 1000;
 
         // Schedule automatic key presses for remaining notes
         const speed = this.speedMultiplier;
@@ -1091,12 +1139,28 @@ class PianoHero {
         if (this.isPaused) {
             this.pauseBtn.textContent = 'Resume';
             this.pauseTime = Date.now();
-            this.statusMessage.textContent = 'Game paused';
+            // Stop auto-play sounds/visuals while paused
+            if (this.isAutoPlay) {
+                this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+                this.autoPlayTimeouts = [];
+                document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+                for (const note of this.activeNoteSources.keys()) {
+                    this.stopNoteSound(note);
+                }
+                this.heldFallingNotes.clear();
+            }
+            this.statusMessage.textContent = 'Game paused — press Start Game or Auto Play to continue';
         } else {
             this.pauseBtn.textContent = 'Pause';
             const pauseDuration = Date.now() - this.pauseTime;
             this.startTime += pauseDuration;
-            this.statusMessage.textContent = 'Game in progress...';
+            // If resuming auto-play, reschedule remaining notes
+            if (this.isAutoPlay) {
+                this._scheduleAutoPlayNotes();
+                this.statusMessage.textContent = 'Auto Play in progress...';
+            } else {
+                this.statusMessage.textContent = 'Game in progress...';
+            }
         }
     }
     
@@ -1115,6 +1179,7 @@ class PianoHero {
         }
         this.score = 0;
         this.combo = 0;
+        this.maxCombo = 0;
         this.hitNotes = 0;
         this.missedNotes = 0;
         this.totalNotes = 0;
@@ -1122,7 +1187,9 @@ class PianoHero {
         this.practiceExpectedNotes = new Set();
         this.practiceHitNotes = new Set();
         document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+        document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
         this.updateScore();
+        this.updateSongTimeline(0);
         this.startBtn.disabled = this.notes.length === 0;
         this.autoPlayBtn.disabled = this.notes.length === 0;
         this.pauseBtn.disabled = true;
@@ -1442,11 +1509,79 @@ class PianoHero {
     updateScore() {
         this.scoreElement.textContent = this.score;
         this.comboElement.textContent = this.combo;
+        if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+        this.streakElement.textContent = this.maxCombo;
         
         const processedNotes = this.hitNotes + this.missedNotes;
         const accuracy = processedNotes > 0 ? 
             Math.floor((this.hitNotes / processedNotes) * 100) : 0;
         this.accuracyElement.textContent = accuracy;
+    }
+
+    _formatTime(sec) {
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    updateSongTimeline(currentTimeSec) {
+        if (!this.songDuration || this.songDuration <= 0) return;
+        const pct = Math.max(0, Math.min(100, (currentTimeSec / this.songDuration) * 100));
+        this.songTimelineFill.style.width = pct + '%';
+        this.songTimelineThumb.style.left = pct + '%';
+        this.songTimeLabel.textContent = `${this._formatTime(Math.max(0, currentTimeSec))} / ${this._formatTime(this.songDuration)}`;
+    }
+
+    seekTimeline(e) {
+        if (!this.songDuration || this.songDuration <= 0) return;
+        if (!this.isPlaying && !this.isPaused) return;
+
+        const rect = this.songTimeline.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const seekTimeSec = pct * this.songDuration; // song time (unscaled)
+        const speed = this.speedMultiplier;
+        // Game clock = seekTimeSec / speed (since update uses scaledNoteTime = note.time / speed)
+        const gameClockSec = seekTimeSec / speed;
+
+        // Adjust startTime so the game clock reads gameClockSec
+        if (this.isPaused) {
+            this.startTime = this.pauseTime - gameClockSec * 1000;
+        } else {
+            this.startTime = Date.now() - gameClockSec * 1000;
+        }
+
+        // Cancel auto-play timeouts and clear active sounds
+        this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+        this.autoPlayTimeouts = [];
+        document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+        for (const note of this.activeNoteSources.keys()) {
+            this.stopNoteSound(note);
+        }
+        this.heldFallingNotes.clear();
+
+        // Rebuild falling notes: mark notes before seek point as hit/missed
+        this.fallingNotes = this.notes.map(note => {
+            const noteEnd = note.time + (note.duration || 0.15);
+            const alreadyPassed = noteEnd < seekTimeSec;
+            return {
+                ...note,
+                y: -50,
+                hit: alreadyPassed,
+                missed: false
+            };
+        });
+
+        // Recalculate stats for notes before seek point
+        this.hitNotes = this.fallingNotes.filter(n => n.hit).length;
+        this.missedNotes = 0;
+        this.totalNotes = this.fallingNotes.length;
+        this.updateScore();
+        this.updateSongTimeline(seekTimeSec);
+
+        // Reschedule auto-play if active
+        if (this.isAutoPlay && !this.isPaused) {
+            this._scheduleAutoPlayNotes();
+        }
     }
     
     update() {
@@ -1459,6 +1594,9 @@ class PianoHero {
         
         const currentTime = (Date.now() - this.startTime) / 1000;
         const speed = this.speedMultiplier;
+
+        // Update song progress timeline
+        this.updateSongTimeline(currentTime * speed);
         
         // Update falling notes
         for (let i = this.fallingNotes.length - 1; i >= 0; i--) {
@@ -1493,8 +1631,9 @@ class PianoHero {
             this.isAutoPlay = false;
             this.autoPlayTimeouts.forEach(t => clearTimeout(t));
             this.autoPlayTimeouts = [];
+            this.updateSongTimeline(this.songDuration);
             this.statusMessage.textContent = 
-                `Game Over! Final Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
+                `Game Over! Final Score: ${this.score} | Best Streak: ${this.maxCombo} | Accuracy: ${this.accuracyElement.textContent}%`;
             this.startBtn.disabled = false;
             this.autoPlayBtn.disabled = false;
             this.pauseBtn.disabled = true;

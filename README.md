@@ -102,7 +102,13 @@ Then open http://localhost:5000/ in your browser
    - Click "Start Game" when ready
    - Watch for notes falling in lanes
    - Press keyboard keys or click piano keys when notes reach the hit zone
-4. **Score Points**:
+4. **Hold Notes**:
+   - Notes have varying heights based on their duration — longer notes appear as taller bars
+   - When a long note reaches the hit zone, **press and hold** the key for the full length of the note
+   - The note turns **green** while you hold it and stays visible as it scrolls past the hit zone
+   - Release the key when the note has fully passed — releasing early fades the sound out
+   - Short notes can be tapped normally
+5. **Score Points**:
    - Perfect timing = more points
    - Build combos for score multipliers
    - Try to hit all notes for maximum accuracy!

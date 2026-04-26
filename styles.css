@@ -6,8 +6,8 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: #fff;
+    background: #0a0a0a;
+    color: #e0e0e0;
     min-height: 100vh;
     overflow-x: hidden;
 }
@@ -15,18 +15,17 @@ body {
 .container {
     max-width: 100%;
     margin: 0 auto;
-    padding: 10px;
+    padding: 6px 10px;
 }
 
 header {
     text-align: center;
-    margin-bottom: 20px;
+    margin-bottom: 6px;
 }
 
 header h1 {
-    font-size: 3em;
+    font-size: 1.8em;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-    animation: glow 2s ease-in-out infinite alternate;
 }
 
 @keyframes glow {
@@ -39,35 +38,61 @@ header h1 {
 }
 
 .controls {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-    border-radius: 15px;
-    padding: 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.top-bar .source-tabs {
+    margin-bottom: 8px;
+}
+
+.top-bar .status-section {
+    margin-bottom: 6px;
+}
+
+.top-bar #statusMessage {
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.controls-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.controls-row .game-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 0;
 }
 
 .url-input-section {
     display: flex;
     gap: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 8px;
 }
 
 /* Source tabs */
 .source-tabs {
     display: flex;
-    gap: 5px;
-    margin-bottom: 15px;
+    gap: 4px;
+    margin-bottom: 8px;
 }
 
 .tab-btn {
     flex: 1;
-    padding: 10px 16px;
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    font-size: 15px;
+    padding: 6px 12px;
+    background: #1a1a1a;
+    color: rgba(255, 255, 255, 0.6);
+    border: 2px solid #333;
+    border-radius: 6px;
+    font-size: 13px;
     font-weight: bold;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -75,13 +100,13 @@ header h1 {
 }
 
 .tab-btn.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #4a9eff;
     color: #fff;
-    border-color: transparent;
+    border-color: #4a9eff;
 }
 
 .tab-btn:not(.active):hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: #252525;
     color: #fff;
 }
 
@@ -93,62 +118,64 @@ header h1 {
 .midi-select-section {
     display: flex;
     gap: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 8px;
 }
 
 #midiFileSelect {
     flex: 1;
     padding: 12px;
-    border: none;
+    border: 1px solid #333;
     border-radius: 8px;
     font-size: 16px;
-    background: rgba(255, 255, 255, 0.9);
-    color: #333;
+    background: #1a1a1a;
+    color: #e0e0e0;
 }
 
 #loadMidiBtn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #4a9eff;
     color: white;
 }
 
 #loadMidiBtn:hover {
+    background: #3a8eef;
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
 }
 
 #youtubeUrl {
     flex: 1;
     padding: 12px;
-    border: none;
+    border: 1px solid #333;
     border-radius: 8px;
     font-size: 16px;
-    background: rgba(255, 255, 255, 0.9);
-    color: #333;
+    background: #1a1a1a;
+    color: #e0e0e0;
 }
 
 button {
-    padding: 12px 24px;
+    padding: 6px 16px;
     border: none;
-    border-radius: 8px;
-    font-size: 16px;
+    border-radius: 6px;
+    font-size: 13px;
     font-weight: bold;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     text-transform: uppercase;
 }
 
 #loadBtn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #4a9eff;
     color: white;
 }
 
 #loadBtn:hover {
+    background: #3a8eef;
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
 }
 
 .settings-section {
-    margin-bottom: 15px;
+    margin-bottom: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -163,22 +190,22 @@ button {
 #backendSelect {
     padding: 8px 15px;
     border-radius: 8px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    background: rgba(0, 0, 0, 0.3);
-    color: white;
+    border: 1px solid #333;
+    background: #1a1a1a;
+    color: #e0e0e0;
     font-size: 14px;
     cursor: pointer;
     transition: all 0.3s ease;
 }
 
 #backendSelect:hover {
-    border-color: rgba(255, 255, 255, 0.5);
-    background: rgba(0, 0, 0, 0.4);
+    border-color: #555;
+    background: #222;
 }
 
 #backendSelect option {
-    background: #2d3748;
-    color: white;
+    background: #1a1a1a;
+    color: #e0e0e0;
 }
 
 #backendSelect option:disabled {
@@ -186,19 +213,19 @@ button {
 }
 
 .status-section {
-    margin-bottom: 15px;
+    margin-bottom: 6px;
 }
 
 #statusMessage {
     text-align: center;
-    margin-bottom: 10px;
-    font-size: 14px;
+    margin-bottom: 4px;
+    font-size: 13px;
 }
 
 .progress-bar {
     width: 100%;
     height: 20px;
-    background: rgba(0, 0, 0, 0.3);
+    background: #1a1a1a;
     border-radius: 10px;
     overflow: hidden;
     display: none;
@@ -218,9 +245,9 @@ button {
 
 .game-controls {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     justify-content: center;
-    margin-bottom: 15px;
+    margin-bottom: 0;
 }
 
 .game-controls button {
@@ -266,30 +293,94 @@ button {
 
 .score-section {
     display: flex;
-    justify-content: space-around;
-    font-size: 18px;
+    justify-content: center;
+    gap: 10px;
+    font-size: 13px;
     font-weight: bold;
 }
 
-.score, .combo, .accuracy {
-    padding: 10px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
+.stat-item {
+    padding: 4px 10px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+}
+
+/* Stats bar below settings */
+.stats-bar {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Song progress timeline */
+.song-timeline {
+    position: relative;
+    height: 18px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 9px;
+    cursor: pointer;
+    overflow: hidden;
+    user-select: none;
+}
+
+.song-timeline-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #4a9eff, #6ab8ff);
+    border-radius: 9px;
+    width: 0%;
+    transition: width 0.1s linear;
+    pointer-events: none;
+}
+
+.song-timeline-thumb {
+    position: absolute;
+    top: 50%;
+    left: 0%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.song-time-label {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: #888;
+    pointer-events: none;
+    z-index: 3;
 }
 
 #gameArea {
     position: relative;
-    background: rgba(0, 0, 0, 0.5);
-    border-radius: 15px;
-    margin-bottom: 20px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    background: #0e0e0e;
+    border: 1px solid #222;
+    border-radius: 10px;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     overflow-x: auto;
     overflow-y: hidden;
 }
 
 #gameCanvas {
     position: relative;
-    background: rgba(0, 0, 0, 0.3);
+    background: #111;
     height: 500px;
     /* width set dynamically by JS */
 }
@@ -380,11 +471,11 @@ button {
 }
 
 .instructions {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
+    background: #141414;
+    border: 1px solid #2a2a2a;
     border-radius: 15px;
     padding: 20px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .instructions h3 {
@@ -462,12 +553,17 @@ button {
     to { box-shadow: 0 0 20px #FFD600, 0 0 40px rgba(255, 214, 0, 0.4); }
 }
 
-/* Sound Settings Panel */
-.sound-panel {
-    margin-bottom: 20px;
+/* Settings Toolbar: Sound + Game side by side */
+.settings-toolbar {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-.sound-panel-header {
+.settings-toolbar-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -475,34 +571,48 @@ button {
     user-select: none;
 }
 
-.sound-panel-header h3 {
+.settings-toolbar-header h3 {
     margin: 0;
-}
-
-.toggle-arrow {
     font-size: 14px;
-    transition: transform 0.3s ease;
 }
 
-.toggle-arrow.open {
-    transform: rotate(180deg);
-}
-
-.sound-panel-body {
-    margin-top: 15px;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 12px;
+.settings-toolbar-panels {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
     transition: max-height 0.3s ease, opacity 0.3s ease;
     max-height: 500px;
     opacity: 1;
     overflow: hidden;
 }
 
-.sound-panel-body.collapsed {
+.settings-toolbar-panels.collapsed {
     max-height: 0;
     opacity: 0;
     margin-top: 0;
+}
+
+.settings-panel {
+    flex: 1;
+}
+
+.settings-panel + .settings-panel {
+    border-left: 1px solid #2a2a2a;
+    padding-left: 16px;
+}
+
+.settings-panel h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.settings-panel-body {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
 }
 
 .sound-row {
@@ -589,40 +699,6 @@ button {
 }
 
 /* ── BitMidi browse tab ────────────────────────── */
-
-/* ── Game Settings Panel ────────────────────────── */
-.game-settings-panel {
-    margin-bottom: 20px;
-}
-
-.game-settings-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    user-select: none;
-}
-
-.game-settings-header h3 {
-    margin: 0;
-}
-
-.game-settings-body {
-    margin-top: 15px;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 12px;
-    transition: max-height 0.3s ease, opacity 0.3s ease;
-    max-height: 500px;
-    opacity: 1;
-    overflow: hidden;
-}
-
-.game-settings-body.collapsed {
-    max-height: 0;
-    opacity: 0;
-    margin-top: 0;
-}
 
 .setting-row {
     display: flex;

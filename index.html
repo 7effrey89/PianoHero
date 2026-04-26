@@ -12,7 +12,7 @@
             <h1>🎹 Piano Hero 🎹</h1>
         </header>
         
-        <div class="controls">
+        <div class="controls top-bar">
             <div class="source-tabs">
                 <button class="tab-btn active" data-tab="midi">Play MIDI File</button>
                 <button class="tab-btn" data-tab="bitmidi">Browse BitMidi</button>
@@ -58,26 +58,26 @@
                     <div id="progressFill" class="progress-fill"></div>
                 </div>
             </div>
-            <div class="game-controls">
-                <button id="startBtn" disabled>Start Game</button>
-                <button id="autoPlayBtn" disabled>Auto Play</button>
-                <button id="pauseBtn" disabled>Pause</button>
-                <button id="resetBtn">Reset</button>
-            </div>
-            <div class="score-section">
-                <div class="score">Score: <span id="score">0</span></div>
-                <div class="combo">Combo: <span id="combo">0</span>x</div>
-                <div class="accuracy">Accuracy: <span id="accuracy">0</span>%</div>
+            <div class="controls-row">
+                <div class="game-controls">
+                    <button id="startBtn" disabled>Start Game</button>
+                    <button id="autoPlayBtn" disabled>Auto Play</button>
+                    <button id="pauseBtn" disabled>Pause</button>
+                    <button id="resetBtn">Reset</button>
+                </div>
             </div>
         </div>
 
-        <!-- Sound Settings Panel -->
-        <div class="controls sound-panel">
-            <div class="sound-panel-header" id="soundPanelToggle">
-                <h3>Sound Settings</h3>
+        <!-- Settings Toolbar: Sound + Game side by side, collapsed by default -->
+        <div class="settings-toolbar">
+            <div class="settings-toolbar-header" id="settingsToggle">
+                <h3>Settings</h3>
                 <span class="toggle-arrow">&#9660;</span>
             </div>
-            <div class="sound-panel-body" id="soundPanelBody">
+            <div class="settings-toolbar-panels collapsed" id="settingsPanelsBody">
+            <div class="settings-panel">
+                <h4>Sound</h4>
+                <div class="settings-panel-body" id="soundPanelBody">
                 <div class="sound-row">
                     <label for="soundPreset">Instrument:</label>
                     <select id="soundPreset">
@@ -112,16 +112,11 @@
                     <input type="range" id="reverbSlider" min="0" max="100" value="35">
                     <span id="reverbVal">35%</span>
                 </div>
+                </div>
             </div>
-        </div>
-
-        <!-- Game Settings Panel -->
-        <div class="controls game-settings-panel">
-            <div class="game-settings-header" id="gameSettingsToggle">
-                <h3>Game Settings</h3>
-                <span class="toggle-arrow">&#9660;</span>
-            </div>
-            <div class="game-settings-body" id="gameSettingsBody">
+            <div class="settings-panel">
+                <h4>Game</h4>
+                <div class="settings-panel-body" id="gameSettingsBody">
                 <!-- Key Scale / Zoom -->
                 <div class="setting-row">
                     <label for="keyScaleSlider">Key Scale</label>
@@ -149,6 +144,23 @@
                     </select>
                 </div>
             </div>
+            </div>
+            </div>
+        </div>
+
+        <!-- Stats + Song Timeline -->
+        <div class="stats-bar">
+            <div class="score-section">
+                <div class="stat-item">Score: <span id="score">0</span></div>
+                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
+                <div class="stat-item">Best Streak: <span id="streak">0</span></div>
+                <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
+            </div>
+            <div class="song-timeline" id="songTimeline">
+                <div class="song-timeline-fill" id="songTimelineFill"></div>
+                <div class="song-timeline-thumb" id="songTimelineThumb"></div>
+                <span class="song-time-label" id="songTimeLabel">0:00 / 0:00</span>
+            </div>
         </div>
 
         <!-- Game Canvas with Piano Keys Integrated -->
@@ -163,18 +175,6 @@
                     <!-- Keys generated dynamically by app.js -->
                 </div>
             </div>
-        </div>
-
-        <div class="instructions">
-            <h3>How to Play:</h3>
-            <ol>
-                <li>Paste a YouTube URL and click "Load & Analyze" (this will take a moment)</li>
-                <li>Wait for the audio to be processed and notes to be detected</li>
-                <li>Click "Start Game" when ready</li>
-                <li>Press the keyboard keys or click piano keys when the falling notes reach the hit zone</li>
-                <li>Perfect timing = more points!</li>
-            </ol>
-            <p><strong>Demo Note:</strong> This demonstration uses MIDI note patterns. The backend server caches converted MIDI files for faster subsequent loads. For production use with real YouTube audio analysis, integrate with audio processing libraries (librosa, aubio, or ML models) for accurate pitch detection.</p>
         </div>
     </div>
 
