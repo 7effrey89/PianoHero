@@ -5,6 +5,7 @@ Supports multiple MIDI conversion backends with youtube2midi as the primary impl
 """
 
 import os
+import re
 import json
 import hashlib
 import subprocess
@@ -12,6 +13,7 @@ import tempfile
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import requests as http_requests
 import mido
 import yt_dlp
 from dotenv import load_dotenv
@@ -175,15 +177,15 @@ def convert_midi_to_notes(midi_path):
 def midi_note_to_game_note(midi_note):
     """Convert MIDI note number to game note name.
 
-    Supports the full piano range C2 (MIDI 36) through C7 (MIDI 96).
+    Supports the full piano range A0 (MIDI 21) through C8 (MIDI 108).
     Notes outside that range are clamped by octave transposition.
     """
     note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-    # Clamp into C2 (36) – C7 (96) by octave transposition
-    while midi_note < 36:
+    # Clamp into A0 (21) – C8 (108) by octave transposition
+    while midi_note < 21:
         midi_note += 12
-    while midi_note > 96:
+    while midi_note > 108:
         midi_note -= 12
 
     octave = (midi_note // 12) - 1
@@ -393,6 +395,103 @@ def get_cached_midi(video_id):
         return jsonify(data)
     
     return jsonify({'error': 'MIDI file not found'}), 404
+
+# ── BitMidi integration ──────────────────────────────────────────────
+
+@app.route('/api/bitmidi/search', methods=['GET'])
+def bitmidi_search():
+    """Proxy search requests to bitmidi.com and scrape results."""
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'results': []})
+
+    resp = http_requests.get(
+        'https://bitmidi.com/search',
+        params={'q': query},
+        headers={'User-Agent': 'PianoHero/1.0'},
+        timeout=10,
+    )
+    resp.raise_for_status()
+
+    # Parse result links from the HTML
+    # Each result is an <a> pointing to a slug like /pokemon-pokemon-center-theme-mid
+    results = []
+    for m in re.finditer(
+        r'<a\s[^>]*href="(/[a-z0-9][a-z0-9\-]*-mid)"[^>]*>([^<]+)</a>',
+        resp.text,
+        re.IGNORECASE,
+    ):
+        slug = m.group(1)        # e.g. /pokemon-pokemon-center-theme-mid
+        name = m.group(2).strip()  # e.g. Pokemon - Pokemon Center Theme.mid
+        if name and slug not in [r['slug'] for r in results]:
+            results.append({'slug': slug, 'name': name})
+
+    return jsonify({'results': results})
+
+
+@app.route('/api/bitmidi/load', methods=['POST'])
+def bitmidi_load():
+    """Fetch a MIDI file from bitmidi.com by its page slug, convert to game notes."""
+    data = request.json
+    slug = data.get('slug', '').strip()
+    if not slug or not re.match(r'^/[a-z0-9][a-z0-9\-]*-mid$', slug):
+        return jsonify({'error': 'Invalid slug'}), 400
+
+    # Check cache first
+    cache_key = hashlib.sha256(slug.encode()).hexdigest()[:16]
+    cache_file = MIDI_CACHE_DIR / f"bitmidi_{cache_key}.json"
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            cached = json.load(f)
+        return jsonify(cached)
+
+    # Fetch the song page to find the download URL
+    page_resp = http_requests.get(
+        f'https://bitmidi.com{slug}',
+        headers={'User-Agent': 'PianoHero/1.0'},
+        timeout=10,
+    )
+    page_resp.raise_for_status()
+
+    # Look for the direct .mid download link, e.g. /uploads/85523.mid
+    dl_match = re.search(r'href="(https?://bitmidi\.com/uploads/[^"]+\.mid)"', page_resp.text)
+    if not dl_match:
+        # Try relative path
+        dl_match = re.search(r'href="(/uploads/[^"]+\.mid)"', page_resp.text)
+    if not dl_match:
+        return jsonify({'error': 'Could not find download link on bitmidi page'}), 404
+
+    dl_url = dl_match.group(1)
+    if dl_url.startswith('/'):
+        dl_url = 'https://bitmidi.com' + dl_url
+
+    # Download the MIDI file to a temp file
+    midi_resp = http_requests.get(dl_url, timeout=15)
+    midi_resp.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as tmp:
+        tmp.write(midi_resp.content)
+        tmp_path = tmp.name
+
+    try:
+        notes = convert_midi_to_notes(tmp_path)
+    finally:
+        os.unlink(tmp_path)
+
+    if not notes:
+        return jsonify({'error': 'Could not parse any notes from the MIDI file'}), 422
+
+    result = {
+        'success': True,
+        'notes': notes,
+        'slug': slug,
+        'noteCount': len(notes),
+    }
+    with open(cache_file, 'w') as f:
+        json.dump(result, f)
+
+    return jsonify(result)
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

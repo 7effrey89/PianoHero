@@ -15,6 +15,7 @@
         <div class="controls">
             <div class="source-tabs">
                 <button class="tab-btn active" data-tab="midi">Play MIDI File</button>
+                <button class="tab-btn" data-tab="bitmidi">Browse BitMidi</button>
                 <button class="tab-btn" data-tab="youtube">YouTube URL</button>
             </div>
 
@@ -25,6 +26,14 @@
                     </select>
                     <button id="loadMidiBtn">Load MIDI</button>
                 </div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-bitmidi">
+                <div class="bitmidi-search-section">
+                    <input type="text" id="bitmidiQuery" placeholder="Search for songs... e.g. pokemon, zelda, mario" />
+                    <button id="bitmidiSearchBtn">Search</button>
+                </div>
+                <div id="bitmidiResults" class="bitmidi-results"></div>
             </div>
 
             <div class="tab-content hidden" id="tab-youtube">

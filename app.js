@@ -47,19 +47,15 @@ class PianoHero {
         // API configuration
         this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
         
-        // Build the full chromatic scale C2–C7 (61 notes)
-        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-        this.allNotes = [];
-        for (let oct = 2; oct <= 6; oct++) {
-            for (const n of noteNames) {
-                this.allNotes.push(n + oct);
-            }
-        }
-        this.allNotes.push('C7'); // top note
+        // Chromatic note helpers
+        this.NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+        // Default range — will be rebuilt when a song is loaded
+        this.allNotes = this.buildChromaticRange('C2', 'C7');
 
         // Keyboard bindings — two middle octaves (C3–B4) are playable
-        // Lower octave C3–B3:  Z X C V B N M , . / and sharps: S D  G H J
-        // Upper octave C4–B4:  Q W E R T Y U I O P and sharps: 2 3  5 6 7
+        // Lower octave C3–B3:  Z X C V B N M and sharps: S D G H J
+        // Upper octave C4–B4:  Q W E R T Y U and sharps: 2 3 5 6 7
         this.noteToKey = {
             // C3–B3 (bottom row + home row for sharps)
             'C3': 'Z', 'C#3': 'S', 'D3': 'X', 'D#3': 'D',
@@ -100,8 +96,11 @@ class PianoHero {
     
     init() {
         this.buildPianoKeys();
-        this.resizeCanvas();
-        window.addEventListener('resize', () => this.resizeCanvas());
+        // resizeCanvas is called after black keys are placed (inside buildPianoKeys)
+        window.addEventListener('resize', () => {
+            // On resize, rebuild black key positions from scratch
+            this.buildPianoKeys();
+        });
         
         // Load backend configuration
         this.loadBackendConfig();
@@ -109,6 +108,7 @@ class PianoHero {
         // Load MIDI file list and set up tabs
         this.loadMidiFileList();
         this.initTabs();
+        this.initBitMidi();
         this.initSoundPanel();
         
         // Event listeners
@@ -134,21 +134,81 @@ class PianoHero {
         this.render();
     }
     
+    // Convert a note name like "C#3" to a semitone index (C0 = 0)
+    noteToSemitone(name) {
+        const match = name.match(/^([A-G]#?)(\d+)$/);
+        if (!match) return 0;
+        return this.NOTE_NAMES.indexOf(match[1]) + parseInt(match[2]) * 12;
+    }
+
+    // Convert a semitone index back to a note name
+    semitoneToNote(s) {
+        return this.NOTE_NAMES[s % 12] + Math.floor(s / 12);
+    }
+
+    // Build a chromatic scale from lowNote to highNote inclusive
+    buildChromaticRange(lowNote, highNote) {
+        const lo = this.noteToSemitone(lowNote);
+        const hi = this.noteToSemitone(highNote);
+        const result = [];
+        for (let s = lo; s <= hi; s++) {
+            result.push(this.semitoneToNote(s));
+        }
+        return result;
+    }
+
+    // Called after notes are loaded — expand the keyboard to cover every note in the song
+    rebuildKeyboardForNotes(notes) {
+        if (!notes || notes.length === 0) return;
+
+        // Find the min/max semitones in the loaded song
+        let minS = Infinity, maxS = -Infinity;
+        for (const n of notes) {
+            const s = this.noteToSemitone(n.note);
+            if (s < minS) minS = s;
+            if (s > maxS) maxS = s;
+        }
+
+        // Extend to the nearest C below and B (or C) above so octaves are complete
+        while (minS % 12 !== 0) minS--;  // down to nearest C
+        while (maxS % 12 !== 0) maxS++;  // up to nearest C
+
+        // Clamp to reasonable piano range A0 (semitone 9) – C8 (semitone 108)
+        minS = Math.max(minS, 9);   // A0
+        maxS = Math.min(maxS, 108); // C8
+
+        const lowNote = this.semitoneToNote(minS);
+        const highNote = this.semitoneToNote(maxS);
+
+        this.allNotes = this.buildChromaticRange(lowNote, highNote);
+        this.buildPianoKeys();
+        // resizeCanvas is called after black keys are placed (inside buildPianoKeys)
+    }
+
     buildPianoKeys() {
         const container = document.querySelector('.piano-keys');
         container.innerHTML = '';
-        const blackKeyIndices = new Set([1, 3, 6, 8, 10]); // C#, D#, F#, G#, A# within octave
-        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-        // Count white keys for percentage math
+        // Count white keys for sizing
         let whiteCount = 0;
         for (const note of this.allNotes) {
             if (!note.includes('#')) whiteCount++;
         }
-        const whitePct = 100 / whiteCount;
-        const blackWidthPct = whitePct * 0.65;
 
-        // Create white keys first (they are flex children)
+        // Each white key is at least 35px wide
+        const MIN_WHITE_KEY_PX = 35;
+        const pianoMinWidth = whiteCount * MIN_WHITE_KEY_PX;
+        this.pianoMinWidth = pianoMinWidth;
+
+        // Force the piano container and parents to be at least this wide
+        container.style.minWidth = pianoMinWidth + 'px';
+        const pianoDiv = document.getElementById('piano');
+        if (pianoDiv) pianoDiv.style.minWidth = pianoMinWidth + 'px';
+        const gameCanvas = document.getElementById('gameCanvas');
+        if (gameCanvas) gameCanvas.style.minWidth = pianoMinWidth + 'px';
+
+        // Create white keys (flex children)
+        const whiteKeys = [];
         for (const note of this.allNotes) {
             if (note.includes('#')) continue;
             const btn = document.createElement('button');
@@ -160,17 +220,37 @@ class PianoHero {
             const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
             btn.innerHTML = `<span class="key-label">${label}</span>`;
             container.appendChild(btn);
+            whiteKeys.push(btn);
         }
 
-        // Create black keys (absolutely positioned)
+        // Store black key info for placement after layout
+        this._pendingBlackKeys = [];
         let whiteIdx = 0;
         for (const note of this.allNotes) {
             if (!note.includes('#')) {
                 whiteIdx++;
                 continue;
             }
-            // Black key sits at the boundary of the previous white key
-            const leftPct = whiteIdx * whitePct - blackWidthPct / 2;
+            this._pendingBlackKeys.push({ note, whiteIdx });
+        }
+
+        // Place black keys after layout so we can read actual white key positions
+        requestAnimationFrame(() => this._placeBlackKeys(container, whiteKeys));
+    }
+
+    _placeBlackKeys(container, whiteKeys) {
+        const blackWidthRatio = 0.65;
+
+        for (const { note, whiteIdx } of this._pendingBlackKeys) {
+            const prevWhite = whiteKeys[whiteIdx - 1];
+            const nextWhite = whiteKeys[whiteIdx];
+            if (!prevWhite || !nextWhite) continue;
+
+            // Use offsetLeft — relative to the container, unaffected by scroll
+            const whiteWidth = prevWhite.offsetWidth;
+            const boundary = nextWhite.offsetLeft;
+            const blackWidth = whiteWidth * blackWidthRatio;
+
             const btn = document.createElement('button');
             btn.className = 'key black';
             btn.dataset.note = note;
@@ -179,38 +259,49 @@ class PianoHero {
             const noteName = note.replace(/\d+/, '');
             const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
             btn.innerHTML = `<span class="key-label">${label}</span>`;
-            btn.style.left = leftPct.toFixed(2) + '%';
-            btn.style.width = blackWidthPct.toFixed(2) + '%';
+            btn.style.left = (boundary - blackWidth / 2) + 'px';
+            btn.style.width = blackWidth + 'px';
             container.appendChild(btn);
         }
+        this._pendingBlackKeys = null;
+
+        // Now recalculate canvas and key positions
+        this.resizeCanvas();
+
+        // Re-attach click handlers for the new keys
+        document.querySelectorAll('.key').forEach(key => {
+            key.onmousedown = () => this.handlePianoKeyPress(key);
+            key.onmouseup = () => this.handlePianoKeyRelease(key);
+        });
     }
     
     resizeCanvas() {
         const container = document.getElementById('gameCanvas');
-        this.canvas.width = container.clientWidth;
+        const piano = document.querySelector('.piano-keys');
+        // The canvas must match the actual rendered piano width
+        const pianoRenderedWidth = piano ? piano.scrollWidth : 0;
+        const fullWidth = Math.max(container.parentElement.clientWidth, pianoRenderedWidth);
+        container.style.width = fullWidth + 'px';
+        this.canvas.width = fullWidth;
         this.canvas.height = container.clientHeight;
-        this.hitZoneY = this.canvas.height - 20; // Hit zone at bottom, just above piano keys
+        this.hitZoneY = this.canvas.height - 20;
         this.keyPositions = this.calculateKeyPositions();
     }
     
     calculateKeyPositions() {
         const positions = {};
-        
-        // Get actual DOM positions of piano keys
+
+        // Use offsetLeft/offsetWidth — relative to offset parent, unaffected by scroll
         this.allNotes.forEach(note => {
             const keyElement = document.querySelector(`.key[data-note="${note}"]`);
             if (keyElement) {
-                const rect = keyElement.getBoundingClientRect();
-                const canvasRect = this.canvas.getBoundingClientRect();
-                
-                // Calculate position relative to canvas
-                const relativeLeft = rect.left - canvasRect.left;
-                const relativeWidth = rect.width;
+                const left = keyElement.offsetLeft;
+                const width = keyElement.offsetWidth;
                 
                 positions[note] = {
-                    x: relativeLeft + relativeWidth / 2,
-                    width: relativeWidth,
-                    left: relativeLeft,
+                    x: left + width / 2,
+                    width: width,
+                    left: left,
                     isBlack: note.includes('#')
                 };
             }
@@ -288,6 +379,7 @@ class PianoHero {
 
             const data = await response.json();
             this.notes = data.notes;
+            this.rebuildKeyboardForNotes(this.notes);
             this.updateProgress(100);
             this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Click Start Game to play!`;
             this.startBtn.disabled = false;
@@ -299,6 +391,90 @@ class PianoHero {
             this.loadMidiBtn.disabled = false;
             setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
         }
+    }
+
+    initBitMidi() {
+        const searchBtn = document.getElementById('bitmidiSearchBtn');
+        const queryInput = document.getElementById('bitmidiQuery');
+        searchBtn.addEventListener('click', () => this.searchBitMidi());
+        queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.searchBitMidi();
+        });
+    }
+
+    async searchBitMidi() {
+        const query = document.getElementById('bitmidiQuery').value.trim();
+        if (!query) return;
+
+        const container = document.getElementById('bitmidiResults');
+        container.innerHTML = '<p class="bitmidi-loading">Searching…</p>';
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/search?q=${encodeURIComponent(query)}`);
+            if (!resp.ok) throw new Error('Search failed');
+            const data = await resp.json();
+
+            if (!data.results || data.results.length === 0) {
+                container.innerHTML = '<p class="bitmidi-empty">No results found.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            data.results.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'bitmidi-item';
+                row.innerHTML = `
+                    <span class="bitmidi-name">${this.escapeHtml(item.name)}</span>
+                    <button class="bitmidi-load-btn">Load</button>
+                `;
+                row.querySelector('.bitmidi-load-btn').addEventListener('click', () => {
+                    this.loadBitMidi(item.slug, item.name);
+                });
+                container.appendChild(row);
+            });
+        } catch (err) {
+            container.innerHTML = `<p class="bitmidi-empty">Error: ${this.escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    async loadBitMidi(slug, name) {
+        this.statusMessage.textContent = `Loading "${name}" from BitMidi…`;
+        this.progressBar.classList.add('visible');
+        this.updateProgress(20);
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/load`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ slug })
+            });
+
+            this.updateProgress(70);
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.error || 'Failed to load');
+            }
+
+            const data = await resp.json();
+            this.notes = data.notes;
+            this.rebuildKeyboardForNotes(this.notes);
+            this.updateProgress(100);
+            this.statusMessage.textContent = `Loaded "${name}" — ${data.noteCount} notes. Click Start Game!`;
+            this.startBtn.disabled = false;
+            this.autoPlayBtn.disabled = false;
+        } catch (err) {
+            console.error('BitMidi load error:', err);
+            this.statusMessage.textContent = 'Error: ' + err.message;
+        } finally {
+            setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
+        }
+    }
+
+    escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     initSoundPanel() {
@@ -469,6 +645,7 @@ class PianoHero {
             
             // Use notes from backend
             this.notes = data.notes;
+            this.rebuildKeyboardForNotes(this.notes);
             
             this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
             this.updateProgress(100);
@@ -546,6 +723,10 @@ class PianoHero {
             return;
         }
         
+        // Clear any lingering auto-play timeouts from a previous run
+        this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+        this.autoPlayTimeouts = [];
+
         this.isPlaying = true;
         this.isPaused = false;
         this.startTime = Date.now();
@@ -620,6 +801,9 @@ class PianoHero {
     reset() {
         this.isPlaying = false;
         this.isPaused = false;
+        this.isAutoPlay = false;
+        this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+        this.autoPlayTimeouts = [];
         this.fallingNotes = [];
         this.score = 0;
         this.combo = 0;
