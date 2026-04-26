@@ -398,6 +398,49 @@ def get_cached_midi(video_id):
 
 # ── BitMidi integration ──────────────────────────────────────────────
 
+def _get_bitmidi_download_url(slug):
+    """Fetch a BitMidi song page and return the .mid download URL, or None."""
+    page_resp = http_requests.get(
+        f'https://bitmidi.com{slug}',
+        headers={'User-Agent': 'PianoHero/1.0'},
+        timeout=10,
+    )
+    page_resp.raise_for_status()
+
+    dl_match = re.search(r'href="(https?://bitmidi\.com/uploads/[^"]+\.mid)"', page_resp.text)
+    if not dl_match:
+        dl_match = re.search(r'href="(/uploads/[^"]+\.mid)"', page_resp.text)
+    if not dl_match:
+        return None
+
+    dl_url = dl_match.group(1)
+    if dl_url.startswith('/'):
+        dl_url = 'https://bitmidi.com' + dl_url
+    return dl_url
+
+
+@app.route('/api/bitmidi/preview', methods=['POST'])
+def bitmidi_preview():
+    """Proxy-download a .mid file from BitMidi and return it as binary."""
+    data = request.json
+    slug = data.get('slug', '').strip()
+    if not slug or not re.match(r'^/[a-z0-9][a-z0-9\-]*-mid$', slug):
+        return jsonify({'error': 'Invalid slug'}), 400
+
+    try:
+        dl_url = _get_bitmidi_download_url(slug)
+        if not dl_url:
+            return jsonify({'error': 'Could not find download link'}), 404
+
+        midi_resp = http_requests.get(dl_url, timeout=15)
+        midi_resp.raise_for_status()
+
+        from flask import Response
+        return Response(midi_resp.content, mimetype='audio/midi',
+                        headers={'Content-Disposition': 'inline'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/bitmidi/search', methods=['GET'])
 def bitmidi_search():
     """Proxy search requests to bitmidi.com and scrape results."""
@@ -445,25 +488,9 @@ def bitmidi_load():
             cached = json.load(f)
         return jsonify(cached)
 
-    # Fetch the song page to find the download URL
-    page_resp = http_requests.get(
-        f'https://bitmidi.com{slug}',
-        headers={'User-Agent': 'PianoHero/1.0'},
-        timeout=10,
-    )
-    page_resp.raise_for_status()
-
-    # Look for the direct .mid download link, e.g. /uploads/85523.mid
-    dl_match = re.search(r'href="(https?://bitmidi\.com/uploads/[^"]+\.mid)"', page_resp.text)
-    if not dl_match:
-        # Try relative path
-        dl_match = re.search(r'href="(/uploads/[^"]+\.mid)"', page_resp.text)
-    if not dl_match:
+    dl_url = _get_bitmidi_download_url(slug)
+    if not dl_url:
         return jsonify({'error': 'Could not find download link on bitmidi page'}), 404
-
-    dl_url = dl_match.group(1)
-    if dl_url.startswith('/'):
-        dl_url = 'https://bitmidi.com' + dl_url
 
     # Download the MIDI file to a temp file
     midi_resp = http_requests.get(dl_url, timeout=15)

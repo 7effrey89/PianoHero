@@ -660,6 +660,31 @@ button {
     background: #45a049;
 }
 
+.bitmidi-preview-btn {
+    padding: 5px 10px;
+    border: none;
+    border-radius: 6px;
+    background: #7c4dff;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 6px;
+    transition: background 0.15s;
+}
+
+.bitmidi-preview-btn:hover {
+    background: #651fff;
+}
+
+.bitmidi-preview-btn.playing {
+    background: #ff5252;
+}
+
+.bitmidi-preview-btn.playing:hover {
+    background: #ff1744;
+}
+
 .bitmidi-loading, .bitmidi-empty {
     padding: 15px;
     text-align: center;

@@ -38,6 +38,8 @@ class PianoHero {
         this.enableDemoFallback = true; // Default to true, will be updated from backend
         this.isAutoPlay = false;
         this.autoPlayTimeouts = [];
+        this.previewTimeouts = [];
+        this.previewSlug = null; // slug of currently previewing song
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
@@ -425,8 +427,12 @@ class PianoHero {
                 row.className = 'bitmidi-item';
                 row.innerHTML = `
                     <span class="bitmidi-name">${this.escapeHtml(item.name)}</span>
+                    <button class="bitmidi-preview-btn" title="Preview">&#9654;</button>
                     <button class="bitmidi-load-btn">Load</button>
                 `;
+                row.querySelector('.bitmidi-preview-btn').addEventListener('click', (e) => {
+                    this.togglePreview(item.slug, item.name, e.currentTarget);
+                });
                 row.querySelector('.bitmidi-load-btn').addEventListener('click', () => {
                     this.loadBitMidi(item.slug, item.name);
                 });
@@ -438,6 +444,7 @@ class PianoHero {
     }
 
     async loadBitMidi(slug, name) {
+        this.stopPreview();
         this.statusMessage.textContent = `Loading "${name}" from BitMidi…`;
         this.progressBar.classList.add('visible');
         this.updateProgress(20);
@@ -468,6 +475,73 @@ class PianoHero {
             this.statusMessage.textContent = 'Error: ' + err.message;
         } finally {
             setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
+        }
+    }
+
+    stopPreview() {
+        this.previewTimeouts.forEach(t => clearTimeout(t));
+        this.previewTimeouts = [];
+        // Reset any active preview button
+        const activeBtn = document.querySelector('.bitmidi-preview-btn.playing');
+        if (activeBtn) {
+            activeBtn.innerHTML = '&#9654;';
+            activeBtn.classList.remove('playing');
+        }
+        this.previewSlug = null;
+    }
+
+    async togglePreview(slug, name, btn) {
+        // If already previewing this song, stop it
+        if (this.previewSlug === slug) {
+            this.stopPreview();
+            return;
+        }
+
+        // Stop any existing preview
+        this.stopPreview();
+
+        // Mark this button as playing
+        btn.innerHTML = '&#9632;'; // stop square
+        btn.classList.add('playing');
+        this.previewSlug = slug;
+
+        try {
+            // Fetch notes via the load endpoint (reuses cache)
+            const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/load`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ slug })
+            });
+
+            if (!resp.ok) throw new Error('Failed to fetch');
+            const data = await resp.json();
+
+            if (this.previewSlug !== slug) return; // user stopped during fetch
+
+            const notes = data.notes;
+            if (!notes || notes.length === 0) return;
+
+            // Play a 15-second preview starting from the beginning
+            const previewDuration = 15;
+            const previewNotes = notes.filter(n => n.time <= previewDuration);
+
+            previewNotes.forEach(note => {
+                const tid = setTimeout(() => {
+                    if (this.previewSlug !== slug) return;
+                    this.playNoteSound(note.note);
+                }, note.time * 1000);
+                this.previewTimeouts.push(tid);
+            });
+
+            // Auto-stop after preview duration
+            const stopTid = setTimeout(() => {
+                if (this.previewSlug === slug) this.stopPreview();
+            }, previewDuration * 1000);
+            this.previewTimeouts.push(stopTid);
+
+        } catch (err) {
+            console.error('Preview error:', err);
+            this.stopPreview();
         }
     }
 
@@ -723,6 +797,8 @@ class PianoHero {
             return;
         }
         
+        this.stopPreview();
+
         // Clear any lingering auto-play timeouts from a previous run
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
@@ -766,11 +842,26 @@ class PianoHero {
 
             const tid = setTimeout(() => {
                 if (!this.isPlaying || this.isPaused) return;
+
+                // Directly mark the note as hit (bypasses timing-sensitive position check)
+                if (!note.hit && !note.missed) {
+                    note.hit = true;
+                    this.combo++;
+                    this.hitNotes++;
+                    this.score += Math.floor(100 * (1 + this.combo * 0.1));
+                    this.updateScore();
+                    this.showHitFeedback(note.note, true);
+                }
+
+                // Play sound + visual
                 if (key) {
-                    this.pressKey(key);
-                    setTimeout(() => this.releaseKey(key), 120);
+                    const keyElement = document.querySelector(`.key[data-key="${key}"]`);
+                    if (keyElement) keyElement.classList.add('active');
+                    this.playNoteSound(note.note);
+                    setTimeout(() => {
+                        if (keyElement) keyElement.classList.remove('active');
+                    }, 120);
                 } else {
-                    // Note has no keyboard binding — just play sound + visual
                     this.playNoteSound(note.note);
                     const el = document.querySelector(`.key[data-note="${note.note}"]`);
                     if (el) {
