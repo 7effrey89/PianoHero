@@ -16,6 +16,9 @@ class PianoHero {
         this.comboElement = document.getElementById('combo');
         this.accuracyElement = document.getElementById('accuracy');
         this.backendSelect = document.getElementById('backendSelect');
+        this.midiFileSelect = document.getElementById('midiFileSelect');
+        this.loadMidiBtn = document.getElementById('loadMidiBtn');
+        this.autoPlayBtn = document.getElementById('autoPlayBtn');
         
         // Game state
         this.notes = [];
@@ -33,6 +36,8 @@ class PianoHero {
         this.audioSource = null;
         this.pauseTime = 0;
         this.enableDemoFallback = true; // Default to true, will be updated from backend
+        this.isAutoPlay = false;
+        this.autoPlayTimeouts = [];
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
@@ -42,11 +47,28 @@ class PianoHero {
         // API configuration
         this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
         
-        // Note to key mapping
+        // Build the full chromatic scale C2–C7 (61 notes)
+        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        this.allNotes = [];
+        for (let oct = 2; oct <= 6; oct++) {
+            for (const n of noteNames) {
+                this.allNotes.push(n + oct);
+            }
+        }
+        this.allNotes.push('C7'); // top note
+
+        // Keyboard bindings — two middle octaves (C3–B4) are playable
+        // Lower octave C3–B3:  Z X C V B N M , . / and sharps: S D  G H J
+        // Upper octave C4–B4:  Q W E R T Y U I O P and sharps: 2 3  5 6 7
         this.noteToKey = {
-            'C4': 'A', 'C#4': 'W', 'D4': 'S', 'D#4': 'E',
-            'E4': 'D', 'F4': 'F', 'F#4': 'T', 'G4': 'G',
-            'G#4': 'Y', 'A4': 'H', 'A#4': 'U', 'B4': 'J', 'C5': 'K'
+            // C3–B3 (bottom row + home row for sharps)
+            'C3': 'Z', 'C#3': 'S', 'D3': 'X', 'D#3': 'D',
+            'E3': 'C', 'F3': 'V', 'F#3': 'G', 'G3': 'B',
+            'G#3': 'H', 'A3': 'N', 'A#3': 'J', 'B3': 'M',
+            // C4–B4 (top rows)
+            'C4': 'Q', 'C#4': '2', 'D4': 'W', 'D#4': '3',
+            'E4': 'E', 'F4': 'R', 'F#4': '5', 'G4': 'T',
+            'G#4': '6', 'A4': 'Y', 'A#4': '7', 'B4': 'U',
         };
         
         this.keyToNote = Object.fromEntries(
@@ -58,25 +80,43 @@ class PianoHero {
         
         // Audio synthesis for piano sounds (lazy initialization)
         this.audioContext = null;
-        this.noteFrequencies = {
-            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13,
-            'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00,
-            'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88, 'C5': 523.25
+        this.reverbNode = null;
+        
+        // Soundfont sample-based audio
+        this.soundfontBuffers = {};      // { noteName: AudioBuffer }
+        this.soundfontLoaded = false;
+        this.soundfontLoading = false;
+        this.currentInstrument = 'acoustic_grand_piano';
+        this.soundfontBaseUrl = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/';
+
+        // Sound parameters (updated from UI)
+        this.soundParams = {
+            volume: 0.8,
+            reverb: 0.35,
         };
         
         this.init();
     }
     
     init() {
+        this.buildPianoKeys();
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
         
         // Load backend configuration
         this.loadBackendConfig();
         
+        // Load MIDI file list and set up tabs
+        this.loadMidiFileList();
+        this.initTabs();
+        this.initSoundPanel();
+        
         // Event listeners
         this.loadBtn.addEventListener('click', () => this.loadYouTubeAudio());
+        this.loadMidiBtn.addEventListener('click', () => this.loadMidiFile());
+        this.midiFileSelect.addEventListener('change', () => { if (this.midiFileSelect.value) this.loadMidiFile(); });
         this.startBtn.addEventListener('click', () => this.startGame());
+        this.autoPlayBtn.addEventListener('click', () => this.startAutoPlay());
         this.pauseBtn.addEventListener('click', () => this.togglePause());
         this.resetBtn.addEventListener('click', () => this.reset());
         
@@ -94,6 +134,57 @@ class PianoHero {
         this.render();
     }
     
+    buildPianoKeys() {
+        const container = document.querySelector('.piano-keys');
+        container.innerHTML = '';
+        const blackKeyIndices = new Set([1, 3, 6, 8, 10]); // C#, D#, F#, G#, A# within octave
+        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+        // Count white keys for percentage math
+        let whiteCount = 0;
+        for (const note of this.allNotes) {
+            if (!note.includes('#')) whiteCount++;
+        }
+        const whitePct = 100 / whiteCount;
+        const blackWidthPct = whitePct * 0.65;
+
+        // Create white keys first (they are flex children)
+        for (const note of this.allNotes) {
+            if (note.includes('#')) continue;
+            const btn = document.createElement('button');
+            btn.className = 'key white';
+            btn.dataset.note = note;
+            const keyBind = this.noteToKey[note] || '';
+            if (keyBind) btn.dataset.key = keyBind;
+            const noteName = note.replace(/\d+/, '');
+            const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
+            btn.innerHTML = `<span class="key-label">${label}</span>`;
+            container.appendChild(btn);
+        }
+
+        // Create black keys (absolutely positioned)
+        let whiteIdx = 0;
+        for (const note of this.allNotes) {
+            if (!note.includes('#')) {
+                whiteIdx++;
+                continue;
+            }
+            // Black key sits at the boundary of the previous white key
+            const leftPct = whiteIdx * whitePct - blackWidthPct / 2;
+            const btn = document.createElement('button');
+            btn.className = 'key black';
+            btn.dataset.note = note;
+            const keyBind = this.noteToKey[note] || '';
+            if (keyBind) btn.dataset.key = keyBind;
+            const noteName = note.replace(/\d+/, '');
+            const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
+            btn.innerHTML = `<span class="key-label">${label}</span>`;
+            btn.style.left = leftPct.toFixed(2) + '%';
+            btn.style.width = blackWidthPct.toFixed(2) + '%';
+            container.appendChild(btn);
+        }
+    }
+    
     resizeCanvas() {
         const container = document.getElementById('gameCanvas');
         this.canvas.width = container.clientWidth;
@@ -104,10 +195,9 @@ class PianoHero {
     
     calculateKeyPositions() {
         const positions = {};
-        const allNotes = ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4', 'C5'];
         
         // Get actual DOM positions of piano keys
-        allNotes.forEach(note => {
+        this.allNotes.forEach(note => {
             const keyElement = document.querySelector(`.key[data-note="${note}"]`);
             if (keyElement) {
                 const rect = keyElement.getBoundingClientRect();
@@ -144,6 +234,192 @@ class PianoHero {
         }
     }
     
+    initTabs() {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                btn.classList.add('active');
+                document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+            });
+        });
+    }
+
+    async loadMidiFileList() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/midi-files`);
+            if (response.ok) {
+                const data = await response.json();
+                data.files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file;
+                    this.midiFileSelect.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.log('Could not load MIDI file list');
+        }
+    }
+
+    async loadMidiFile() {
+        const filename = this.midiFileSelect.value;
+        if (!filename) {
+            alert('Please select a MIDI file');
+            return;
+        }
+
+        this.loadMidiBtn.disabled = true;
+        this.statusMessage.textContent = 'Loading MIDI file...';
+        this.progressBar.classList.add('visible');
+        this.updateProgress(30);
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/load-midi`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to load MIDI file');
+            }
+
+            const data = await response.json();
+            this.notes = data.notes;
+            this.updateProgress(100);
+            this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Click Start Game to play!`;
+            this.startBtn.disabled = false;
+            this.autoPlayBtn.disabled = false;
+        } catch (error) {
+            console.error('Error loading MIDI file:', error);
+            this.statusMessage.textContent = 'Error: ' + error.message;
+        } finally {
+            this.loadMidiBtn.disabled = false;
+            setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
+        }
+    }
+
+    initSoundPanel() {
+        // Toggle panel
+        document.getElementById('soundPanelToggle').addEventListener('click', () => {
+            document.getElementById('soundPanelBody').classList.toggle('collapsed');
+            document.querySelector('.toggle-arrow').classList.toggle('open');
+        });
+
+        // Instrument selector — loads soundfont when changed
+        const presetSelect = document.getElementById('soundPreset');
+        presetSelect.addEventListener('change', () => {
+            this.loadSoundfont(presetSelect.value);
+        });
+
+        // Wire up volume and reverb sliders
+        const volumeSlider = document.getElementById('volumeSlider');
+        volumeSlider.addEventListener('input', () => {
+            this.soundParams.volume = volumeSlider.value / 100;
+            document.getElementById('volumeVal').textContent = volumeSlider.value + '%';
+        });
+
+        const reverbSlider = document.getElementById('reverbSlider');
+        reverbSlider.addEventListener('input', () => {
+            this.soundParams.reverb = reverbSlider.value / 100;
+            document.getElementById('reverbVal').textContent = reverbSlider.value + '%';
+        });
+
+        // Auto-load the default instrument soundfont
+        this.loadSoundfont(this.currentInstrument);
+    }
+
+    async loadSoundfont(instrument) {
+        if (this.soundfontLoading) return;
+        this.soundfontLoading = true;
+        this.currentInstrument = instrument;
+
+        const statusEl = document.getElementById('soundfontStatus');
+        statusEl.textContent = 'Loading...';
+        statusEl.className = 'soundfont-status loading';
+
+        try {
+            const url = `${this.soundfontBaseUrl}${instrument}-mp3.js`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+
+            // Parse the JS file to extract the note-to-dataURI map
+            // Format: MIDI.Soundfont.instrument_name = { "A0": "data:audio/mp3;base64,...", ... }
+            // Use index-based parsing to find the correct object (regex was too greedy)
+            const marker = text.indexOf('MIDI.Soundfont.');
+            if (marker === -1) throw new Error('Could not parse soundfont');
+            const objStart = text.indexOf('{', marker);
+            const objEnd = text.lastIndexOf('}');
+            if (objStart === -1 || objEnd === -1 || objEnd <= objStart) throw new Error('Could not parse soundfont');
+
+            const noteData = JSON.parse(
+                text.substring(objStart, objEnd + 1).replace(/,\s*}$/, '}')
+            );
+
+            // Store raw data URIs; decode lazily when AudioContext is available
+            this.soundfontRawData = noteData;
+            this.soundfontBuffers = {};
+            this.soundfontLoaded = false;
+
+            // If AudioContext already exists (from a user gesture), decode now
+            if (this.audioContext) {
+                await this._decodeSoundfontSamples(noteData);
+            }
+
+            const count = Object.keys(noteData).length;
+            statusEl.textContent = `✓ ${count} samples`;
+            statusEl.className = 'soundfont-status loaded';
+            console.log(`Soundfont loaded: ${instrument} (${count} samples)`);
+        } catch (error) {
+            console.error('Failed to load soundfont:', error);
+            statusEl.textContent = '✗ Failed';
+            statusEl.className = 'soundfont-status error';
+            this.soundfontLoaded = false;
+        } finally {
+            this.soundfontLoading = false;
+        }
+    }
+
+    // Map game notes (C4, C#4, etc.) to soundfont note names (C4, Db4, etc.)
+    gameNoteToSoundfontName(note) {
+        // The soundfont uses flats (Bb, Eb, Ab, Db, Gb) while our game uses sharps
+        const sharpToFlat = {
+            'C#': 'Db', 'D#': 'Eb', 'F#': 'Gb', 'G#': 'Ab', 'A#': 'Bb'
+        };
+        for (const [sharp, flat] of Object.entries(sharpToFlat)) {
+            if (note.startsWith(sharp)) {
+                return flat + note.slice(sharp.length);
+            }
+        }
+        return note;
+    }
+
+    async _decodeSoundfontSamples(noteData) {
+        const entries = Object.entries(noteData);
+        const buffers = {};
+        const decodePromises = entries.map(async ([noteName, dataUri]) => {
+            const base64 = dataUri.split(',')[1];
+            const binaryStr = atob(base64);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+            }
+            try {
+                const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0));
+                buffers[noteName] = audioBuffer;
+            } catch (e) {
+                // Some notes may fail to decode; skip them
+            }
+        });
+
+        await Promise.all(decodePromises);
+        this.soundfontBuffers = buffers;
+        this.soundfontLoaded = true;
+    }
+
     async loadYouTubeAudio() {
         const url = this.youtubeUrlInput.value.trim();
         if (!url) {
@@ -197,6 +473,7 @@ class PianoHero {
             this.statusMessage.textContent = `Analysis complete! Found ${this.notes.length} notes using ${data.backend}. ${data.cached ? '(Loaded from cache)' : ''} Click Start Game to play!`;
             this.updateProgress(100);
             this.startBtn.disabled = false;
+            this.autoPlayBtn.disabled = false;
             
         } catch (error) {
             console.error('Error loading YouTube audio:', error);
@@ -207,6 +484,7 @@ class PianoHero {
                 this.statusMessage.textContent += ' Using demo notes instead.';
                 this.notes = this.generateDemoNotes();
                 this.startBtn.disabled = false;
+                this.autoPlayBtn.disabled = false;
             } else {
                 this.statusMessage.textContent += ' Demo fallback is disabled.';
             }
@@ -272,6 +550,7 @@ class PianoHero {
         this.isPaused = false;
         this.startTime = Date.now();
         this.startBtn.disabled = true;
+        this.autoPlayBtn.disabled = true;
         this.pauseBtn.disabled = false;
         this.statusMessage.textContent = 'Game in progress...';
         
@@ -292,6 +571,35 @@ class PianoHero {
     playDemoAudio() {
         // In a real implementation, this would play the YouTube audio
         // For demo, we just track time
+    }
+
+    startAutoPlay() {
+        this.startGame();
+        this.isAutoPlay = true;
+        this.statusMessage.textContent = 'Auto Play — watch and listen!';
+
+        // Schedule automatic key presses for every note
+        this.fallingNotes.forEach(note => {
+            const delay = note.time * 1000; // convert to ms
+            const key = this.noteToKey[note.note];
+
+            const tid = setTimeout(() => {
+                if (!this.isPlaying || this.isPaused) return;
+                if (key) {
+                    this.pressKey(key);
+                    setTimeout(() => this.releaseKey(key), 120);
+                } else {
+                    // Note has no keyboard binding — just play sound + visual
+                    this.playNoteSound(note.note);
+                    const el = document.querySelector(`.key[data-note="${note.note}"]`);
+                    if (el) {
+                        el.classList.add('active');
+                        setTimeout(() => el.classList.remove('active'), 120);
+                    }
+                }
+            }, delay);
+            this.autoPlayTimeouts.push(tid);
+        });
     }
     
     togglePause() {
@@ -320,6 +628,7 @@ class PianoHero {
         this.totalNotes = 0;
         this.updateScore();
         this.startBtn.disabled = this.notes.length === 0;
+        this.autoPlayBtn.disabled = this.notes.length === 0;
         this.pauseBtn.disabled = true;
         this.pauseBtn.textContent = 'Pause';
         this.statusMessage.textContent = this.notes.length > 0 ? 
@@ -344,12 +653,25 @@ class PianoHero {
     
     handlePianoKeyPress(keyElement) {
         const key = keyElement.dataset.key;
-        this.pressKey(key);
+        if (key) {
+            this.pressKey(key);
+        } else {
+            // No keyboard binding — play sound directly
+            const note = keyElement.dataset.note;
+            if (note) {
+                keyElement.classList.add('active');
+                this.playNoteSound(note);
+            }
+        }
     }
     
     handlePianoKeyRelease(keyElement) {
         const key = keyElement.dataset.key;
-        this.releaseKey(key);
+        if (key) {
+            this.releaseKey(key);
+        } else {
+            keyElement.classList.remove('active');
+        }
     }
     
     pressKey(key) {
@@ -370,34 +692,125 @@ class PianoHero {
     }
     
     playNoteSound(note) {
-        // Create audio context if not exists
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.setupAudioGraph();
+            // Decode soundfont samples now that AudioContext exists (deferred from page load)
+            if (this.soundfontRawData && !this.soundfontLoaded) {
+                this._decodeSoundfontSamples(this.soundfontRawData);
+            }
         }
-        
-        const frequency = this.noteFrequencies[note];
-        if (!frequency) return;
-        
-        // Create oscillator for the note
-        const oscillator = this.audioContext.createOscillator();
-        const gainNode = this.audioContext.createGain();
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-        
-        // Set frequency and wave type
-        oscillator.frequency.value = frequency;
-        oscillator.type = 'sine';
-        
-        // Envelope for natural piano-like sound
+        if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume();
+        }
+
+        // Find the matching soundfont buffer
+        const sfName = this.gameNoteToSoundfontName(note);
+        const buffer = this.soundfontBuffers[sfName] || this.soundfontBuffers[note];
+        if (!buffer) return;
+
+        const p = this.soundParams;
         const now = this.audioContext.currentTime;
-        gainNode.gain.setValueAtTime(0, now);
-        gainNode.gain.linearRampToValueAtTime(0.3, now + 0.01);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-        
-        // Play the note
-        oscillator.start(now);
-        oscillator.stop(now + 0.5);
+
+        // Update persistent graph levels
+        this.masterGain.gain.value = p.volume;
+        this.dryGain.gain.value = 1 - p.reverb * 0.5;
+        this.wetGain.gain.value = p.reverb * 0.5;
+
+        // Create a source from the sample buffer
+        const source = this.audioContext.createBufferSource();
+        source.buffer = buffer;
+
+        const noteGain = this.audioContext.createGain();
+        noteGain.gain.value = 1.4;  // Boost for fuller body
+        source.connect(noteGain);
+        noteGain.connect(this.dryGain);
+        if (p.reverb > 0.01) noteGain.connect(this.wetGain);
+
+        source.start(now);
+
+        // Fade out the note to avoid the long natural sustain of the sample
+        const fadeStart = now + 1.2;   // hold for 1.2s
+        const fadeEnd   = fadeStart + 0.8; // then fade over 0.8s
+        noteGain.gain.setValueAtTime(1.4, fadeStart);
+        noteGain.gain.linearRampToValueAtTime(0, fadeEnd);
+        source.stop(fadeEnd);
+    }
+
+    setupAudioGraph() {
+        // Persistent nodes — created once, reused for every note
+        this.masterGain = this.audioContext.createGain();
+
+        // Compressor for fullness and punch
+        const compressor = this.audioContext.createDynamicsCompressor();
+        compressor.threshold.value = -24;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 4;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.15;
+        this.masterGain.connect(compressor);
+        compressor.connect(this.audioContext.destination);
+
+        // Low-shelf EQ — adds warmth / body to the lower frequencies
+        this.warmthEQ = this.audioContext.createBiquadFilter();
+        this.warmthEQ.type = 'lowshelf';
+        this.warmthEQ.frequency.value = 300;
+        this.warmthEQ.gain.value = 4;   // +4 dB boost below 300 Hz
+
+        // High-shelf sparkle
+        this.presenceEQ = this.audioContext.createBiquadFilter();
+        this.presenceEQ.type = 'highshelf';
+        this.presenceEQ.frequency.value = 4000;
+        this.presenceEQ.gain.value = 2;  // +2 dB
+
+        // Dry path: source → warmth → presence → masterGain
+        this.dryGain = this.audioContext.createGain();
+        this.dryGain.connect(this.warmthEQ);
+        this.warmthEQ.connect(this.presenceEQ);
+        this.presenceEQ.connect(this.masterGain);
+
+        // Reverb path — multi-tap delay network for richer reflections
+        this.wetGain = this.audioContext.createGain();
+
+        // Early reflections
+        const preDelay = this.audioContext.createDelay(0.1);
+        preDelay.delayTime.value = 0.015;
+
+        const tap1 = this.audioContext.createDelay(0.5);
+        tap1.delayTime.value = 0.05;
+        const tap2 = this.audioContext.createDelay(0.5);
+        tap2.delayTime.value = 0.12;
+        const tap3 = this.audioContext.createDelay(0.5);
+        tap3.delayTime.value = 0.20;
+        const tap4 = this.audioContext.createDelay(0.5);
+        tap4.delayTime.value = 0.30;
+
+        // Feedback for tail — kept low to avoid long echo
+        const fb = this.audioContext.createGain();
+        fb.gain.value = 0.18;
+
+        // Soften the reverb tail (but keep it brighter than before)
+        const lpf = this.audioContext.createBiquadFilter();
+        lpf.type = 'lowpass';
+        lpf.frequency.value = 5000;
+
+        // Reverb mix bus
+        const reverbBus = this.audioContext.createGain();
+        reverbBus.gain.value = 0.45;
+        reverbBus.connect(this.masterGain);
+
+        this.wetGain.connect(preDelay);
+        preDelay.connect(tap1);
+        preDelay.connect(tap2);
+        tap1.connect(reverbBus);
+        tap2.connect(reverbBus);
+        tap2.connect(tap3);
+        tap3.connect(reverbBus);
+        tap3.connect(tap4);
+        tap4.connect(reverbBus);
+        tap4.connect(lpf);
+        lpf.connect(fb);
+        fb.connect(tap1);
     }
     
     releaseKey(key) {
@@ -496,9 +909,13 @@ class PianoHero {
         // Check if game is over
         if (this.fallingNotes.length === 0 && this.isPlaying) {
             this.isPlaying = false;
+            this.isAutoPlay = false;
+            this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+            this.autoPlayTimeouts = [];
             this.statusMessage.textContent = 
                 `Game Over! Final Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this.startBtn.disabled = false;
+            this.autoPlayBtn.disabled = false;
             this.pauseBtn.disabled = true;
         }
     }
@@ -527,9 +944,7 @@ class PianoHero {
     
     drawLanes() {
         // Draw vertical lanes for each piano key, perfectly aligned with DOM elements
-        const allNotes = ['C4', 'C#4', 'D4', 'D#4', 'E4', 'F4', 'F#4', 'G4', 'G#4', 'A4', 'A#4', 'B4', 'C5'];
-        
-        allNotes.forEach(note => {
+        this.allNotes.forEach(note => {
             const pos = this.keyPositions[note];
             if (!pos) return;
             
@@ -585,7 +1000,7 @@ class PianoHero {
         
         // Draw note label
         this.ctx.fillStyle = '#fff';
-        this.ctx.font = 'bold 12px Arial';
+        this.ctx.font = 'bold 9px Arial';
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         this.ctx.fillText(note.note, pos.x, note.y);

@@ -22,9 +22,29 @@ load_dotenv()
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
-# Configuration
-MIDI_CACHE_DIR = Path(__file__).parent / 'midi_cache'
+# Paths & configuration
+BASE_DIR = Path(__file__).parent
+MIDI_CACHE_DIR = BASE_DIR / 'midi_cache'
 MIDI_CACHE_DIR.mkdir(exist_ok=True)
+
+# Cookies configuration (optional)
+ENV_COOKIE_PATH = os.getenv('YTDLP_COOKIES')
+DEFAULT_COOKIE_FILENAMES = ['cookies.txt', 'cookie.txt']
+COOKIE_WARNING_EMITTED = False
+
+def resolve_cookie_file():
+    """Return the first cookie file that exists, or None if not found."""
+    search_paths = []
+
+    if ENV_COOKIE_PATH:
+        search_paths.append(Path(ENV_COOKIE_PATH))
+    else:
+        search_paths.extend([BASE_DIR / name for name in DEFAULT_COOKIE_FILENAMES])
+
+    for candidate in search_paths:
+        if candidate.is_file():
+            return candidate
+    return None
 
 # Get environment configuration
 def parse_bool_env(env_var, default='true'):
@@ -46,6 +66,9 @@ def parse_bool_env(env_var, default='true'):
     return value in ('true', '1', 'yes', 'on', 'enabled')
 
 ENABLE_DEMO_FALLBACK = parse_bool_env('ENABLE_DEMO_FALLBACK', 'true')
+FLASK_ENV = os.getenv('FLASK_ENV', 'development')
+DEFAULT_DEBUG = 'false' if FLASK_ENV.lower() == 'production' else 'true'
+DEBUG_MODE = parse_bool_env('FLASK_DEBUG', DEFAULT_DEBUG)
 
 # Audio formats that yt-dlp might produce for our downloads
 AUDIO_FILE_EXTENSIONS = ['.mp3', '.m4a', '.webm', '.opus', '.wav']
@@ -94,6 +117,14 @@ def download_youtube_audio(video_id, output_path):
         'quiet': True,
         'no_warnings': True,
     }
+
+    global COOKIE_WARNING_EMITTED
+    cookie_file = resolve_cookie_file()
+    if cookie_file:
+        ydl_opts['cookiefile'] = str(cookie_file)
+    elif ENV_COOKIE_PATH and not COOKIE_WARNING_EMITTED:
+        print(f"Warning: Cookie file specified via YTDLP_COOKIES not found at {ENV_COOKIE_PATH}. Continuing without cookies.")
+        COOKIE_WARNING_EMITTED = True
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -108,31 +139,25 @@ def convert_midi_to_notes(midi_path):
     try:
         mid = mido.MidiFile(midi_path)
         notes = []
-        current_time = 0
         tempo = 500000  # Default tempo (120 BPM)
-        
-        # Track active notes
-        active_notes = {}
         
         for track in mid.tracks:
             current_time = 0
+            active_notes = {}
             for msg in track:
                 current_time += mido.tick2second(msg.time, mid.ticks_per_beat, tempo)
                 
                 if msg.type == 'set_tempo':
                     tempo = msg.tempo
                 elif msg.type == 'note_on' and msg.velocity > 0:
-                    # Note on
-                    note_name = mido.note_to_name(msg.note)
                     active_notes[msg.note] = current_time
                 elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                    # Note off
                     if msg.note in active_notes:
                         start_time = active_notes[msg.note]
                         duration = current_time - start_time
                         note_name = midi_note_to_game_note(msg.note)
                         
-                        if note_name:  # Only include notes in our range
+                        if note_name:
                             notes.append({
                                 'note': note_name,
                                 'time': start_time,
@@ -148,17 +173,22 @@ def convert_midi_to_notes(midi_path):
         return []
 
 def midi_note_to_game_note(midi_note):
-    """Convert MIDI note number to game note name (C4-C5 range)"""
-    # MIDI note 60 = C4, 72 = C5
+    """Convert MIDI note number to game note name.
+
+    Supports the full piano range C2 (MIDI 36) through C7 (MIDI 96).
+    Notes outside that range are clamped by octave transposition.
+    """
     note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    
-    # Only accept notes in the C4-C5 range (MIDI 60-72)
-    if 60 <= midi_note <= 72:
-        octave = (midi_note // 12) - 1
-        note_index = midi_note % 12
-        note_name = note_names[note_index]
-        return f"{note_name}{octave}"
-    return None
+
+    # Clamp into C2 (36) – C7 (96) by octave transposition
+    while midi_note < 36:
+        midi_note += 12
+    while midi_note > 96:
+        midi_note -= 12
+
+    octave = (midi_note // 12) - 1
+    note_index = midi_note % 12
+    return f"{note_names[note_index]}{octave}"
 
 def convert_with_youtube2midi(video_id):
     """Convert YouTube video to MIDI using audio analysis"""
@@ -257,6 +287,41 @@ def get_backends():
         'enableDemoFallback': ENABLE_DEMO_FALLBACK
     })
 
+@app.route('/api/midi-files', methods=['GET'])
+def list_midi_files():
+    """List available .mid files in the midi/ folder"""
+    midi_dir = BASE_DIR / 'midi'
+    if not midi_dir.is_dir():
+        return jsonify({'files': []})
+    files = sorted(f.name for f in midi_dir.iterdir() if f.suffix.lower() in ('.mid', '.midi'))
+    return jsonify({'files': files})
+
+@app.route('/api/load-midi', methods=['POST'])
+def load_midi_file():
+    """Load a local .mid file and convert it to game notes"""
+    data = request.json
+    filename = data.get('filename')
+    if not filename:
+        return jsonify({'error': 'Filename is required'}), 400
+
+    # Sanitize: only allow the basename, no path traversal
+    safe_name = Path(filename).name
+    midi_path = BASE_DIR / 'midi' / safe_name
+
+    if not midi_path.is_file() or midi_path.suffix.lower() not in ('.mid', '.midi'):
+        return jsonify({'error': 'MIDI file not found'}), 404
+
+    notes = convert_midi_to_notes(str(midi_path))
+    if not notes:
+        return jsonify({'error': 'Could not parse any notes from the MIDI file'}), 422
+
+    return jsonify({
+        'success': True,
+        'notes': notes,
+        'filename': safe_name,
+        'noteCount': len(notes)
+    })
+
 @app.route('/api/convert', methods=['POST'])
 def convert_video():
     """Convert YouTube video to MIDI notes"""
@@ -335,4 +400,12 @@ if __name__ == '__main__':
     print(f"MIDI cache directory: {MIDI_CACHE_DIR}")
     print(f"Available backends: {', '.join(BACKENDS.keys())}")
     print(f"Demo fallback enabled: {ENABLE_DEMO_FALLBACK}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    print(f"Environment: {FLASK_ENV} (debug={DEBUG_MODE})")
+    cookie_file = resolve_cookie_file()
+    if cookie_file:
+        print(f"Using cookie file: {cookie_file}")
+    elif ENV_COOKIE_PATH:
+        print(f"Cookie file specified via YTDLP_COOKIES was not found: {ENV_COOKIE_PATH}")
+    else:
+        print("Cookie file not found (cookies.txt / cookie.txt). yt-dlp will run without authenticated cookies.")
+    app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
