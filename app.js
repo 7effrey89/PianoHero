@@ -688,6 +688,11 @@ class PianoHero {
             // Re-apply notes if a song is loaded
             if (this.originalNotes.length > 0) {
                 this.applyGameMode();
+
+                // If mid-game, remap falling notes while preserving hit/missed state
+                if (this.isPlaying || this.isPaused) {
+                    this._remapFallingNotes();
+                }
             }
         });
     }
@@ -717,8 +722,8 @@ class PianoHero {
     }
 
     applyGameMode() {
-        if (this.gameMode === 'easy') {
-            this.notes = this.remapToEasyMode(this.originalNotes);
+        if (this.gameMode.startsWith('easy')) {
+            this.notes = this.remapToEasyMode(this.originalNotes, this.gameMode);
         } else {
             // Normal or practice — use original notes
             this.notes = this.originalNotes.map(n => ({ ...n }));
@@ -729,23 +734,327 @@ class PianoHero {
         this.rebuildKeyboardForNotes(this.notes);
     }
 
-    remapToEasyMode(notes) {
-        // Collapse all notes into a 2-octave range (C3–B4) which has keyboard bindings
-        // Preserves relative pitch order but within a smaller range
-        const semitones = notes.map(n => this.noteToSemitone(n.note));
+    _remapFallingNotes() {
+        // Rebuild falling notes from the new this.notes, preserving game state by time+index
+        const stateMap = new Map();
+        this.fallingNotes.forEach((fn, i) => {
+            stateMap.set(i, { hit: fn.hit, missed: fn.missed, holdStart: fn.holdStart });
+        });
+
+        // Stop active sounds and clear held state
+        this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+        this.autoPlayTimeouts = [];
+        document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+        for (const note of this.activeNoteSources.keys()) {
+            this.stopNoteSound(note);
+        }
+        this.heldFallingNotes.clear();
+
+        // Rebuild with new note names but same timing and state
+        this.fallingNotes = this.notes.map((note, i) => {
+            const state = stateMap.get(i) || {};
+            return {
+                ...note,
+                y: -50, // will be recalculated in next update()
+                hit: state.hit || false,
+                missed: state.missed || false,
+                holdStart: state.holdStart
+            };
+        });
+
+        this.totalNotes = this.fallingNotes.length;
+
+        // Reschedule auto-play if active
+        if (this.isAutoPlay && this.isPlaying && !this.isPaused) {
+            this._scheduleAutoPlayNotes();
+        }
+    }
+
+    remapToEasyMode(notes, level = 'easy3') {
+        // ── Step 1: Simplify note density based on difficulty level ──
+        const simplified = this._simplifyNotes(notes, level);
+
+        // ── Step 2: Remap to keyboard range C3–B4 ──
+        const semitones = simplified.map(n => this.noteToSemitone(n.note));
         const minS = Math.min(...semitones);
         const maxS = Math.max(...semitones);
-        const range = maxS - minS || 1;
+        const noteRange = maxS - minS;
 
-        // Target range: C3 (36) to B4 (59) = 24 semitones
-        const targetLow = 36;  // C3
-        const targetRange = 23; // C3 to B4
+        // Target: C3 (36) to B4 (59) = 24 semitones
+        const targetLow = 36;
+        const targetHigh = 59;
+        const targetRange = targetHigh - targetLow;
 
-        return notes.map(n => {
+        if (noteRange <= targetRange) {
+            const mid = Math.round((minS + maxS) / 2);
+            const targetMid = Math.round((targetLow + targetHigh) / 2);
+            const shift = targetMid - mid;
+            return simplified.map(n => {
+                const s = this.noteToSemitone(n.note);
+                const newS = Math.max(targetLow, Math.min(targetHigh, s + shift));
+                return { ...n, note: this.semitoneToNote(newS) };
+            });
+        }
+
+        // Rank-based mapping for wider songs
+        const uniqueSemitones = [...new Set(semitones)].sort((a, b) => a - b);
+        const count = uniqueSemitones.length;
+        const pitchMap = new Map();
+        if (count <= targetRange + 1) {
+            const step = count > 1 ? targetRange / (count - 1) : 0;
+            uniqueSemitones.forEach((s, i) => {
+                pitchMap.set(s, targetLow + Math.round(i * step));
+            });
+        } else {
+            uniqueSemitones.forEach(s => {
+                const normalized = (s - minS) / noteRange;
+                pitchMap.set(s, targetLow + Math.round(normalized * targetRange));
+            });
+        }
+
+        return simplified.map(n => {
             const s = this.noteToSemitone(n.note);
-            const normalized = (s - minS) / range;
-            const newS = targetLow + Math.round(normalized * targetRange);
+            const newS = pitchMap.get(s);
             return { ...n, note: this.semitoneToNote(newS) };
+        });
+    }
+
+    /**
+     * Progressive note simplification pipeline.
+     *
+     * Level 1 — Melody only:
+     *   Quantize timing to 1/8 grid, extract melody (highest note per group),
+     *   merge rapid repeats, cap unique pitches at 8.
+     *
+     * Level 2 — Melody + Bass:
+     *   Quantize to 1/16 grid, keep highest + lowest per chord,
+     *   remove octave doubles, merge repeats.
+     *
+     * Level 3 — Simplified (full):
+     *   Group simultaneous notes, keep top + bottom, remove octave doubles,
+     *   merge repeats. (Previous easy mode behavior.)
+     */
+    _simplifyNotes(notes, level = 'easy3') {
+        if (!notes.length) return notes;
+
+        // ── 0. Estimate BPM for quantization grid ──
+        const beatDur = this._estimateBeatDuration(notes);
+
+        let result;
+        if (level === 'easy1') {
+            result = this._simplifyLevel1(notes, beatDur);
+        } else if (level === 'easy2') {
+            result = this._simplifyLevel2(notes, beatDur);
+        } else {
+            result = this._simplifyLevel3(notes);
+        }
+        return result;
+    }
+
+    /** Estimate beat duration (seconds) from inter-onset intervals */
+    _estimateBeatDuration(notes) {
+        if (notes.length < 2) return 0.5;
+        const iois = [];
+        for (let i = 1; i < Math.min(notes.length, 200); i++) {
+            const dt = notes[i].time - notes[i - 1].time;
+            if (dt > 0.05 && dt < 2.0) iois.push(dt);
+        }
+        if (!iois.length) return 0.5;
+        iois.sort((a, b) => a - b);
+        // Median IOI is a reasonable beat proxy
+        return iois[Math.floor(iois.length / 2)];
+    }
+
+    /** Snap time to nearest grid division */
+    _quantize(time, grid) {
+        return Math.round(time / grid) * grid;
+    }
+
+    /**
+     * Level 1: Melody Only
+     * - Quantize to 1/8-note grid
+     * - Keep ONLY the highest note per time slot (melody extraction)
+     * - Merge rapid repeats
+     * - Cap unique pitches to 8
+     */
+    _simplifyLevel1(notes, beatDur) {
+        const grid = beatDur / 2; // 1/8 note grid
+
+        // Quantize all note times
+        const quantized = notes.map(n => ({
+            ...n,
+            time: this._quantize(n.time, grid),
+            duration: Math.max(n.duration || 0.15, grid) // minimum duration = grid
+        }));
+
+        // Group by quantized time
+        const byTime = new Map();
+        for (const n of quantized) {
+            const key = n.time.toFixed(4);
+            if (!byTime.has(key)) byTime.set(key, []);
+            byTime.get(key).push(n);
+        }
+
+        // Keep only melody (highest note) per time slot
+        const melody = [];
+        for (const [, group] of byTime) {
+            let highest = group[0];
+            let highestS = this.noteToSemitone(highest.note);
+            for (let i = 1; i < group.length; i++) {
+                const s = this.noteToSemitone(group[i].note);
+                if (s > highestS) { highest = group[i]; highestS = s; }
+            }
+            melody.push(highest);
+        }
+        melody.sort((a, b) => a.time - b.time);
+
+        // Merge rapid repeated notes
+        const merged = this._mergeRepeats(melody, grid * 1.5);
+
+        // Cap unique pitches to 8 most common
+        return this._capUniquePitches(merged, 8);
+    }
+
+    /**
+     * Level 2: Melody + Bass
+     * - Quantize to 1/16-note grid
+     * - Keep highest (melody) + lowest (bass) per group
+     * - Remove octave doubles
+     * - Merge rapid repeats
+     */
+    _simplifyLevel2(notes, beatDur) {
+        const grid = beatDur / 4; // 1/16 note grid
+
+        // Quantize
+        const quantized = notes.map(n => ({
+            ...n,
+            time: this._quantize(n.time, grid),
+            duration: Math.max(n.duration || 0.15, grid * 0.8)
+        }));
+
+        // Group by quantized time
+        const byTime = new Map();
+        for (const n of quantized) {
+            const key = n.time.toFixed(4);
+            if (!byTime.has(key)) byTime.set(key, []);
+            byTime.get(key).push(n);
+        }
+
+        const reduced = [];
+        for (const [, group] of byTime) {
+            // Remove octave doubles first
+            const deduped = this._removeOctaveDoubles(group);
+
+            if (deduped.length <= 2) {
+                reduced.push(...deduped);
+            } else {
+                // Keep melody + bass
+                const sorted = deduped.sort((a, b) =>
+                    this.noteToSemitone(a.note) - this.noteToSemitone(b.note));
+                reduced.push(sorted[0]); // bass
+                reduced.push(sorted[sorted.length - 1]); // melody
+            }
+        }
+        reduced.sort((a, b) => a.time - b.time);
+
+        return this._mergeRepeats(reduced, grid * 1.5);
+    }
+
+    /**
+     * Level 3: Simplified (original behavior — most notes retained)
+     * - Group simultaneous notes (30ms window)
+     * - Remove octave doubles
+     * - Keep top + bottom
+     * - Merge rapid repeats
+     */
+    _simplifyLevel3(notes) {
+        // Group simultaneous notes (within 30ms)
+        const groups = [];
+        let currentGroup = [notes[0]];
+        for (let i = 1; i < notes.length; i++) {
+            if (notes[i].time - currentGroup[0].time <= 0.03) {
+                currentGroup.push(notes[i]);
+            } else {
+                groups.push(currentGroup);
+                currentGroup = [notes[i]];
+            }
+        }
+        groups.push(currentGroup);
+
+        const reduced = [];
+        for (const group of groups) {
+            const deduped = this._removeOctaveDoubles(group);
+            if (deduped.length <= 2) {
+                reduced.push(...deduped);
+            } else {
+                const sorted = deduped.sort((a, b) =>
+                    this.noteToSemitone(a.note) - this.noteToSemitone(b.note));
+                reduced.push(sorted[0]);
+                reduced.push(sorted[sorted.length - 1]);
+            }
+        }
+
+        return this._mergeRepeats(reduced, 0.15);
+    }
+
+    /** Remove octave doubles from a group: for each pitch class, keep only the highest */
+    _removeOctaveDoubles(group) {
+        const byPitchClass = new Map();
+        for (const n of group) {
+            const s = this.noteToSemitone(n.note);
+            const pc = s % 12;
+            const existing = byPitchClass.get(pc);
+            if (!existing || s > this.noteToSemitone(existing.note)) {
+                byPitchClass.set(pc, n);
+            }
+        }
+        return [...byPitchClass.values()];
+    }
+
+    /** Merge consecutive notes on the same pitch within a time gap */
+    _mergeRepeats(notes, maxGap) {
+        const merged = [];
+        for (let i = 0; i < notes.length; i++) {
+            const note = { ...notes[i] };
+            while (i + 1 < notes.length
+                && notes[i + 1].note === note.note
+                && notes[i + 1].time - (note.time + (note.duration || 0.15)) < maxGap) {
+                const next = notes[i + 1];
+                note.duration = (next.time + (next.duration || 0.15)) - note.time;
+                i++;
+            }
+            merged.push(note);
+        }
+        return merged;
+    }
+
+    /** Keep only the N most frequently used pitches — remap or drop the rest */
+    _capUniquePitches(notes, maxPitches) {
+        // Count frequency of each note name
+        const freq = new Map();
+        for (const n of notes) {
+            freq.set(n.note, (freq.get(n.note) || 0) + 1);
+        }
+        if (freq.size <= maxPitches) return notes;
+
+        // Keep top N most common pitches
+        const ranked = [...freq.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, maxPitches)
+            .map(e => e[0]);
+        const keepSet = new Set(ranked);
+
+        // For notes not in the set, snap to nearest kept pitch
+        const keptSemitones = ranked.map(n => this.noteToSemitone(n)).sort((a, b) => a - b);
+        return notes.map(n => {
+            if (keepSet.has(n.note)) return n;
+            const s = this.noteToSemitone(n.note);
+            let bestDist = Infinity, bestS = keptSemitones[0];
+            for (const ks of keptSemitones) {
+                const d = Math.abs(s - ks);
+                if (d < bestDist) { bestDist = d; bestS = ks; }
+            }
+            return { ...n, note: this.semitoneToNote(bestS) };
         });
     }
 
@@ -995,7 +1304,7 @@ class PianoHero {
         this.practicePauseOffset = 0;
 
         const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'easy' ? 'Easy mode' : 'Game';
+                          this.gameMode.startsWith('easy') ? `Easy mode (${this.gameMode.slice(-1)})` : 'Game';
         this.statusMessage.textContent = `${modeLabel} in progress...`;
         
         // Create falling notes (keep original times; speed is applied live in update())
@@ -1036,7 +1345,7 @@ class PianoHero {
         this.autoPlayBtn.disabled = false;
         this.pauseBtn.disabled = false;
         const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'easy' ? 'Easy mode' : 'Manual play';
+                          this.gameMode.startsWith('easy') ? `Easy mode (${this.gameMode.slice(-1)})` : 'Manual play';
         this.statusMessage.textContent = `${modeLabel} — continuing from current position!`;
     }
     
