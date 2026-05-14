@@ -9,10 +9,15 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>🎹 Piano Hero 🎹</h1>
+        <header class="top-header">
+            <div class="header-logo">🎹 Piano Hero</div>
+            <button class="header-menu-btn" id="settingsMenuBtn" aria-label="Settings">
+                <span class="menu-icon"></span>
+                <span class="menu-icon"></span>
+                <span class="menu-icon"></span>
+            </button>
         </header>
-        
+
         <div class="controls top-bar">
             <div class="source-tabs">
                 <button class="tab-btn active" data-tab="midi">Play MIDI File</button>
@@ -57,12 +62,8 @@
             </div>
         </div>
 
-        <!-- Settings Toolbar: Sound + Game side by side, collapsed by default -->
-        <div class="settings-toolbar">
-            <div class="settings-toolbar-header" id="settingsToggle">
-                <h3>Settings</h3>
-                <span class="toggle-arrow">&#9660;</span>
-            </div>
+        <!-- Settings Panel (toggled by header menu button) -->
+        <div class="settings-toolbar" id="settingsToolbar">
             <div class="settings-toolbar-panels collapsed" id="settingsPanelsBody">
             <div class="settings-panel">
                 <h4>Sound</h4>

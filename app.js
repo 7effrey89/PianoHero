@@ -681,10 +681,9 @@ class PianoHero {
     }
 
     initSoundPanel() {
-        // Shared settings toggle (expands/collapses both panels together)
-        document.getElementById('settingsToggle').addEventListener('click', () => {
+        // Settings menu button in header (expands/collapses settings panel)
+        document.getElementById('settingsMenuBtn').addEventListener('click', () => {
             document.getElementById('settingsPanelsBody').classList.toggle('collapsed');
-            document.querySelector('#settingsToggle .toggle-arrow').classList.toggle('open');
         });
 
         // Instrument selector — loads soundfont when changed
