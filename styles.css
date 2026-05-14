@@ -437,6 +437,11 @@ button {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none; /* Firefox */
+}
+
+#gameArea::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Edge */
 }
 
 #gameCanvas {
@@ -462,6 +467,8 @@ button {
     height: 120px;
     margin: 0;
     background: transparent;
+    overflow-x: clip;
+    overflow-y: visible;
     /* min-width set dynamically by JS */
 }
 

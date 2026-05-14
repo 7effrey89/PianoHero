@@ -1139,12 +1139,12 @@ class PianoHero {
             this.startTime += pauseDuration;
         }
 
-        // Co-Play: keep auto-playing non-manual lanes
+        // Mark as manual (toggle shows "Manual")
+        this.isAutoPlay = false;
+
+        // Co-Play: keep auto-playing non-manual lanes in the background
         if (this.gameMode === 'coplay' && this.coPlayManualNotes.size > 0) {
-            this.isAutoPlay = true;
             this._scheduleAutoPlayNotes();
-        } else {
-            this.isAutoPlay = false;
         }
 
         this._updateControlButtons();
@@ -1614,7 +1614,7 @@ class PianoHero {
             return;
         }
 
-        const key = e.key.toUpperCase();
+        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase();
         if (this.keyToNote[key]) {
             e.preventDefault();
             this.pressKey(key);
@@ -1623,7 +1623,7 @@ class PianoHero {
     
     handleKeyUp(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-        const key = e.key.toUpperCase();
+        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase();
         if (this.keyToNote[key]) {
             e.preventDefault();
             this.releaseKey(key);
