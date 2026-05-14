@@ -64,6 +64,8 @@ header h1 {
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+    position: relative;
+    z-index: 1;
 }
 
 .controls-row .game-controls {
@@ -669,26 +671,48 @@ button {
     bottom: 5px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 8px;
-    font-weight: bold;
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
     pointer-events: none;
     white-space: nowrap;
-    line-height: 1;
-    background: #fff;
+}
+
+.key-label .keycap {
+    font-size: 9px;
+    font-weight: bold;
     color: #333;
+    background: #fff;
     border: 1px solid #999;
     border-radius: 3px;
-    padding: 2px 3px;
+    padding: 2px 4px;
     box-shadow: 0 1px 0 #666, 0 2px 2px rgba(0,0,0,0.3);
     min-width: 14px;
+    text-align: center;
+    line-height: 1;
+}
+
+.key-label .note-name {
+    font-size: 8px;
+    font-weight: bold;
+    color: #666;
+    line-height: 1;
 }
 
 .key.black .key-label {
-    font-size: 7px;
     bottom: 3px;
+}
+
+.key.black .key-label .keycap {
+    font-size: 7px;
     min-width: 12px;
-    padding: 1px 2px;
+    padding: 1px 3px;
+}
+
+.key.black .key-label .note-name {
+    font-size: 7px;
+    color: #ccc;
 }
 
 .instructions {

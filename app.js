@@ -103,14 +103,22 @@ class PianoHero {
         // Lower octave C3–B3:  Z X C V B N M and sharps: S D G H J
         // Upper octave C4–B4:  Q W E R T Y U and sharps: 2 3 5 6 7
         this.noteToKey = {
-            // C3–B3 (bottom row + home row for sharps)
+            // C3–B3: bottom row = white keys, home row = sharps
             'C3': 'Z', 'C#3': 'S', 'D3': 'X', 'D#3': 'D',
             'E3': 'C', 'F3': 'V', 'F#3': 'G', 'G3': 'B',
             'G#3': 'H', 'A3': 'N', 'A#3': 'J', 'B3': 'M',
-            // C4–B4 (top rows)
+            // C4–F#5: QWERTY row = white keys, number row = sharps
             'C4': 'Q', 'C#4': '2', 'D4': 'W', 'D#4': '3',
             'E4': 'E', 'F4': 'R', 'F#4': '5', 'G4': 'T',
             'G#4': '6', 'A4': 'Y', 'A#4': '7', 'B4': 'U',
+            'C5': 'I', 'C#5': '9', 'D5': 'O', 'D#5': '0',
+            'E5': 'P', 'F5': 'Å', 'F#5': '+',
+        };
+
+        // Map e.code to key label for keys where e.key might be unreliable
+        this.codeToKey = {
+            'BracketLeft': 'Å',    // Swedish Å key (next to P)
+            'Minus': '+',          // Swedish + key (between 0 and ´)
         };
         
         this.keyToNote = Object.fromEntries(
@@ -279,7 +287,7 @@ class PianoHero {
             const keyBind = this.noteToKey[note] || '';
             if (keyBind) btn.dataset.key = keyBind;
             const noteName = note.replace(/\d+/, '');
-            const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
+            const label = keyBind ? `<span class="keycap">${keyBind}</span><span class="note-name">${noteName}</span>` : `<span class="note-name">${noteName}</span>`;
             btn.innerHTML = `<span class="key-label">${label}</span>`;
             if (useFixedWidth) {
                 btn.style.flex = '0 0 ' + MIN_WHITE_KEY_PX + 'px';
@@ -323,7 +331,7 @@ class PianoHero {
             const keyBind = this.noteToKey[note] || '';
             if (keyBind) btn.dataset.key = keyBind;
             const noteName = note.replace(/\d+/, '');
-            const label = keyBind ? `${keyBind}<br>${noteName}` : noteName;
+            const label = keyBind ? `<span class="keycap">${keyBind}</span><span class="note-name">${noteName}</span>` : `<span class="note-name">${noteName}</span>`;
             btn.innerHTML = `<span class="key-label">${label}</span>`;
             btn.style.left = (boundary - blackWidth / 2) + 'px';
             btn.style.width = blackWidth + 'px';
@@ -1437,10 +1445,10 @@ class PianoHero {
         const noteName = note.replace(/\d+/, '');
         if (newBind) {
             keyEl.dataset.key = newBind;
-            keyEl.innerHTML = `<span class="key-label">${newBind}<br>${noteName}</span>`;
+            keyEl.innerHTML = `<span class="key-label"><span class="keycap">${newBind}</span><span class="note-name">${noteName}</span></span>`;
         } else {
             delete keyEl.dataset.key;
-            keyEl.innerHTML = `<span class="key-label">${noteName}</span>`;
+            keyEl.innerHTML = `<span class="key-label"><span class="note-name">${noteName}</span></span>`;
         }
     }
 
@@ -1707,7 +1715,7 @@ class PianoHero {
             return;
         }
 
-        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase();
+        const key = this._resolveKey(e);
         if (this.keyToNote[key]) {
             e.preventDefault();
             this.pressKey(key);
@@ -1716,11 +1724,17 @@ class PianoHero {
     
     handleKeyUp(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase();
+        const key = this._resolveKey(e);
         if (this.keyToNote[key]) {
             e.preventDefault();
             this.releaseKey(key);
         }
+    }
+
+    _resolveKey(e) {
+        // Check code-based mapping first (for locale-specific keys)
+        if (this.codeToKey[e.code]) return this.codeToKey[e.code];
+        return e.key === ' ' ? 'Space' : e.key.toUpperCase();
     }
     
     handlePianoKeyPress(keyElement) {
