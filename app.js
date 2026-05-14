@@ -198,6 +198,14 @@ class PianoHero {
         document.getElementById('midiListHeader').addEventListener('click', () => {
             document.getElementById('midiListContainer').classList.toggle('expanded');
         });
+
+        // Close MIDI list when clicking outside
+        document.addEventListener('click', (e) => {
+            const container = document.getElementById('midiListContainer');
+            if (container.classList.contains('expanded') && !container.contains(e.target)) {
+                container.classList.remove('expanded');
+            }
+        });
         
         // Event listeners
         this.modeToggleSwitch.addEventListener('change', () => this.toggleManualAuto());
