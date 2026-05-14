@@ -56,6 +56,7 @@ class PianoHero {
         this.noteSpeed = 200; // pixels per second
         this.hitZoneY = this.canvas.height - 80;
         this.hitTolerance = 50; // pixels tolerance for hitting notes
+        this.showTimingFeedback = true; // show Perfect/Great/Good/OK/Miss text
 
         // Performance: cached static layers
         this._laneCanvas = null; // offscreen canvas for lanes + hit zone
@@ -83,6 +84,7 @@ class PianoHero {
 
         // Co-Play mode: lanes the player chose to play manually
         this.coPlayManualNotes = new Set();       // note names the player toggles as "manual"
+        this.coPlayAutoVolume = 0.3;              // volume multiplier for auto-played (non-manual) notes in co-play
 
         // Key Map modal state
         this.keyMapModalOpen = false;
@@ -646,6 +648,23 @@ class PianoHero {
             document.getElementById('reverbVal').textContent = reverbSlider.value + '%';
         });
 
+        // Co-Play auto volume slider
+        const coplayVolSlider = document.getElementById('coplayAutoVolume');
+        if (coplayVolSlider) {
+            coplayVolSlider.addEventListener('input', () => {
+                this.coPlayAutoVolume = coplayVolSlider.value / 100;
+                document.getElementById('coplayAutoVolumeVal').textContent = coplayVolSlider.value + '%';
+            });
+        }
+
+        // Timing feedback toggle
+        const timingFeedbackToggle = document.getElementById('timingFeedbackToggle');
+        if (timingFeedbackToggle) {
+            timingFeedbackToggle.addEventListener('change', () => {
+                this.showTimingFeedback = timingFeedbackToggle.checked;
+            });
+        }
+
         // Auto-load the default instrument soundfont
         this.loadSoundfont(this.currentInstrument);
     }
@@ -709,8 +728,10 @@ class PianoHero {
         modeSelect.addEventListener('change', () => {
             this.gameMode = modeSelect.value;
 
-            // Show/hide co-play hint
+            // Show/hide co-play hint and volume control
             if (coplayHint) coplayHint.style.display = this.gameMode === 'coplay' ? '' : 'none';
+            const coplayVolRow = document.getElementById('coplayVolumeRow');
+            if (coplayVolRow) coplayVolRow.style.display = this.gameMode === 'coplay' ? '' : 'none';
 
             // Update co-play visual on keys and lane selectors
             this._updateCoPlayKeyVisuals();
@@ -1383,8 +1404,13 @@ class PianoHero {
             const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
             this.score += points;
             this.updateScore();
-            this.showHitFeedback(note, true);
+            this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+        } else {
+            // Wrong key — show red miss feedback
+            this.combo = 0;
+            this.updateScore();
+            this.showHitFeedback(note, false, 0);
         }
     }
 
@@ -1544,7 +1570,7 @@ class PianoHero {
                     this.hitNotes++;
                     this.score += Math.floor(100 * (1 + this.combo * 0.1));
                     this.updateScore();
-                    this.showHitFeedback(note.note, true);
+                    this.showHitFeedback(note.note, true, 1);
                     this.heldFallingNotes.set(note.note, note);
                 }
 
@@ -1553,7 +1579,9 @@ class PianoHero {
                     ? document.querySelector(`.key[data-key="${key}"]`)
                     : document.querySelector(`.key[data-note="${note.note}"]`);
                 if (keyElement) keyElement.classList.add('active');
-                this.playNoteSound(note.note, note.duration);
+                // In co-play mode, reduce volume for auto-played (non-manual) notes
+                const autoVol = isCoPlay ? this.coPlayAutoVolume : undefined;
+                this.playNoteSound(note.note, note.duration, autoVol);
 
                 const releaseTid = setTimeout(() => {
                     if (keyElement) keyElement.classList.remove('active');
@@ -1691,7 +1719,7 @@ class PianoHero {
         }
     }
     
-    playNoteSound(note, duration) {
+    playNoteSound(note, duration, volumeOverride) {
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.setupAudioGraph();
@@ -1721,8 +1749,10 @@ class PianoHero {
         const source = this.audioContext.createBufferSource();
         source.buffer = buffer;
 
+        // Apply volume override (used for co-play auto-played notes)
+        const baseLevel = 1.4 * (volumeOverride != null ? volumeOverride : 1);
         const noteGain = this.audioContext.createGain();
-        noteGain.gain.setValueAtTime(1.4, now);
+        noteGain.gain.setValueAtTime(baseLevel, now);
         source.connect(noteGain);
         noteGain.connect(this.dryGain);
         if (p.reverb > 0.01) noteGain.connect(this.wetGain);
@@ -1737,13 +1767,13 @@ class PianoHero {
             const fadeTime = Math.min(0.6, holdTime * 0.4);
             const fadeStart = now + holdTime;
             const fadeEnd   = fadeStart + fadeTime;
-            noteGain.gain.setValueAtTime(1.4, fadeStart);
+            noteGain.gain.setValueAtTime(baseLevel, fadeStart);
             noteGain.gain.linearRampToValueAtTime(0, fadeEnd);
             source.stop(fadeEnd);
         } else {
             // Sustain for up to 10s max (safety cap); will be cut short by stopNoteSound
             const maxSustain = now + 10;
-            noteGain.gain.setValueAtTime(1.4, maxSustain);
+            noteGain.gain.setValueAtTime(baseLevel, maxSustain);
             noteGain.gain.linearRampToValueAtTime(0, maxSustain + 0.3);
             source.stop(maxSustain + 0.3);
         }
@@ -1906,12 +1936,17 @@ class PianoHero {
             this.score += points;
             
             this.updateScore();
-            this.showHitFeedback(note, true);
+            this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+        } else {
+            // Wrong key — show red miss feedback
+            this.combo = 0;
+            this.updateScore();
+            this.showHitFeedback(note, false, 0);
         }
     }
     
-    showHitFeedback(note, success) {
+    showHitFeedback(note, success, accuracy) {
         const keyElement = document.querySelector(`.key[data-note="${note}"]`);
         if (keyElement) {
             // Use co-play specific hit animation for manual lanes
@@ -1922,6 +1957,40 @@ class PianoHero {
                 keyElement.classList.remove('hit-success', 'hit-miss', 'coplay-hit-success');
             }, 350);
         }
+
+        // Show timing feedback text
+        if (this.showTimingFeedback) {
+            this._showTimingText(note, success, accuracy);
+        }
+    }
+
+    _getTimingGrade(success, accuracy) {
+        if (!success) return { text: 'Miss', cls: 'timing-miss' };
+        if (accuracy >= 0.95) return { text: 'Perfect', cls: 'timing-perfect' };
+        if (accuracy >= 0.80) return { text: 'Great', cls: 'timing-great' };
+        if (accuracy >= 0.60) return { text: 'Good', cls: 'timing-good' };
+        return { text: 'OK', cls: 'timing-ok' };
+    }
+
+    _showTimingText(note, success, accuracy) {
+        const pos = this.keyPositions[note];
+        if (!pos) return;
+
+        const grade = this._getTimingGrade(success, accuracy);
+        const el = document.createElement('div');
+        el.className = 'timing-feedback ' + grade.cls;
+        el.textContent = grade.text;
+
+        // Position above the hit zone, centered on the key
+        const gameArea = document.getElementById('gameArea');
+        el.style.left = (pos.left + pos.width / 2) + 'px';
+
+        const canvas = document.getElementById('notesCanvas');
+        const canvasH = canvas ? canvas.offsetHeight : 400;
+        el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
+
+        gameArea.appendChild(el);
+        setTimeout(() => el.remove(), 800);
     }
     
     updateScore() {
@@ -2144,7 +2213,7 @@ class PianoHero {
         this.hitNotes++;
         this.score += Math.floor(100 * (1 + this.combo * 0.1));
         this.updateScore();
-        this.showHitFeedback(noteName, true);
+        this.showHitFeedback(noteName, true, 1);
         this.practiceHitNotes.add(noteName);
 
         // Remove highlight from this key
@@ -2268,68 +2337,105 @@ class PianoHero {
         const x = pos.left + (pos.width - noteWidth) / 2;
         // note.y is the bottom edge (hit zone arrival point)
         const y = note.y - noteHeight;
-        const r = Math.min(6, noteHeight / 2, noteWidth / 2); // corner radius
         
         // Pick colour — hand-aware like Synthesia
-        // hand 0 = right hand (green tones), hand 1 = left hand (blue tones)
-        let fill;
         const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
         const isCoPlayManual = this.gameMode === 'coplay' && this.coPlayManualNotes.has(note.note);
         const hand = note.hand || 0;
+        let fill, fillDark;
         if (note.missed) {
-            fill = '#f44336';
+            fill = '#f44336'; fillDark = '#b71c1c';
         } else if (note.hit && isHeld) {
-            fill = hand === 0 ? '#66BB6A' : '#42A5F5'; // brighter when held
+            fill = hand === 0 ? '#66BB6A' : '#42A5F5';
+            fillDark = hand === 0 ? '#2E7D32' : '#1565C0';
         } else if (note.hit) {
             fill = hand === 0 ? 'rgba(102, 187, 106, 0.4)' : 'rgba(66, 165, 245, 0.4)';
+            fillDark = hand === 0 ? 'rgba(46, 125, 50, 0.4)' : 'rgba(21, 101, 192, 0.4)';
         } else if (this.gameMode === 'practice' && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
-            fill = '#FFD600';
+            fill = '#FFD600'; fillDark = '#F9A825';
         } else if (isCoPlayManual) {
-            fill = '#FF9800';
+            fill = '#FF9800'; fillDark = '#E65100';
         } else if (this.gameMode === 'coplay') {
             fill = hand === 0 ? 'rgba(76, 175, 80, 0.45)' : 'rgba(33, 150, 243, 0.45)';
+            fillDark = hand === 0 ? 'rgba(27, 94, 32, 0.45)' : 'rgba(13, 71, 161, 0.45)';
         } else {
-            // Normal mode: right hand = green, left hand = blue/purple
             if (hand === 0) {
                 fill = pos.isBlack ? '#388E3C' : '#4CAF50';
+                fillDark = pos.isBlack ? '#1B5E20' : '#2E7D32';
             } else {
                 fill = pos.isBlack ? '#1565C0' : '#2196F3';
+                fillDark = pos.isBlack ? '#0D47A1' : '#1565C0';
             }
         }
-        
-        // Shadow
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-        this._roundRect(ctx, x + 2, y + 2, noteWidth, noteHeight, r);
+
+        // Rock Band style: head (gem) at bottom + tail (bar) for hold duration
+        const headHeight = Math.min(14, noteHeight);
+        const tailHeight = noteHeight - headHeight;
+        const tailWidth = noteWidth * 0.45;
+        const tailX = x + (noteWidth - tailWidth) / 2;
+        const tailY = y;
+        const headY = note.y - headHeight; // head sits at bottom of the note
+
+        // Draw tail (hold bar) — only if there's meaningful duration
+        if (tailHeight > 2) {
+            // Tail shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.fillRect(tailX + 1, tailY + 1, tailWidth, tailHeight);
+
+            // Tail body — gradient
+            const tailGrad = ctx.createLinearGradient(tailX, 0, tailX + tailWidth, 0);
+            tailGrad.addColorStop(0, fillDark);
+            tailGrad.addColorStop(0.5, fill);
+            tailGrad.addColorStop(1, fillDark);
+            ctx.fillStyle = tailGrad;
+            ctx.fillRect(tailX, tailY, tailWidth, tailHeight);
+
+            // Tail inner highlight
+            const innerW = tailWidth * 0.35;
+            const innerX = tailX + (tailWidth - innerW) / 2;
+            ctx.fillStyle = 'rgba(255,255,255,0.15)';
+            ctx.fillRect(innerX, tailY, innerW, tailHeight);
+
+            // Tail border
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(tailX, tailY, tailWidth, tailHeight);
+        }
+
+        // Draw head (gem) — prominent rounded square
+        const headR = Math.min(4, headHeight / 2, noteWidth / 2);
+
+        // Head shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this._roundRect(ctx, x + 2, headY + 2, noteWidth, headHeight, headR);
         ctx.fill();
 
-        // Body
+        // Head body
         ctx.fillStyle = fill;
-        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        this._roundRect(ctx, x, headY, noteWidth, headHeight, headR);
         ctx.fill();
 
-        // Border
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 1.5;
-        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        // Head border
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 2;
+        this._roundRect(ctx, x, headY, noteWidth, headHeight, headR);
         ctx.stroke();
 
-        // Gradient highlight on top edge
-        if (noteHeight > 16) {
-            const grad = ctx.createLinearGradient(x, y, x, y + Math.min(10, noteHeight * 0.3));
-            grad.addColorStop(0, 'rgba(255,255,255,0.35)');
-            grad.addColorStop(1, 'rgba(255,255,255,0)');
-            ctx.fillStyle = grad;
-            this._roundRect(ctx, x, y, noteWidth, Math.min(10, noteHeight * 0.3), r);
-            ctx.fill();
-        }
+        // Head top highlight
+        const grad = ctx.createLinearGradient(x, headY, x, headY + headHeight * 0.5);
+        grad.addColorStop(0, 'rgba(255,255,255,0.45)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        this._roundRect(ctx, x, headY, noteWidth, headHeight * 0.5, headR);
+        ctx.fill();
         
-        // Label (only if note is tall enough)
-        if (noteHeight > 18) {
+        // Label on head
+        if (headHeight >= 12) {
             ctx.fillStyle = '#fff';
             ctx.font = 'bold 9px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(note.note, pos.x, y + noteHeight / 2);
+            ctx.fillText(note.note, pos.x, headY + headHeight / 2);
         }
     }
 

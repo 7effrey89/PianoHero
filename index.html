@@ -148,8 +148,20 @@
                         <option value="practice">Practice (wait for input)</option>
                     </select>
                 </div>
+                <div class="setting-row">
+                    <label for="timingFeedbackToggle">Hit Feedback</label>
+                    <label class="toggle-small">
+                        <input type="checkbox" id="timingFeedbackToggle" checked>
+                        <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                    </label>
+                </div>
                 <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
                     <span class="setting-info">Use the selectors above each key to pick your manual lanes. Click a selected lane again to remap its keyboard key.</span>
+                </div>
+                <div class="setting-row coplay-hint coplay-volume-row" id="coplayVolumeRow" style="display:none">
+                    <label for="coplayAutoVolume">Others Volume</label>
+                    <input type="range" id="coplayAutoVolume" min="0" max="100" value="30" />
+                    <span id="coplayAutoVolumeVal">30%</span>
                 </div>
             </div>
             </div>

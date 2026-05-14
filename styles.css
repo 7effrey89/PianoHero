@@ -308,6 +308,45 @@ button {
     transform: translateX(20px);
 }
 
+/* Small toggle for settings */
+.toggle-small {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.toggle-small input[type="checkbox"] {
+    display: none;
+}
+
+.toggle-track-small {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: #555;
+    border-radius: 10px;
+    transition: background 0.3s;
+}
+
+.toggle-small input:checked ~ .toggle-track-small {
+    background: #4CAF50;
+}
+
+.toggle-knob-small {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.3s;
+}
+
+.toggle-small input:checked ~ .toggle-track-small .toggle-knob-small {
+    transform: translateX(16px);
+}
+
 .toggle-label {
     font-size: 12px;
     font-weight: 700;
@@ -587,19 +626,56 @@ button {
 }
 
 @keyframes hitMiss {
-    0%, 100% {
+    0% {
         transform: translateX(0);
+        background: linear-gradient(to bottom, #f44336 0%, #d32f2f 100%) !important;
+        box-shadow: 0 0 15px rgba(244, 67, 54, 0.8);
     }
     25% {
-        transform: translateX(-5px);
+        transform: translateX(-4px);
+    }
+    50% {
+        transform: translateX(4px);
     }
     75% {
-        transform: translateX(5px);
+        transform: translateX(-2px);
+    }
+    100% {
+        transform: translateX(0);
     }
 }
 
 .hit-miss {
-    animation: hitMiss 0.3s ease;
+    animation: hitMiss 0.35s ease !important;
+    background: linear-gradient(to bottom, #f44336 0%, #d32f2f 100%) !important;
+    color: #fff !important;
+}
+
+/* Timing feedback text */
+.timing-feedback {
+    position: absolute;
+    transform: translateX(-50%);
+    font-weight: 900;
+    font-size: 1.1rem;
+    pointer-events: none;
+    z-index: 200;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    text-shadow: 0 0 6px currentColor, 0 2px 4px rgba(0,0,0,0.6);
+    animation: timingFloat 0.8s ease-out forwards;
+    white-space: nowrap;
+}
+
+.timing-perfect { color: #FFD700; }
+.timing-great { color: #00E5FF; }
+.timing-good { color: #69F0AE; }
+.timing-ok { color: #FFC107; }
+.timing-miss { color: #FF5252; }
+
+@keyframes timingFloat {
+    0% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1.2); }
+    60% { opacity: 1; transform: translateX(-50%) translateY(-20px) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-40px) scale(0.8); }
 }
 
 /* Practice mode: pulse the target key */
@@ -677,6 +753,19 @@ button {
 .coplay-hint .setting-info {
     color: #FF9800;
     font-style: italic;
+}
+
+/* Co-Play volume slider orange accent */
+.coplay-volume-row input[type="range"]::-webkit-slider-thumb {
+    background: #FF9800;
+}
+
+.coplay-volume-row input[type="range"]::-moz-range-thumb {
+    background: #FF9800;
+}
+
+.coplay-volume-row label {
+    color: #FF9800;
 }
 
 /* Settings Toolbar: Sound + Game side by side */
