@@ -1205,6 +1205,8 @@ class PianoHero {
 
             btn.style.left  = pos.left + 'px';
             btn.style.width = pos.width + 'px';
+            // Stagger rows: black key selectors on top row, white on bottom row to avoid overlap
+            btn.style.top = pos.isBlack ? '0px' : '20px';
             btn.style.zIndex = pos.isBlack ? '10' : '5';
 
             btn.addEventListener('click', (e) => {
@@ -1912,10 +1914,13 @@ class PianoHero {
     showHitFeedback(note, success) {
         const keyElement = document.querySelector(`.key[data-note="${note}"]`);
         if (keyElement) {
-            keyElement.classList.add(success ? 'hit-success' : 'hit-miss');
+            // Use co-play specific hit animation for manual lanes
+            const isCoPlayManual = this.gameMode === 'coplay' && this.coPlayManualNotes.has(note);
+            const hitClass = (success && isCoPlayManual) ? 'coplay-hit-success' : (success ? 'hit-success' : 'hit-miss');
+            keyElement.classList.add(hitClass);
             setTimeout(() => {
-                keyElement.classList.remove('hit-success', 'hit-miss');
-            }, 300);
+                keyElement.classList.remove('hit-success', 'hit-miss', 'coplay-hit-success');
+            }, 350);
         }
     }
     

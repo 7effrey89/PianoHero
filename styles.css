@@ -628,6 +628,40 @@ button {
     background: linear-gradient(to bottom, #FF9800 0%, #E65100 100%) !important;
 }
 
+/* Co-Play: active (pressed) state for manual keys */
+.key.white.coplay-manual.active,
+.key.white.coplay-manual:active {
+    background: linear-gradient(to bottom, #FFEB3B 0%, #FFC107 100%) !important;
+    transform: translateY(2px);
+    box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.3), 0 0 20px rgba(255, 235, 59, 0.8);
+}
+
+.key.black.coplay-manual.active,
+.key.black.coplay-manual:active {
+    background: linear-gradient(to bottom, #FFEB3B 0%, #FFC107 100%) !important;
+    transform: translateY(2px);
+    box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 235, 59, 0.8);
+}
+
+/* Co-Play: hit success flash for manual keys */
+.key.coplay-manual.coplay-hit-success {
+    animation: coplayHitSuccess 0.35s ease !important;
+}
+
+@keyframes coplayHitSuccess {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.15);
+        box-shadow: 0 0 25px #FFEB3B, 0 0 50px rgba(255, 152, 0, 0.7);
+        background: linear-gradient(to bottom, #FFEB3B 0%, #FFD600 100%) !important;
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
 @keyframes coplayPulse {
     from { box-shadow: 0 0 6px rgba(255, 152, 0, 0.6); }
     to { box-shadow: 0 0 16px rgba(255, 152, 0, 0.9), 0 0 30px rgba(255, 152, 0, 0.3); }
@@ -996,7 +1030,7 @@ button {
 
 .lane-selector {
     position: absolute;
-    top: 0;
+    /* top is set inline by JS: 0 for black keys, 20px for white keys */
     display: flex;
     align-items: center;
     justify-content: center;
