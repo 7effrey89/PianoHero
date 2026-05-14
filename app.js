@@ -83,6 +83,11 @@ class PianoHero {
 
         // Co-Play mode: lanes the player chose to play manually
         this.coPlayManualNotes = new Set();       // note names the player toggles as "manual"
+
+        // Key Map modal state
+        this.keyMapModalOpen = false;
+        this.keyMapTargetNote = null;
+        this.keyMapPendingKey = null;
         
         // API configuration
         this.apiBaseUrl = window.location.origin.replace(':3000', ':5000'); // Python server on port 5000
@@ -167,11 +172,18 @@ class PianoHero {
         document.addEventListener('keydown', (e) => this.handleKeyDown(e));
         document.addEventListener('keyup', (e) => this.handleKeyUp(e));
         
-        // Piano key clicks
-        document.querySelectorAll('.key').forEach(key => {
-            key.addEventListener('mousedown', () => this.handlePianoKeyPress(key));
-            key.addEventListener('mouseup', () => this.handlePianoKeyRelease(key));
+        // Key Map modal button listeners
+        document.getElementById('keyMapConfirm').addEventListener('click', () => this._closeKeyMapModal(true));
+        document.getElementById('keyMapRemove').addEventListener('click', () => {
+            if (this.keyMapTargetNote) this._removeKeyBinding(this.keyMapTargetNote);
+            this._closeKeyMapModal(false);
         });
+        document.getElementById('keyMapCancel').addEventListener('click', () => this._closeKeyMapModal(false));
+        document.getElementById('keyMapModal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('keyMapModal')) this._closeKeyMapModal(false);
+        });
+        
+        // Piano key handlers are set in _placeBlackKeys (including touch events)
         
         // Start render loop
         requestAnimationFrame(this._boundRender);
@@ -318,11 +330,17 @@ class PianoHero {
         // Now recalculate canvas and key positions
         this.resizeCanvas();
 
-        // Re-attach click handlers for the new keys
+        // Re-attach mouse + touch handlers for all keys
         document.querySelectorAll('.key').forEach(key => {
-            key.onmousedown = () => this.handlePianoKeyPress(key);
-            key.onmouseup = () => this.handlePianoKeyRelease(key);
+            key.onmousedown = (e) => { e.preventDefault(); this.handlePianoKeyPress(key); };
+            key.onmouseup   = () => this.handlePianoKeyRelease(key);
+            key.ontouchstart = (e) => { e.preventDefault(); this.handlePianoKeyPress(key); };
+            key.ontouchend   = (e) => { e.preventDefault(); this.handlePianoKeyRelease(key); };
+            key.ontouchcancel = (e) => { e.preventDefault(); this.handlePianoKeyRelease(key); };
         });
+
+        // Build co-play lane selectors (requires updated keyPositions)
+        this._buildLaneSelectors();
     }
     
     resizeCanvas() {
@@ -694,8 +712,9 @@ class PianoHero {
             // Show/hide co-play hint
             if (coplayHint) coplayHint.style.display = this.gameMode === 'coplay' ? '' : 'none';
 
-            // Update co-play visual on keys
+            // Update co-play visual on keys and lane selectors
             this._updateCoPlayKeyVisuals();
+            this._buildLaneSelectors();
 
             // Re-apply notes if a song is loaded
             if (this.originalNotes.length > 0) {
@@ -1140,7 +1159,7 @@ class PianoHero {
         // For demo, we just track time
     }
 
-    /** Apply or remove coplay-manual CSS class on all piano keys */
+    /** Apply or remove coplay-manual CSS class on all piano keys and update lane selectors */
     _updateCoPlayKeyVisuals() {
         document.querySelectorAll('.key').forEach(k => {
             const note = k.dataset.note;
@@ -1150,7 +1169,219 @@ class PianoHero {
                 k.classList.remove('coplay-manual');
             }
         });
+        // Sync lane selector selected state
+        document.querySelectorAll('.lane-selector').forEach(sel => {
+            const note = sel.dataset.note;
+            if (this.coPlayManualNotes.has(note)) {
+                sel.classList.add('selected');
+            } else {
+                sel.classList.remove('selected');
+            }
+        });
         this._laneCacheDirty = true;
+    }
+
+    /** Build lane selector buttons above each piano key (visible only in co-play mode) */
+    _buildLaneSelectors() {
+        // Remove any existing selectors
+        document.querySelectorAll('.lane-selector').forEach(el => el.remove());
+
+        if (this.gameMode !== 'coplay') return;
+
+        const container = document.querySelector('.piano-keys');
+        if (!container) return;
+
+        for (const note of this.allNotes) {
+            const pos = this.keyPositions[note];
+            if (!pos) continue;
+
+            const btn = document.createElement('button');
+            btn.className = 'lane-selector' + (this.coPlayManualNotes.has(note) ? ' selected' : '');
+            btn.dataset.note = note;
+
+            const keyBind = this.noteToKey[note];
+            btn.textContent = keyBind || '?';
+            btn.title = `${note}: ${keyBind ? 'Key ' + keyBind : 'No binding'} — click to toggle manual lane`;
+
+            btn.style.left  = pos.left + 'px';
+            btn.style.width = pos.width + 'px';
+            btn.style.zIndex = pos.isBlack ? '10' : '5';
+
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._handleLaneSelectorClick(note, btn);
+            });
+            btn.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+            }, { passive: true });
+
+            container.appendChild(btn);
+        }
+    }
+
+    /** Toggle a lane and (when selecting) open the key remap modal */
+    _handleLaneSelectorClick(note, btn) {
+        const wasSelected = this.coPlayManualNotes.has(note);
+
+        if (wasSelected) {
+            // Deselect lane
+            this.coPlayManualNotes.delete(note);
+            btn.classList.remove('selected');
+        } else {
+            // Select lane and offer key remapping
+            this.coPlayManualNotes.add(note);
+            btn.classList.add('selected');
+            this._openKeyMapModal(note);
+        }
+
+        this._updateCoPlayKeyVisuals();
+        this._laneCacheDirty = true;
+
+        // Reschedule auto-play if mid-game
+        if (this.isPlaying && !this.isPaused && this.isAutoPlay) {
+            this.autoPlayTimeouts.forEach(t => clearTimeout(t));
+            this.autoPlayTimeouts = [];
+            this._scheduleAutoPlayNotes();
+        }
+    }
+
+    /** Open the key remapping lightbox for a given piano note */
+    _openKeyMapModal(note) {
+        this.keyMapTargetNote = note;
+        this.keyMapPendingKey = null;
+        this.keyMapModalOpen = true;
+
+        const currentKey = this.noteToKey[note];
+        document.getElementById('keyMapNoteName').textContent = note;
+        document.getElementById('keyMapCurrentKey').textContent = currentKey || 'None';
+        document.getElementById('keyMapNewRow').classList.add('hidden');
+        document.getElementById('keyMapNewKey').textContent = '';
+        document.getElementById('keyMapNewKey').classList.remove('conflict');
+        document.getElementById('keyMapConfirm').classList.add('hidden');
+        document.getElementById('keyMapModal').classList.remove('hidden');
+    }
+
+    /** Capture a key press in the remap modal and show preview */
+    _captureKeyForRemap(key) {
+        let displayKey;
+        if (key === ' ') {
+            displayKey = 'Space';
+        } else if (key.length === 1) {
+            displayKey = key.toUpperCase();
+        } else {
+            return; // ignore Arrow keys, F-keys, etc.
+        }
+
+        this.keyMapPendingKey = displayKey;
+
+        // Show the new binding preview
+        const newRow = document.getElementById('keyMapNewRow');
+        newRow.classList.remove('hidden');
+        const newKeyEl = document.getElementById('keyMapNewKey');
+        newKeyEl.textContent = displayKey;
+        newKeyEl.classList.remove('conflict');
+        newKeyEl.title = '';
+
+        // Warn if this key is already used by another note
+        const existingNote = this.keyToNote[displayKey];
+        if (existingNote && existingNote !== this.keyMapTargetNote) {
+            newKeyEl.classList.add('conflict');
+            newKeyEl.title = `⚠ Currently mapped to ${existingNote} — will be reassigned`;
+        }
+
+        document.getElementById('keyMapConfirm').classList.remove('hidden');
+    }
+
+    /** Close the key remap modal, optionally saving the pending key */
+    _closeKeyMapModal(save) {
+        if (save && this.keyMapPendingKey && this.keyMapTargetNote) {
+            this._applyKeyRemap(this.keyMapTargetNote, this.keyMapPendingKey);
+        }
+        this.keyMapModalOpen = false;
+        this.keyMapTargetNote = null;
+        this.keyMapPendingKey = null;
+        document.getElementById('keyMapModal').classList.add('hidden');
+    }
+
+    /** Reassign a piano note to a new keyboard key */
+    _applyKeyRemap(note, newKey) {
+        // Remove the note's old keyboard binding
+        const oldKey = this.noteToKey[note];
+        if (oldKey) {
+            delete this.keyToNote[oldKey];
+        }
+
+        // Remove any existing assignment of the new key to a different note
+        const existingNote = this.keyToNote[newKey];
+        if (existingNote) {
+            delete this.noteToKey[existingNote];
+            this._refreshKeyLabel(existingNote);
+        }
+
+        // Apply the new binding
+        this.noteToKey[note] = newKey;
+        this.keyToNote[newKey] = note;
+        this._refreshKeyLabel(note);
+
+        // Update the lane selector label
+        const sel = document.querySelector(`.lane-selector[data-note="${note}"]`);
+        if (sel) sel.textContent = newKey;
+    }
+
+    /** Remove all keyboard bindings for a piano note */
+    _removeKeyBinding(note) {
+        const oldKey = this.noteToKey[note];
+        if (!oldKey) return;
+        delete this.keyToNote[oldKey];
+        delete this.noteToKey[note];
+        this._refreshKeyLabel(note);
+        const sel = document.querySelector(`.lane-selector[data-note="${note}"]`);
+        if (sel) sel.textContent = '?';
+    }
+
+    /** Refresh the label shown on a piano key element */
+    _refreshKeyLabel(note) {
+        const keyEl = document.querySelector(`.key[data-note="${note}"]`);
+        if (!keyEl) return;
+        const newBind = this.noteToKey[note];
+        const noteName = note.replace(/\d+/, '');
+        if (newBind) {
+            keyEl.dataset.key = newBind;
+            keyEl.innerHTML = `<span class="key-label">${newBind}<br>${noteName}</span>`;
+        } else {
+            delete keyEl.dataset.key;
+            keyEl.innerHTML = `<span class="key-label">${noteName}</span>`;
+        }
+    }
+
+    /** Check for a note hit triggered by a direct click/touch on an unbound piano key */
+    _checkHitByNote(note) {
+        let closestNote = null;
+        let closestDistance = this.hitTolerance + 1;
+
+        for (let i = 0; i < this.fallingNotes.length; i++) {
+            const fn = this.fallingNotes[i];
+            if (fn.note === note && !fn.hit && !fn.missed) {
+                const dist = Math.abs(fn.y - this.hitZoneY);
+                if (dist <= this.hitTolerance && dist < closestDistance) {
+                    closestNote = fn;
+                    closestDistance = dist;
+                }
+            }
+        }
+
+        if (closestNote) {
+            closestNote.hit = true;
+            closestNote.holdStart = (Date.now() - this.startTime) / 1000;
+            this.combo++;
+            this.hitNotes++;
+            const accuracy = 1 - (closestDistance / this.hitTolerance);
+            const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
+            this.score += points;
+            this.updateScore();
+            this.showHitFeedback(note, true);
+            this.heldFallingNotes.set(note, closestNote);
+        }
     }
 
     startAutoPlay() {
@@ -1365,6 +1596,20 @@ class PianoHero {
     
     handleKeyDown(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+
+        // If key map modal is open, route key presses to the remapper
+        if (this.keyMapModalOpen) {
+            e.preventDefault();
+            if (e.key === 'Escape') {
+                this._closeKeyMapModal(false);
+            } else if (e.key === 'Enter') {
+                this._closeKeyMapModal(true);
+            } else {
+                this._captureKeyForRemap(e.key);
+            }
+            return;
+        }
+
         const key = e.key.toUpperCase();
         if (this.keyToNote[key]) {
             e.preventDefault();
@@ -1382,28 +1627,8 @@ class PianoHero {
     }
     
     handlePianoKeyPress(keyElement) {
-        // Co-Play lane toggle: clicking a key toggles it as manual
-        if (this.gameMode === 'coplay') {
-            const note = keyElement.dataset.note;
-            if (note) {
-                if (this.coPlayManualNotes.has(note)) {
-                    this.coPlayManualNotes.delete(note);
-                    keyElement.classList.remove('coplay-manual');
-                } else {
-                    this.coPlayManualNotes.add(note);
-                    keyElement.classList.add('coplay-manual');
-                }
-                this._laneCacheDirty = true;
-                // If mid-game, reschedule auto-play so toggled lanes update immediately
-                if (this.isPlaying && !this.isPaused && this.isAutoPlay) {
-                    this.autoPlayTimeouts.forEach(t => clearTimeout(t));
-                    this.autoPlayTimeouts = [];
-                    this._scheduleAutoPlayNotes();
-                }
-                return; // don't play the note on toggle click
-            }
-        }
-
+        // Co-play lane toggling is now handled by the lane selector buttons above each key.
+        // Piano key clicks/touches always play the note in every mode.
         const key = keyElement.dataset.key;
         if (key) {
             this.pressKey(key);
@@ -1414,10 +1639,13 @@ class PianoHero {
                 keyElement.classList.add('active');
                 this.stopNoteSound(note);
                 this.playNoteSound(note);
-                // Check for practice mode hit on unbound keys
-                if (this.gameMode === 'practice' && this.practiceWaiting && this.isPlaying) {
-                    if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
-                        this._practiceHitNote(note);
+                if (this.isPlaying && !this.isPaused) {
+                    if (this.gameMode === 'practice' && this.practiceWaiting) {
+                        if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
+                            this._practiceHitNote(note);
+                        }
+                    } else {
+                        this._checkHitByNote(note);
                     }
                 }
             }

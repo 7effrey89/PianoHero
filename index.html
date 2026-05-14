@@ -149,7 +149,7 @@
                     </select>
                 </div>
                 <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
-                    <span class="setting-info">Click piano keys to toggle manual lanes. Unselected lanes auto-play.</span>
+                    <span class="setting-info">Use the selectors above each key to pick your manual lanes. Click a selected lane again to remap its keyboard key.</span>
                 </div>
             </div>
             </div>
@@ -187,5 +187,27 @@
     </div>
 
     <script src="app.js"></script>
+
+    <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
+    <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">
+        <div class="keymap-modal-content">
+            <h3 id="keyMapTitle">🎹 Configure Lane Key</h3>
+            <div class="keymap-note-name" id="keyMapNoteName"></div>
+            <div class="keymap-binding-row">
+                <span class="keymap-label">Current binding:</span>
+                <kbd class="keymap-key-badge" id="keyMapCurrentKey">None</kbd>
+            </div>
+            <p class="keymap-instruction">Press any keyboard key to set a new binding,<br>then click <strong>Save</strong> or press <kbd>Enter</kbd>.<br>Press <kbd>Esc</kbd> to cancel.</p>
+            <div class="keymap-new-row hidden" id="keyMapNewRow">
+                <span class="keymap-label">New binding:</span>
+                <kbd class="keymap-key-badge keymap-new-badge" id="keyMapNewKey"></kbd>
+            </div>
+            <div class="keymap-buttons">
+                <button id="keyMapConfirm" class="keymap-btn-confirm hidden">✓ Save</button>
+                <button id="keyMapRemove" class="keymap-btn-remove">✕ Remove Binding</button>
+                <button id="keyMapCancel" class="keymap-btn-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

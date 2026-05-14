@@ -991,3 +991,215 @@ button {
     color: rgba(255,255,255,0.6);
     font-size: 14px;
 }
+
+/* ── Co-Play Lane Selector buttons (positioned at top of each key) ── */
+
+.lane-selector {
+    position: absolute;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 3px 3px 0 0;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    user-select: none;
+    text-transform: uppercase;
+    transition: background 0.15s, border-color 0.15s;
+    height: 20px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.lane-selector:hover {
+    background: rgba(60, 60, 60, 0.9);
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+.lane-selector.selected {
+    background: rgba(255, 152, 0, 0.88);
+    border-color: rgba(255, 180, 0, 0.95);
+    color: #fff;
+    box-shadow: 0 0 6px rgba(255, 152, 0, 0.5);
+}
+
+.lane-selector.selected:hover {
+    background: rgba(245, 124, 0, 0.95);
+}
+
+/* ── Key Mapping Modal ── */
+
+.keymap-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.keymap-modal.hidden {
+    display: none;
+}
+
+.keymap-modal-content {
+    background: #1a1a2e;
+    border: 1px solid #2a2a4a;
+    border-radius: 14px;
+    padding: 28px 36px;
+    min-width: 300px;
+    max-width: 420px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
+    text-align: center;
+    color: #e0e0e0;
+}
+
+.keymap-modal-content h3 {
+    margin: 0 0 12px 0;
+    font-size: 18px;
+    color: #fff;
+}
+
+.keymap-note-name {
+    font-size: 2.4em;
+    font-weight: bold;
+    color: #4a9eff;
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+}
+
+.keymap-binding-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.keymap-label {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.keymap-key-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 6px 14px;
+    background: #2a2a3e;
+    border: 2px solid #4a9eff;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 17px;
+    font-weight: bold;
+    color: #fff;
+    letter-spacing: 1px;
+}
+
+.keymap-new-badge {
+    background: rgba(76, 175, 80, 0.2);
+    border-color: #4CAF50;
+    color: #81c784;
+}
+
+.keymap-new-badge.conflict {
+    background: rgba(255, 152, 0, 0.2);
+    border-color: #FF9800;
+    color: #FFB74D;
+}
+
+.keymap-instruction {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.55);
+    margin: 12px 0 14px;
+    line-height: 1.6;
+}
+
+.keymap-instruction kbd {
+    background: #2d2d3e;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #ccc;
+}
+
+.keymap-new-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    font-size: 14px;
+}
+
+.keymap-new-row.hidden {
+    display: none;
+}
+
+.keymap-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.keymap-btn-confirm {
+    padding: 8px 20px;
+    background: #4CAF50;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.keymap-btn-confirm.hidden {
+    display: none;
+}
+
+.keymap-btn-confirm:hover {
+    background: #43A047;
+}
+
+.keymap-btn-remove {
+    padding: 8px 16px;
+    background: rgba(244, 67, 54, 0.18);
+    color: #ef9a9a;
+    border: 1px solid rgba(244, 67, 54, 0.4);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.keymap-btn-remove:hover {
+    background: rgba(244, 67, 54, 0.35);
+}
+
+.keymap-btn-cancel {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.keymap-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
