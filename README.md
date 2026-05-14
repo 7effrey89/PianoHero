@@ -36,6 +36,49 @@ brew install ffmpeg
 
 # On Windows:
 # Download from https://ffmpeg.org/download.html
+
+# Or build a self-contained Docker image (includes ffmpeg)
+docker build -t piano-hero .
+# Run the container and expose port 5000 locally
+docker run --rm -p 5000:5000 \
+  -v "$(pwd)/midi_cache:/app/midi_cache" \
+  --name piano-hero \
+  piano-hero
+```
+
+On Windows PowerShell use ``${PWD}`` (or omit the `-v` flag if you do not need to persist cached MIDI files):
+
+```powershell
+docker run --rm -p 5000:5000 `
+  -v "${PWD}/midi_cache:/app/midi_cache" `
+  --name piano-hero `
+  piano-hero
+```
+
+#### Providing YouTube cookies (optional but recommended)
+
+Some YouTube videos require consent or authentication before yt-dlp can download audio. You can export your browser cookies (for example using the "Get cookies.txt" extension), place the resulting `cookies.txt` or `cookie.txt` file at the project root, and the server will automatically detect it. Alternatively, set the `YTDLP_COOKIES` environment variable to the file path.
+
+Docker example with a mounted cookie file:
+
+```bash
+docker run --rm -p 5000:5000 \
+  -v "$(pwd)/midi_cache:/app/midi_cache" \
+  -v "$(pwd)/cookies.txt:/app/cookies.txt" \
+  -e YTDLP_COOKIES=/app/cookies.txt \
+  --name piano-hero \
+  piano-hero
+```
+
+PowerShell version:
+
+```powershell
+docker run --rm -p 5000:5000 `
+  -v "${PWD}/midi_cache:/app/midi_cache" `
+  -v "${PWD}/cookies.txt:/app/cookies.txt" `
+  -e YTDLP_COOKIES=/app/cookies.txt `
+  --name piano-hero `
+  piano-hero
 ```
 
 ### Running the Application
@@ -45,6 +88,8 @@ python3 server.py
 ```
 
 Then open http://localhost:5000/ in your browser
+
+> **Tip:** When using Docker, the server starts automatically. Visit http://localhost:5000/ once the container logs show "Piano Hero Python server starting...".
 
 ## How to Play
 
@@ -57,7 +102,13 @@ Then open http://localhost:5000/ in your browser
    - Click "Start Game" when ready
    - Watch for notes falling in lanes
    - Press keyboard keys or click piano keys when notes reach the hit zone
-4. **Score Points**:
+4. **Hold Notes**:
+   - Notes have varying heights based on their duration — longer notes appear as taller bars
+   - When a long note reaches the hit zone, **press and hold** the key for the full length of the note
+   - The note turns **green** while you hold it and stays visible as it scrolls past the hit zone
+   - Release the key when the note has fully passed — releasing early fades the sound out
+   - Short notes can be tapped normally
+5. **Score Points**:
    - Perfect timing = more points
    - Build combos for score multipliers
    - Try to hit all notes for maximum accuracy!
@@ -91,7 +142,7 @@ You can also click the piano keys with your mouse!
 
 ### JavaScript Frontend
 - **HTML5 Canvas**: Renders falling notes and lanes
-- **Web Audio API**: Piano sound synthesis
+- **Web Audio API**: Sample-based instrument playback using [MIDI.js Soundfonts](https://github.com/gleitz/midi-js-soundfonts)
 - **DOM-based Positioning**: Calculates lane positions from actual piano key elements for perfect alignment
 - **Vanilla JavaScript**: No framework dependencies
 
@@ -158,8 +209,20 @@ def convert_with_basic_pitch(video_id):
 ## Production Deployment
 
 ### Environment Variables
+
+The application uses a `.env` file for configuration. Copy `.env.example` to `.env` and adjust as needed:
+
+```bash
+cp .env.example .env
+```
+
+Available environment variables:
 - `PORT`: Server port (default: 5000)
 - `FLASK_ENV`: Set to 'production' for production
+- `ENABLE_DEMO_FALLBACK`: Enable fallback to demo notes when real pitch detection is not available (default: true)
+  - Set to `true` to enable demo note generation as a fallback
+  - Set to `false` to disable fallbacks and return errors when pitch detection is unavailable
+- `YTDLP_COOKIES`: Absolute or relative path to a cookies.txt file for yt-dlp (optional). If unset, the server automatically checks for `cookies.txt` or `cookie.txt` in the project root.
 
 ### Security Considerations
 - The server includes video ID validation to prevent path traversal
@@ -170,6 +233,10 @@ def convert_with_basic_pitch(video_id):
 
 **Important**: Downloading YouTube videos may violate YouTube's Terms of Service. This tool is for educational and personal use only. Always respect copyright laws and YouTube's policies.
 
+## Credits
+
+- **Piano Sounds**: Instrument samples provided by [MIDI.js Soundfonts](https://github.com/gleitz/midi-js-soundfonts) — pre-rendered General MIDI soundfonts generated from [FluidR3_GM.sf2](http://www.synthfont.com/SoundFonts/FluidR3_GM.sfArk), released under the [Creative Commons Attribution 3.0 license](https://creativecommons.org/licenses/by/3.0/us/). Samples are loaded at runtime from `gleitz.github.io`.
+
 ## License
 
 MIT
@@ -177,3 +244,10 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+
+## MIDI sources:
+https://onlinesequencer.net/playlist/23554/1989077
+
+Linkin Park - Numb - Piano Tutorial Synthesia (Download MIDI)
+https://www.youtube.com/watch?v=_3dAxBfGWK4

@@ -4,6 +4,9 @@ midi_cache/
 .DS_Store
 package-lock.json
 
+# Environment variables
+.env
+
 # Python
 __pycache__/
 *.py[cod]
