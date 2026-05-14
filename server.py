@@ -570,11 +570,19 @@ def _get_bitmidi_download_url(slug):
 
 @app.route('/api/bitmidi/preview', methods=['POST'])
 def bitmidi_preview():
-    """Proxy-download a .mid file from BitMidi and return it as binary."""
+    """Fetch a MIDI file from BitMidi and return parsed notes for preview (no save to midi/)."""
     data = request.json
     slug = data.get('slug', '').strip()
     if not slug or not re.match(r'^/[a-z0-9][a-z0-9\-]*-mid$', slug):
         return jsonify({'error': 'Invalid slug'}), 400
+
+    # Check cache first
+    cache_key = hashlib.sha256(slug.encode()).hexdigest()[:16]
+    cache_file = MIDI_CACHE_DIR / f"bitmidi_{cache_key}.json"
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            cached = json.load(f)
+        return jsonify({'notes': cached.get('notes', []), 'noteCount': cached.get('noteCount', 0)})
 
     try:
         dl_url = _get_bitmidi_download_url(slug)
@@ -584,9 +592,29 @@ def bitmidi_preview():
         midi_resp = http_requests.get(dl_url, timeout=15)
         midi_resp.raise_for_status()
 
-        from flask import Response
-        return Response(midi_resp.content, mimetype='audio/midi',
-                        headers={'Content-Disposition': 'inline'})
+        # Save to temp file for parsing only
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as tmp:
+            tmp.write(midi_resp.content)
+            tmp_path = tmp.name
+        try:
+            notes = convert_midi_to_notes(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+        if not notes:
+            return jsonify({'error': 'Could not parse any notes from the MIDI file'}), 422
+
+        # Cache preview result (without savedAs so load knows to re-download)
+        preview_cache = {
+            'notes': notes,
+            'slug': slug,
+            'noteCount': len(notes),
+        }
+        with open(cache_file, 'w') as f:
+            json.dump(preview_cache, f)
+
+        return jsonify({'notes': notes, 'noteCount': len(notes)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

@@ -611,11 +611,11 @@ class PianoHero {
     stopPreview() {
         this.previewTimeouts.forEach(t => clearTimeout(t));
         this.previewTimeouts = [];
-        // Reset any active preview button
-        const activeBtn = document.querySelector('.bitmidi-preview-btn.playing');
+        // Reset any active preview button (playing or loading)
+        const activeBtn = document.querySelector('.bitmidi-preview-btn.playing, .bitmidi-preview-btn.loading');
         if (activeBtn) {
             activeBtn.innerHTML = '&#9654;';
-            activeBtn.classList.remove('playing');
+            activeBtn.classList.remove('playing', 'loading');
         }
         this.previewSlug = null;
     }
@@ -630,14 +630,15 @@ class PianoHero {
         // Stop any existing preview
         this.stopPreview();
 
-        // Mark this button as playing
-        btn.innerHTML = '&#9632;'; // stop square
-        btn.classList.add('playing');
+        // Show loading state
+        btn.innerHTML = '';
+        btn.classList.add('loading');
         this.previewSlug = slug;
+        this.previewBtn = btn;
 
         try {
-            // Fetch notes via the load endpoint (reuses cache)
-            const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/load`, {
+            // Fetch notes via the preview endpoint (no download to midi/ folder)
+            const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/preview`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ slug })
@@ -647,6 +648,11 @@ class PianoHero {
             const data = await resp.json();
 
             if (this.previewSlug !== slug) return; // user stopped during fetch
+
+            // Switch from loading to playing state
+            btn.classList.remove('loading');
+            btn.innerHTML = '&#9632;'; // stop square
+            btn.classList.add('playing');
 
             const notes = data.notes;
             if (!notes || notes.length === 0) return;
