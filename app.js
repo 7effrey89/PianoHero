@@ -151,6 +151,7 @@ class PianoHero {
         this.useSalamander = false;
         this.salamanderBuffers = {};     // { midiNumber: AudioBuffer }
         this.salamanderLoaded = false;
+        this.currentSampleBank = null;   // 'Salamander'
         this.salamanderBaseUrl = 'https://tonejs.github.io/audio/salamander/';
         // Available samples (every minor third from A0 to C8)
         this.salamanderNotes = [
@@ -813,9 +814,11 @@ class PianoHero {
         soundBankSelect.addEventListener('change', () => {
             if (soundBankSelect.value === 'Salamander') {
                 this.useSalamander = true;
-                if (!this.salamanderLoaded) this.loadSalamander();
+                presetSelect.disabled = true;
+                if (this.currentSampleBank !== 'Salamander') this.loadSalamander();
             } else {
                 this.useSalamander = false;
+                presetSelect.disabled = false;
                 this.soundfontBaseUrl = `https://gleitz.github.io/midi-js-soundfonts/${soundBankSelect.value}/`;
                 this.loadSoundfont(presetSelect.value);
             }
@@ -827,6 +830,9 @@ class PianoHero {
         volumeSlider.addEventListener('input', () => {
             this.soundParams.volume = volumeSlider.value / 100;
             document.getElementById('volumeVal').textContent = volumeSlider.value + '%';
+            if (this.masterGain) {
+                this.masterGain.gain.setTargetAtTime(this.soundParams.volume, this.audioContext.currentTime, 0.01);
+            }
             this._saveSettings();
         });
 
@@ -834,6 +840,11 @@ class PianoHero {
         reverbSlider.addEventListener('input', () => {
             this.soundParams.reverb = reverbSlider.value / 100;
             document.getElementById('reverbVal').textContent = reverbSlider.value + '%';
+            if (this.dryGain) {
+                const now = this.audioContext.currentTime;
+                this.dryGain.gain.setTargetAtTime(1 - this.soundParams.reverb * 0.5, now, 0.01);
+                this.wetGain.gain.setTargetAtTime(this.soundParams.reverb * 0.5, now, 0.01);
+            }
             this._saveSettings();
         });
 
@@ -876,8 +887,10 @@ class PianoHero {
         const currentBank = document.getElementById('soundBankSelect').value;
         if (currentBank === 'Salamander') {
             this.useSalamander = true;
+            document.getElementById('soundPreset').disabled = true;
             this.loadSalamander();
         } else {
+            document.getElementById('soundPreset').disabled = false;
             this.loadSoundfont(this.currentInstrument);
         }
     }
@@ -1043,9 +1056,14 @@ class PianoHero {
         if (settings.soundBank) {
             const sel = document.getElementById('soundBankSelect');
             sel.value = settings.soundBank;
+            // If saved bank no longer exists in dropdown, fall back to Salamander
+            if (!sel.value || sel.selectedIndex < 0) {
+                settings.soundBank = 'Salamander';
+                sel.value = 'Salamander';
+            }
             if (settings.soundBank === 'Salamander') {
                 this.useSalamander = true;
-                if (!this.salamanderLoaded) this.loadSalamander();
+                if (this.currentSampleBank !== 'Salamander') this.loadSalamander();
             } else {
                 this.useSalamander = false;
                 this.soundfontBaseUrl = `https://gleitz.github.io/midi-js-soundfonts/${settings.soundBank}/`;
@@ -1349,8 +1367,11 @@ class PianoHero {
     }
 
     _findNearestSalamanderSample(midiNumber) {
-        // Find the nearest loaded sample MIDI number
-        const loaded = Object.keys(this.salamanderBuffers).map(Number);
+        // Use pre-sorted cache to avoid re-parsing keys on every note
+        if (!this._sortedSampleMidis || this._sortedSampleMidis.length !== Object.keys(this.salamanderBuffers).length) {
+            this._sortedSampleMidis = Object.keys(this.salamanderBuffers).map(Number).sort((a, b) => a - b);
+        }
+        const loaded = this._sortedSampleMidis;
         if (loaded.length === 0) return null;
         let nearest = loaded[0];
         let minDist = Math.abs(midiNumber - nearest);
@@ -1359,6 +1380,58 @@ class PianoHero {
             if (dist < minDist) { minDist = dist; nearest = m; }
         }
         return { midi: nearest, semitoneOffset: midiNumber - nearest };
+    }
+
+    // --- IndexedDB sample cache ---
+    _trimAudioBuffer(audioBuffer, maxSeconds) {
+        const maxFrames = Math.min(audioBuffer.length, Math.ceil(maxSeconds * audioBuffer.sampleRate));
+        // Downmix to mono to halve memory and improve playback performance
+        const trimmed = this.audioContext.createBuffer(1, maxFrames, audioBuffer.sampleRate);
+        if (audioBuffer.numberOfChannels >= 2) {
+            const L = audioBuffer.getChannelData(0);
+            const R = audioBuffer.getChannelData(1);
+            const mono = trimmed.getChannelData(0);
+            for (let i = 0; i < maxFrames; i++) {
+                mono[i] = (L[i] + R[i]) * 0.5;
+            }
+        } else {
+            trimmed.copyToChannel(audioBuffer.getChannelData(0).slice(0, maxFrames), 0);
+        }
+        return trimmed;
+    }
+
+    async _openSampleCache() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('PianoHeroSamples', 1);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('samples')) {
+                    db.createObjectStore('samples');
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async _getCachedSample(db, key) {
+        return new Promise((resolve) => {
+            const tx = db.transaction('samples', 'readonly');
+            const store = tx.objectStore('samples');
+            const req = store.get(key);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        });
+    }
+
+    async _putCachedSample(db, key, arrayBuffer) {
+        return new Promise((resolve) => {
+            const tx = db.transaction('samples', 'readwrite');
+            const store = tx.objectStore('samples');
+            store.put(arrayBuffer, key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        });
     }
 
     async loadSalamander() {
@@ -1371,27 +1444,32 @@ class PianoHero {
         statusEl.className = 'soundfont-status loading';
 
         try {
-            // Ensure AudioContext exists
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 this.setupAudioGraph();
             }
 
+            const db = await this._openSampleCache();
             const buffers = {};
             const total = this.salamanderNotes.length;
             let loaded = 0;
 
-            // Load all samples in parallel (with concurrency limit)
             const batchSize = 6;
             for (let i = 0; i < total; i += batchSize) {
                 const batch = this.salamanderNotes.slice(i, i + batchSize);
                 await Promise.all(batch.map(async (noteName) => {
-                    const url = `${this.salamanderBaseUrl}${noteName}.mp3`;
+                    const cacheKey = `salamander_${noteName}`;
                     try {
-                        const response = await fetch(url);
-                        if (!response.ok) return;
-                        const arrayBuffer = await response.arrayBuffer();
-                        const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                        let arrayBuffer = await this._getCachedSample(db, cacheKey);
+                        if (!arrayBuffer) {
+                            const url = `${this.salamanderBaseUrl}${noteName}.mp3`;
+                            const response = await fetch(url);
+                            if (!response.ok) return;
+                            arrayBuffer = await response.arrayBuffer();
+                            await this._putCachedSample(db, cacheKey, arrayBuffer.slice(0));
+                        }
+                        let audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                        audioBuffer = this._trimAudioBuffer(audioBuffer, 8);
                         const midiNum = this._noteNameToMidi(noteName);
                         buffers[midiNum] = audioBuffer;
                     } catch (e) {
@@ -1401,9 +1479,12 @@ class PianoHero {
                     statusEl.textContent = `Loading ${loaded}/${total}...`;
                 }));
             }
+            db.close();
 
             this.salamanderBuffers = buffers;
+            this._sortedSampleMidis = null; // invalidate cache
             this.salamanderLoaded = true;
+            this.currentSampleBank = 'Salamander';
             const count = Object.keys(buffers).length;
             statusEl.textContent = `✓ Salamander (${count} samples)`;
             statusEl.className = 'soundfont-status loaded';
@@ -1416,6 +1497,7 @@ class PianoHero {
             this.soundfontLoading = false;
         }
     }
+
 
     generateDemoNotes() {
         // Generate a sequence of notes for demo purposes
@@ -2110,6 +2192,17 @@ class PianoHero {
             this.audioContext.resume();
         }
 
+        // Stop any existing source for the same note to prevent polyphony buildup
+        const existing = this.activeNoteSources.get(note);
+        if (existing) {
+            try {
+                existing.noteGain.gain.cancelScheduledValues(this.audioContext.currentTime);
+                existing.noteGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+                existing.source.stop(this.audioContext.currentTime + 0.02);
+            } catch (e) { /* already stopped */ }
+            this.activeNoteSources.delete(note);
+        }
+
         // Determine buffer and playback rate
         let buffer, playbackRate = 1;
         if (this.useSalamander && (this.salamanderLoaded || Object.keys(this.salamanderBuffers).length > 0)) {
@@ -2127,10 +2220,22 @@ class PianoHero {
         const p = this.soundParams;
         const now = this.audioContext.currentTime;
 
-        // Update persistent graph levels smoothly (avoid clicks)
-        this.masterGain.gain.setTargetAtTime(p.volume, now, 0.01);
-        this.dryGain.gain.setTargetAtTime(1 - p.reverb * 0.5, now, 0.01);
-        this.wetGain.gain.setTargetAtTime(p.reverb * 0.5, now, 0.01);
+        // Enforce polyphony limit — stop oldest notes if too many are active
+        const MAX_POLYPHONY = 16;
+        if (this.activeNoteSources.size >= MAX_POLYPHONY) {
+            // Find and stop the oldest entries
+            const iter = this.activeNoteSources.entries();
+            const toRemove = this.activeNoteSources.size - MAX_POLYPHONY + 1;
+            for (let i = 0; i < toRemove; i++) {
+                const [key, val] = iter.next().value;
+                try {
+                    val.noteGain.gain.cancelScheduledValues(now);
+                    val.noteGain.gain.setValueAtTime(0, now);
+                    val.source.stop(now + 0.01);
+                } catch (e) {}
+                this.activeNoteSources.delete(key);
+            }
+        }
 
         // Create a source from the sample buffer
         const source = this.audioContext.createBufferSource();
@@ -2151,8 +2256,8 @@ class PianoHero {
         // Otherwise (user-played), sustain until stopNoteSound is called
         if (duration != null) {
             const speed = this.speedMultiplier;
-            const holdTime = Math.max(0.15, Math.min(8, duration / speed));
-            const fadeTime = Math.min(0.6, holdTime * 0.4);
+            const holdTime = Math.max(0.08, Math.min(4, duration / speed));
+            const fadeTime = Math.min(0.3, holdTime * 0.3);
             const fadeStart = now + holdTime;
             const fadeEnd   = fadeStart + fadeTime;
             noteGain.gain.setValueAtTime(baseLevel, fadeStart);
@@ -2203,16 +2308,19 @@ class PianoHero {
     setupAudioGraph() {
         // Persistent nodes — created once, reused for every note
         this.masterGain = this.audioContext.createGain();
+        this.masterGain.gain.value = this.soundParams.volume;
 
         // Direct connection — no processing, clean sample playback
         this.masterGain.connect(this.audioContext.destination);
 
         // Dry path: source → masterGain (clean, no EQ)
         this.dryGain = this.audioContext.createGain();
+        this.dryGain.gain.value = 1 - this.soundParams.reverb * 0.5;
         this.dryGain.connect(this.masterGain);
 
         // Reverb path — multi-tap delay network for richer reflections
         this.wetGain = this.audioContext.createGain();
+        this.wetGain.gain.value = this.soundParams.reverb * 0.5;
 
         // Early reflections
         const preDelay = this.audioContext.createDelay(0.1);

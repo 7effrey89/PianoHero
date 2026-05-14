@@ -463,9 +463,8 @@ def bitmidi_load():
     return jsonify(result)
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f"Piano Hero Python server starting on port {port}")
-    print(f"MIDI cache directory: {MIDI_CACHE_DIR}")
-    print(f"Environment: {FLASK_ENV} (debug={DEBUG_MODE})")
-    app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
+port = int(os.environ.get('PORT', 5000))
+print(f"Piano Hero Python server starting on port {port}")
+print(f"MIDI cache directory: {MIDI_CACHE_DIR}")
+print(f"Environment: {FLASK_ENV} (debug={DEBUG_MODE})")
+app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
