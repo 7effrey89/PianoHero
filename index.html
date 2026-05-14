@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Piano Hero</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎹 Piano Hero 🎹</h1>
+        </header>
+        
+        <div class="controls top-bar">
+            <div class="source-tabs">
+                <button class="tab-btn active" data-tab="midi">Play MIDI File</button>
+                <button class="tab-btn" data-tab="bitmidi">Browse BitMidi</button>
+                <button class="tab-btn" data-tab="youtube">YouTube URL</button>
+            </div>
+
+            <div class="tab-content" id="tab-midi">
+                <div class="midi-select-section">
+                    <select id="midiFileSelect">
+                        <option value="">-- Select a MIDI file --</option>
+                    </select>
+                    <button id="loadMidiBtn">Load MIDI</button>
+                </div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-bitmidi">
+                <div class="bitmidi-search-section">
+                    <input type="text" id="bitmidiQuery" placeholder="Search for songs... e.g. pokemon, zelda, mario" />
+                    <button id="bitmidiSearchBtn">Search</button>
+                </div>
+                <div id="bitmidiResults" class="bitmidi-results"></div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-youtube">
+                <div class="url-input-section">
+                    <input type="text" id="youtubeUrl" placeholder="https://youtu.be/mTVJB--utdc?si=zDiKpWeOeF3eYk-6&t=12" />
+                    <button id="loadBtn">Load & Analyze</button>
+                </div>
+                <div class="settings-section">
+                    <label for="backendSelect">Analysis Backend:</label>
+                    <select id="backendSelect">
+                        <option value="youtube2midi">YouTube2MIDI (Audio Analysis)</option>
+                        <option value="basic_pitch" disabled>Spotify Basic Pitch (Coming Soon)</option>
+                        <option value="librosa" disabled>Librosa (Coming Soon)</option>
+                        <option value="aubio" disabled>Aubio (Coming Soon)</option>
+                        <option value="magenta" disabled>Google Magenta (Coming Soon)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="status-section">
+                <p id="statusMessage">Enter a YouTube URL to start</p>
+                <div id="progressBar" class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+            </div>
+            <div class="controls-row">
+                <div class="game-controls">
+                    <label class="mode-toggle">
+                        <span class="toggle-label toggle-label-manual">Manual</span>
+                        <input type="checkbox" id="modeToggleSwitch">
+                        <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        <span class="toggle-label toggle-label-auto">Auto</span>
+                    </label>
+                    <button id="playPauseBtn" disabled>&#9654; Play</button>
+                    <button id="stopBtn" disabled>&#9632; Stop</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Toolbar: Sound + Game side by side, collapsed by default -->
+        <div class="settings-toolbar">
+            <div class="settings-toolbar-header" id="settingsToggle">
+                <h3>Settings</h3>
+                <span class="toggle-arrow">&#9660;</span>
+            </div>
+            <div class="settings-toolbar-panels collapsed" id="settingsPanelsBody">
+            <div class="settings-panel">
+                <h4>Sound</h4>
+                <div class="settings-panel-body" id="soundPanelBody">
+                <div class="sound-row">
+                    <label for="soundPreset">Instrument:</label>
+                    <select id="soundPreset">
+                        <option value="acoustic_grand_piano">Acoustic Grand Piano</option>
+                        <option value="bright_acoustic_piano">Bright Acoustic Piano</option>
+                        <option value="electric_grand_piano">Electric Grand Piano</option>
+                        <option value="honkytonk_piano">Honky-tonk Piano</option>
+                        <option value="electric_piano_1">Electric Piano 1</option>
+                        <option value="electric_piano_2">Electric Piano 2</option>
+                        <option value="harpsichord">Harpsichord</option>
+                        <option value="clavinet">Clavinet</option>
+                        <option value="celesta">Celesta</option>
+                        <option value="glockenspiel">Glockenspiel</option>
+                        <option value="music_box">Music Box</option>
+                        <option value="vibraphone">Vibraphone</option>
+                        <option value="marimba">Marimba</option>
+                        <option value="xylophone">Xylophone</option>
+                        <option value="church_organ">Church Organ</option>
+                        <option value="reed_organ">Reed Organ</option>
+                        <option value="acoustic_guitar_nylon">Acoustic Guitar (Nylon)</option>
+                        <option value="acoustic_guitar_steel">Acoustic Guitar (Steel)</option>
+                    </select>
+                    <span id="soundfontStatus" class="soundfont-status"></span>
+                </div>
+                <div class="sound-row">
+                    <label for="volumeSlider">Volume</label>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="80">
+                    <span id="volumeVal">80%</span>
+                </div>
+                <div class="sound-row">
+                    <label for="reverbSlider">Reverb</label>
+                    <input type="range" id="reverbSlider" min="0" max="100" value="35">
+                    <span id="reverbVal">35%</span>
+                </div>
+                </div>
+            </div>
+            <div class="settings-panel">
+                <h4>Game</h4>
+                <div class="settings-panel-body" id="gameSettingsBody">
+                <!-- Key Scale / Zoom -->
+                <div class="setting-row">
+                    <label for="keyScaleSlider">Key Scale</label>
+                    <input type="range" id="keyScaleSlider" min="0.5" max="3" step="0.1" value="1">
+                    <input type="number" id="keyScaleInput" min="0.5" max="3" step="0.1" value="1" class="setting-number">
+                    <span>×</span>
+                </div>
+                <!-- Speed Control -->
+                <div class="setting-row">
+                    <label for="speedSlider">Speed</label>
+                    <input type="range" id="speedSlider" min="25" max="150" step="5" value="100">
+                    <input type="number" id="speedInput" min="25" max="150" step="5" value="100" class="setting-number">
+                    <span id="speedUnit">%</span>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-info" id="bpmDisplay">BPM: --</span>
+                </div>
+                <!-- Game Mode -->
+                <div class="setting-row">
+                    <label for="gameModeSelect">Mode</label>
+                    <select id="gameModeSelect">
+                        <option value="normal">Normal</option>
+                        <option value="simple">Simple (merged notes)</option>
+                        <option value="coplay">Co-Play (pick your lanes)</option>
+                        <option value="practice">Practice (wait for input)</option>
+                    </select>
+                </div>
+                <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
+                    <span class="setting-info">Click piano keys to toggle manual lanes. Unselected lanes auto-play.</span>
+                </div>
+            </div>
+            </div>
+            </div>
+        </div>
+
+        <!-- Stats + Song Timeline -->
+        <div class="stats-bar">
+            <div class="score-section">
+                <div class="stat-item">Score: <span id="score">0</span></div>
+                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
+                <div class="stat-item">Best Streak: <span id="streak">0</span></div>
+                <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
+            </div>
+            <div class="song-timeline" id="songTimeline">
+                <div class="song-timeline-fill" id="songTimelineFill"></div>
+                <div class="song-timeline-thumb" id="songTimelineThumb"></div>
+                <span class="song-time-label" id="songTimeLabel">0:00 / 0:00</span>
+            </div>
+        </div>
+
+        <!-- Game Canvas with Piano Keys Integrated -->
+        <div id="gameArea">
+            <div id="gameCanvas">
+                <canvas id="notesCanvas"></canvas>
+            </div>
+            
+            <!-- Piano Keys -->
+            <div id="piano">
+                <div class="piano-keys">
+                    <!-- Keys generated dynamically by app.js -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
