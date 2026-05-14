@@ -1213,7 +1213,9 @@ class PianoHero {
             });
             btn.addEventListener('touchstart', (e) => {
                 e.stopPropagation();
-            }, { passive: true });
+                e.preventDefault(); // prevent default touch action and duplicate mouse events
+                this._handleLaneSelectorClick(note, btn);
+            }, { passive: false });
 
             container.appendChild(btn);
         }
