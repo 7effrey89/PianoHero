@@ -21,8 +21,7 @@ class PianoHero {
         this.songTimelineThumb = document.getElementById('songTimelineThumb');
         this.songTimeLabel = document.getElementById('songTimeLabel');
         this.backendSelect = document.getElementById('backendSelect');
-        this.midiFileSelect = document.getElementById('midiFileSelect');
-        this.loadMidiBtn = document.getElementById('loadMidiBtn');
+        this.midiFileList = document.getElementById('midiFileList');
         this.autoPlayBtn = document.getElementById('modeToggleSwitch');
         this.modeToggleBtn = document.getElementById('modeToggleSwitch');
         this.modeToggleSwitch = document.getElementById('modeToggleSwitch');
@@ -158,11 +157,14 @@ class PianoHero {
         this.initBitMidi();
         this.initSoundPanel();
         this.initGameSettings();
+
+        // MIDI list expand/collapse
+        document.getElementById('midiListHeader').addEventListener('click', () => {
+            document.getElementById('midiListContainer').classList.toggle('expanded');
+        });
         
         // Event listeners
         this.loadBtn.addEventListener('click', () => this.loadYouTubeAudio());
-        this.loadMidiBtn.addEventListener('click', () => this.loadMidiFile());
-        this.midiFileSelect.addEventListener('change', () => { if (this.midiFileSelect.value) this.loadMidiFile(); });
         this.modeToggleSwitch.addEventListener('change', () => this.toggleManualAuto());
         this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
         this.stopBtn.addEventListener('click', () => this.reset());
@@ -412,26 +414,82 @@ class PianoHero {
             const response = await fetch(`${this.apiBaseUrl}/api/midi-files`);
             if (response.ok) {
                 const data = await response.json();
-                data.files.forEach(file => {
-                    const option = document.createElement('option');
-                    option.value = file;
-                    option.textContent = file;
-                    this.midiFileSelect.appendChild(option);
-                });
+                this.renderMidiFileList(data.files);
             }
         } catch (error) {
             console.log('Could not load MIDI file list');
         }
     }
 
-    async loadMidiFile() {
-        const filename = this.midiFileSelect.value;
-        if (!filename) {
-            alert('Please select a MIDI file');
+    renderMidiFileList(files) {
+        this.midiFileList.innerHTML = '';
+        if (!files.length) {
+            this.midiFileList.innerHTML = '<div class="midi-list-empty">No MIDI files. Browse BitMidi to download some!</div>';
             return;
         }
+        files.forEach(file => {
+            const row = document.createElement('div');
+            row.className = 'midi-list-item';
+            row.innerHTML = `
+                <span class="midi-list-name" title="${this.escapeHtml(file)}">${this.escapeHtml(file)}</span>
+                <button class="midi-list-btn midi-list-rename" title="Rename">&#9998;</button>
+                <button class="midi-list-btn midi-list-delete" title="Delete">&#128465;</button>
+            `;
+            row.querySelector('.midi-list-name').addEventListener('click', () => this.loadMidiFile(file));
+            row.querySelector('.midi-list-rename').addEventListener('click', (e) => { e.stopPropagation(); this.renameMidiFile(file); });
+            row.querySelector('.midi-list-delete').addEventListener('click', (e) => { e.stopPropagation(); this.deleteMidiFile(file); });
+            this.midiFileList.appendChild(row);
+        });
+    }
 
-        this.loadMidiBtn.disabled = true;
+    refreshMidiFileList() {
+        this.loadMidiFileList();
+    }
+
+    async renameMidiFile(filename) {
+        const newName = prompt('Rename file to:', filename);
+        if (!newName || newName === filename) return;
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/midi-files/rename`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ oldName: filename, newName })
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error);
+            this.statusMessage.textContent = `Renamed to "${data.newName}"`;
+            this.refreshMidiFileList();
+        } catch (err) {
+            alert('Rename failed: ' + err.message);
+        }
+    }
+
+    async deleteMidiFile(filename) {
+        if (!confirm(`Delete "${filename}"?`)) return;
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/midi-files/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename })
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error);
+            this.statusMessage.textContent = `Deleted "${filename}"`;
+            this.refreshMidiFileList();
+        } catch (err) {
+            alert('Delete failed: ' + err.message);
+        }
+    }
+
+    async loadMidiFile(filename) {
+        if (!filename) return;
+
+        // Collapse the list and update header
+        document.getElementById('midiListContainer').classList.remove('expanded');
+        document.getElementById('midiListHeaderText').textContent = filename;
+
         this.statusMessage.textContent = 'Loading MIDI file...';
         this.progressBar.classList.add('visible');
         this.updateProgress(30);
@@ -460,7 +518,6 @@ class PianoHero {
             console.error('Error loading MIDI file:', error);
             this.statusMessage.textContent = 'Error: ' + error.message;
         } finally {
-            this.loadMidiBtn.disabled = false;
             setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
         }
     }
@@ -523,7 +580,7 @@ class PianoHero {
             const resp = await fetch(`${this.apiBaseUrl}/api/bitmidi/load`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ slug })
+                body: JSON.stringify({ slug, name })
             });
 
             this.updateProgress(70);
@@ -539,8 +596,10 @@ class PianoHero {
             this.updateBPMDisplay();
             this.applyGameMode();
             this.updateProgress(100);
-            this.statusMessage.textContent = `Loaded "${name}" — ${data.noteCount} notes. Press Play!`;
+            const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
+            this.statusMessage.textContent = `Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`;
             this._updateControlButtons();
+            this.refreshMidiFileList();
         } catch (err) {
             console.error('BitMidi load error:', err);
             this.statusMessage.textContent = 'Error: ' + err.message;

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -20,11 +21,12 @@
             </div>
 
             <div class="tab-content" id="tab-midi">
-                <div class="midi-select-section">
-                    <select id="midiFileSelect">
-                        <option value="">-- Select a MIDI file --</option>
-                    </select>
-                    <button id="loadMidiBtn">Load MIDI</button>
+                <div class="midi-list-container" id="midiListContainer">
+                    <div class="midi-list-header" id="midiListHeader">
+                        <span id="midiListHeaderText">-- Select a MIDI file --</span>
+                        <span class="midi-list-arrow">&#9662;</span>
+                    </div>
+                    <div class="midi-list" id="midiFileList"></div>
                 </div>
             </div>
 

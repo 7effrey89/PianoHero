@@ -423,6 +423,56 @@ def load_midi_file():
         'noteCount': len(notes)
     })
 
+
+@app.route('/api/midi-files/rename', methods=['POST'])
+def rename_midi_file():
+    """Rename a MIDI file in the midi/ folder"""
+    data = request.json
+    old_name = data.get('oldName', '').strip()
+    new_name = data.get('newName', '').strip()
+
+    if not old_name or not new_name:
+        return jsonify({'error': 'Both oldName and newName are required'}), 400
+
+    # Sanitize: only allow basename, no path traversal
+    safe_old = Path(old_name).name
+    safe_new = Path(new_name).name
+    if not safe_new.lower().endswith(('.mid', '.midi')):
+        safe_new += '.mid'
+
+    midi_dir = BASE_DIR / 'midi'
+    old_path = midi_dir / safe_old
+    new_path = midi_dir / safe_new
+
+    if not old_path.is_file():
+        return jsonify({'error': 'File not found'}), 404
+    if new_path.exists():
+        return jsonify({'error': 'A file with that name already exists'}), 409
+
+    old_path.rename(new_path)
+    return jsonify({'success': True, 'newName': safe_new})
+
+
+@app.route('/api/midi-files/delete', methods=['POST'])
+def delete_midi_file():
+    """Delete a MIDI file from the midi/ folder"""
+    data = request.json
+    filename = data.get('filename', '').strip()
+
+    if not filename:
+        return jsonify({'error': 'Filename is required'}), 400
+
+    safe_name = Path(filename).name
+    midi_dir = BASE_DIR / 'midi'
+    file_path = midi_dir / safe_name
+
+    if not file_path.is_file() or file_path.suffix.lower() not in ('.mid', '.midi'):
+        return jsonify({'error': 'File not found'}), 404
+
+    file_path.unlink()
+    return jsonify({'success': True})
+
+
 @app.route('/api/convert', methods=['POST'])
 def convert_video():
     """Convert YouTube video to MIDI notes"""
@@ -576,6 +626,7 @@ def bitmidi_load():
     """Fetch a MIDI file from bitmidi.com by its page slug, convert to game notes."""
     data = request.json
     slug = data.get('slug', '').strip()
+    name = data.get('name', '').strip()
     if not slug or not re.match(r'^/[a-z0-9][a-z0-9\-]*-mid$', slug):
         return jsonify({'error': 'Invalid slug'}), 400
 
@@ -585,24 +636,43 @@ def bitmidi_load():
     if cache_file.exists():
         with open(cache_file, 'r') as f:
             cached = json.load(f)
-        return jsonify(cached)
+        # Ensure the .mid file also exists in midi/ folder
+        midi_dir = BASE_DIR / 'midi'
+        saved_name = cached.get('savedAs', '')
+        if not saved_name or not (midi_dir / saved_name).is_file():
+            # Re-download and save
+            cache_file.unlink()
+        else:
+            return jsonify(cached)
 
     dl_url = _get_bitmidi_download_url(slug)
     if not dl_url:
         return jsonify({'error': 'Could not find download link on bitmidi page'}), 404
 
-    # Download the MIDI file to a temp file
+    # Download the MIDI file
     midi_resp = http_requests.get(dl_url, timeout=15)
     midi_resp.raise_for_status()
 
-    with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as tmp:
-        tmp.write(midi_resp.content)
-        tmp_path = tmp.name
+    # Save to midi/ folder
+    midi_dir = BASE_DIR / 'midi'
+    midi_dir.mkdir(exist_ok=True)
+    # Derive a safe filename from the name or slug
+    if name:
+        safe_name = re.sub(r'[<>:"/\\|?*]', '', name)
+    else:
+        safe_name = slug.strip('/').replace('-mid', '').replace('-', ' ').title()
+    if not safe_name.lower().endswith('.mid'):
+        safe_name += '.mid'
+    midi_path = midi_dir / safe_name
+    # Avoid overwriting: append number if exists
+    counter = 1
+    while midi_path.exists():
+        stem = safe_name.rsplit('.', 1)[0]
+        midi_path = midi_dir / f"{stem} ({counter}).mid"
+        counter += 1
+    midi_path.write_bytes(midi_resp.content)
 
-    try:
-        notes = convert_midi_to_notes(tmp_path)
-    finally:
-        os.unlink(tmp_path)
+    notes = convert_midi_to_notes(str(midi_path))
 
     if not notes:
         return jsonify({'error': 'Could not parse any notes from the MIDI file'}), 422
@@ -612,6 +682,7 @@ def bitmidi_load():
         'notes': notes,
         'slug': slug,
         'noteCount': len(notes),
+        'savedAs': midi_path.name,
     }
     with open(cache_file, 'w') as f:
         json.dump(result, f)
