@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
     <link rel="icon" type="image/png" href="/images/logo.png">
-    <link rel="stylesheet" href="styles.css?v=9">
+    <link rel="stylesheet" href="styles.css?v=13">
 </head>
 <body>
     <div class="container">
@@ -84,7 +84,17 @@
                 </div>
             </div>
 
-            <div class="header-spacer"></div>
+            <div class="header-spacer">
+                <p id="statusMessage" class="header-status-message"></p>
+            </div>
+
+            <!-- Score stats -->
+            <div class="header-score-section" id="headerScoreSection">
+                <div class="stat-item">Score: <span id="score">0</span></div>
+                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
+                <div class="stat-item">Best Streak: <span id="streak">0</span></div>
+                <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
+            </div>
 
             <!-- Settings gear -->
             <button class="header-settings-btn" id="settingsMenuBtn" aria-label="Settings">⚙</button>
@@ -231,6 +241,19 @@
                         <input type="range" id="coplayAutoVolume" min="0" max="100" value="30" />
                         <span id="coplayAutoVolumeVal">30%</span>
                     </div>
+                    <div class="setting-row">
+                        <label>Background</label>
+                        <div class="setting-btn-group">
+                            <button id="bgImageBtn" class="setting-btn-small">Load Image</button>
+                            <button id="bgImageClearBtn" class="setting-btn-small" disabled>Clear</button>
+                        </div>
+                        <input type="file" id="bgImageInput" accept="image/*" style="display:none">
+                    </div>
+                    <div class="setting-row">
+                        <label for="bgOpacitySlider">Overlay Opacity</label>
+                        <input type="range" id="bgOpacitySlider" min="0" max="100" value="25" />
+                        <span id="bgOpacityVal">25%</span>
+                    </div>
                 </div>
                 </div>
                 <div class="settings-panel">
@@ -300,20 +323,13 @@
 
         <!-- Status bar (below header, minimal) -->
         <div class="header-status-bar" id="headerStatusBar">
-            <p id="statusMessage"></p>
             <div id="progressBar" class="progress-bar">
                 <div id="progressFill" class="progress-fill"></div>
             </div>
         </div>
 
-        <!-- Stats + Song Timeline -->
+        <!-- Song Timeline -->
         <div class="stats-bar">
-            <div class="score-section">
-                <div class="stat-item">Score: <span id="score">0</span></div>
-                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
-                <div class="stat-item">Best Streak: <span id="streak">0</span></div>
-                <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
-            </div>
             <div class="song-timeline" id="songTimeline">
                 <div class="song-timeline-fill" id="songTimelineFill"></div>
                 <div class="song-timeline-thumb" id="songTimelineThumb"></div>

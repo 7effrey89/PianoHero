@@ -88,6 +88,8 @@ class PianoHero {
 
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
+        this.hasBgImage = false;
+        this.bgOverlayOpacity = 0.25;
         this._glowCanvas = null;
         this._glowCtx = null;
 
@@ -217,6 +219,7 @@ class PianoHero {
         this.initSoundPanel();
         this.initGameSettings();
         this._loadSettings();
+        this._ensureSoundfontLoaded();
 
         // Song browser dropdown toggle
         const toggleSongBrowser = (e) => {
@@ -1020,15 +1023,25 @@ class PianoHero {
         // Set initial disabled state based on sustain
         _updateSympatheticState();
 
-        // Auto-load based on the current Sound Bank selection
-        const currentBank = document.getElementById('soundBankSelect').value;
-        if (currentBank === 'Salamander') {
-            this.useSalamander = true;
-            document.getElementById('soundPreset').disabled = true;
-            this.loadSalamander();
-        } else {
-            document.getElementById('soundPreset').disabled = false;
-            this.loadSoundfont(this.currentInstrument);
+        // Don't load soundfont here — _loadSettings() will restore saved bank/instrument
+        // and trigger the load. If no saved settings, we load the default after _loadSettings.
+        this._soundInitDeferred = true;
+    }
+
+    // Called after _loadSettings to ensure a soundfont is loaded if settings didn't trigger one
+    _ensureSoundfontLoaded() {
+        if (!this.soundfontLoading && !this.soundfontLoaded && !this.salamanderLoaded &&
+            Object.keys(this.soundfontBuffers).length === 0 &&
+            Object.keys(this.salamanderBuffers).length === 0) {
+            const currentBank = document.getElementById('soundBankSelect').value;
+            if (currentBank === 'Salamander') {
+                this.useSalamander = true;
+                document.getElementById('soundPreset').disabled = true;
+                this.loadSalamander();
+            } else {
+                document.getElementById('soundPreset').disabled = false;
+                this.loadSoundfont(this.currentInstrument);
+            }
         }
     }
 
@@ -1140,6 +1153,46 @@ class PianoHero {
             this._saveSettings();
         });
 
+        // ── Custom Background Image ──
+        const bgImageBtn = document.getElementById('bgImageBtn');
+        const bgImageClearBtn = document.getElementById('bgImageClearBtn');
+        const bgImageInput = document.getElementById('bgImageInput');
+        bgImageBtn.addEventListener('click', () => bgImageInput.click());
+        bgImageInput.addEventListener('change', () => {
+            const file = bgImageInput.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this._setBackgroundImage(e.target.result);
+                bgImageClearBtn.disabled = false;
+            };
+            reader.readAsDataURL(file);
+            bgImageInput.value = '';
+        });
+        bgImageClearBtn.addEventListener('click', () => {
+            this._clearBackgroundImage();
+            bgImageClearBtn.disabled = true;
+        });
+
+        // ── Overlay Opacity Slider ──
+        const bgOpacitySlider = document.getElementById('bgOpacitySlider');
+        const bgOpacityVal = document.getElementById('bgOpacityVal');
+        bgOpacitySlider.addEventListener('input', () => {
+            const val = parseInt(bgOpacitySlider.value);
+            bgOpacityVal.textContent = val + '%';
+            this.bgOverlayOpacity = val / 100;
+            this._applyOverlayOpacity();
+            this._laneCacheDirty = true;
+            this._saveSettings();
+        });
+
+        // Restore saved background
+        const savedBg = localStorage.getItem('pianoHeroBgImage');
+        if (savedBg) {
+            this._setBackgroundImage(savedBg);
+            bgImageClearBtn.disabled = false;
+        }
+
         // ── Game Mode ──
         const modeSelect = document.getElementById('gameModeSelect');
         const coplayHint = document.getElementById('coplayHint');
@@ -1191,8 +1244,35 @@ class PianoHero {
             noteStyle: document.getElementById('noteStyleSelect').value,
             neonGlow: document.getElementById('neonGlowToggle').checked,
             forceField: document.getElementById('forceFieldToggle').checked,
+            bgOverlayOpacity: document.getElementById('bgOpacitySlider').value,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
+    }
+
+    _setBackgroundImage(dataUrl) {
+        document.body.style.backgroundImage = `url(${dataUrl})`;
+        document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        this.hasBgImage = true;
+        this._applyOverlayOpacity();
+        this._laneCacheDirty = true;
+        try { localStorage.setItem('pianoHeroBgImage', dataUrl); } catch(e) {}
+    }
+
+    _clearBackgroundImage() {
+        document.body.style.backgroundImage = '';
+        document.body.style.backgroundSize = '';
+        document.body.style.backgroundPosition = '';
+        this.hasBgImage = false;
+        this._applyOverlayOpacity();
+        this._laneCacheDirty = true;
+        try { localStorage.removeItem('pianoHeroBgImage'); } catch(e) {}
+    }
+
+    _applyOverlayOpacity() {
+        const o = this.bgOverlayOpacity;
+        document.getElementById('gameArea').style.background = `rgba(14, 11, 34, ${o})`;
+        document.getElementById('gameCanvas').style.background = `rgba(14, 11, 34, ${o * 0.4})`;
     }
 
     _loadSettings() {
@@ -1320,6 +1400,14 @@ class PianoHero {
             const cb = document.getElementById('forceFieldToggle');
             cb.checked = settings.forceField;
             this.forceFieldEnabled = settings.forceField;
+            this._laneCacheDirty = true;
+        }
+        if (settings.bgOverlayOpacity != null) {
+            const s = document.getElementById('bgOpacitySlider');
+            s.value = settings.bgOverlayOpacity;
+            document.getElementById('bgOpacityVal').textContent = settings.bgOverlayOpacity + '%';
+            this.bgOverlayOpacity = parseInt(settings.bgOverlayOpacity) / 100;
+            this._applyOverlayOpacity();
             this._laneCacheDirty = true;
         }
 
@@ -3115,7 +3203,7 @@ class PianoHero {
         const style = this.laneStyle;
         if (style === 'synthesia') {
             // Synthesia-inspired: dark background with octave separator lines
-            lctx.fillStyle = 'rgba(10, 10, 18, 1)';
+            lctx.fillStyle = `rgba(14, 11, 34, ${this.bgOverlayOpacity})`;
             lctx.fillRect(0, 0, w, h);
             // Draw vertical lines only at octave boundaries (C notes)
             lctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
