@@ -194,17 +194,75 @@ class PianoHero {
         this.initGameSettings();
         this._loadSettings();
 
-        // MIDI list expand/collapse
-        document.getElementById('midiListHeader').addEventListener('click', () => {
-            document.getElementById('midiListContainer').classList.toggle('expanded');
+        // Song browser dropdown toggle
+        document.getElementById('songBrowserBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = document.getElementById('songBrowserDropdown');
+            dropdown.classList.toggle('hidden');
+            // Close mode dropdown if open
+            document.getElementById('modeDropdown').classList.add('hidden');
         });
 
-        // Close MIDI list when clicking outside
+        // Close song browser when clicking outside
         document.addEventListener('click', (e) => {
-            const container = document.getElementById('midiListContainer');
-            if (container.classList.contains('expanded') && !container.contains(e.target)) {
-                container.classList.remove('expanded');
+            const dropdown = document.getElementById('songBrowserDropdown');
+            const btn = document.getElementById('songBrowserBtn');
+            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+                dropdown.classList.add('hidden');
             }
+            // Close mode dropdown when clicking outside
+            const modeDropdown = document.getElementById('modeDropdown');
+            const modeBtn = document.getElementById('modeDropdownBtn');
+            if (!modeDropdown.classList.contains('hidden') && !modeDropdown.contains(e.target) && !modeBtn.contains(e.target)) {
+                modeDropdown.classList.add('hidden');
+            }
+        });
+
+        // Mode dropdown toggle
+        document.getElementById('modeDropdownBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = document.getElementById('modeDropdown');
+            dropdown.classList.toggle('hidden');
+            // Close song browser if open
+            document.getElementById('songBrowserDropdown').classList.add('hidden');
+        });
+
+        // Mode dropdown option clicks
+        document.querySelectorAll('.mode-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                const isAuto = opt.dataset.auto === 'true';
+                const mode = opt.dataset.mode;
+                // Update active state
+                document.querySelectorAll('.mode-option').forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                // Update toggle switch
+                this.modeToggleSwitch.checked = isAuto;
+                // Update game mode
+                this.gameMode = mode;
+                const gameModeSelect = document.getElementById('gameModeSelect');
+                if (gameModeSelect) gameModeSelect.value = mode;
+                // Update label
+                this._updateModeLabel();
+                // Apply mode change
+                this.isAutoPlay = isAuto;
+                this._saveSettings();
+                // Show/hide co-play controls
+                const coplayHint = document.getElementById('coplayHint');
+                if (coplayHint) coplayHint.style.display = mode === 'coplay' ? '' : 'none';
+                const coplayVolRow = document.getElementById('coplayVolumeRow');
+                if (coplayVolRow) coplayVolRow.style.display = mode === 'coplay' ? '' : 'none';
+                this._updateCoPlayKeyVisuals();
+                this._buildLaneSelectors();
+                if (this.originalNotes.length > 0) this.applyGameMode();
+                // Close dropdown
+                document.getElementById('modeDropdown').classList.add('hidden');
+                // If playing, apply the auto/manual switch
+                if (this.isPlaying && !this.isPaused) {
+                    if (isAuto) this.startAutoPlay();
+                    else this._switchToManual();
+                }
+                this._updateControlButtons();
+            });
         });
         
         // Event listeners
@@ -514,10 +572,11 @@ class PianoHero {
     }
 
     initTabs() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
+        const dropdown = document.getElementById('songBrowserDropdown');
+        dropdown.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                dropdown.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                dropdown.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
                 btn.classList.add('active');
                 document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
             });
@@ -601,9 +660,11 @@ class PianoHero {
     async loadMidiFile(filename) {
         if (!filename) return;
 
-        // Collapse the list and update header
-        document.getElementById('midiListContainer').classList.remove('expanded');
-        document.getElementById('midiListHeaderText').textContent = filename;
+        // Close the song browser dropdown and update header song name
+        document.getElementById('songBrowserDropdown').classList.add('hidden');
+        const songNameEl = document.getElementById('midiListHeaderText');
+        songNameEl.textContent = filename;
+        songNameEl.title = filename;
 
         this.statusMessage.textContent = 'Loading MIDI file...';
         this.progressBar.classList.add('visible');
@@ -687,6 +748,11 @@ class PianoHero {
 
     async loadBitMidi(slug, name) {
         this.stopPreview();
+        // Close browser and update song name
+        document.getElementById('songBrowserDropdown').classList.add('hidden');
+        const songNameEl = document.getElementById('midiListHeaderText');
+        songNameEl.textContent = name;
+        songNameEl.title = name;
         this.statusMessage.textContent = `Loading "${name}" from BitMidi…`;
         this.progressBar.classList.add('visible');
         this.updateProgress(20);
@@ -992,9 +1058,10 @@ class PianoHero {
         // ── Game Mode ──
         const modeSelect = document.getElementById('gameModeSelect');
         const coplayHint = document.getElementById('coplayHint');
-        modeSelect.addEventListener('change', () => {
+        if (modeSelect) modeSelect.addEventListener('change', () => {
             this.gameMode = modeSelect.value;
             this._saveSettings();
+            this._updateModeLabel();
 
             // Show/hide co-play hint and volume control
             if (coplayHint) coplayHint.style.display = this.gameMode === 'coplay' ? '' : 'none';
@@ -1026,7 +1093,7 @@ class PianoHero {
             sustain: document.getElementById('sustainToggle').checked,
             keyScale: document.getElementById('keyScaleSlider').value,
             speed: document.getElementById('speedSlider').value,
-            gameMode: document.getElementById('gameModeSelect').value,
+            gameMode: this.gameMode || 'normal',
             timingFeedback: document.getElementById('timingFeedbackToggle').checked,
             particleStyle: document.getElementById('particleStyleSelect').value,
             sparkle: document.getElementById('sparkleSlider').value,
@@ -1101,9 +1168,12 @@ class PianoHero {
             s.dispatchEvent(new Event('input'));
         }
         if (settings.gameMode) {
+            this.gameMode = settings.gameMode;
             const sel = document.getElementById('gameModeSelect');
-            sel.value = settings.gameMode;
-            sel.dispatchEvent(new Event('change'));
+            if (sel) {
+                sel.value = settings.gameMode;
+                sel.dispatchEvent(new Event('change'));
+            }
         }
         if (settings.timingFeedback != null) {
             const cb = document.getElementById('timingFeedbackToggle');
@@ -1135,6 +1205,9 @@ class PianoHero {
             s.value = settings.coplayAutoVolume;
             s.dispatchEvent(new Event('input'));
         }
+
+        // Update header mode label to reflect restored settings
+        this._updateModeLabel();
     }
 
     updateBPMDisplay() {
@@ -1985,18 +2058,40 @@ class PianoHero {
         this.modeToggleSwitch.disabled = false;
         this.modeToggleSwitch.checked = this.isAutoPlay;
 
-        // Play / Pause
+        // Play / Pause (compact header buttons)
         this.playPauseBtn.disabled = !hasNotes;
         if (playing) {
-            this.playPauseBtn.innerHTML = '&#10074;&#10074; Pause';
+            this.playPauseBtn.innerHTML = '&#10074;&#10074;';
             this.playPauseBtn.classList.add('playing');
         } else {
-            this.playPauseBtn.innerHTML = '&#9654; Play';
+            this.playPauseBtn.innerHTML = '&#9654;';
             this.playPauseBtn.classList.remove('playing');
         }
 
         // Stop
         this.stopBtn.disabled = !this.isPlaying && !this.isPaused;
+
+        // Update mode label
+        this._updateModeLabel();
+    }
+
+    /** Update mode dropdown button label */
+    _updateModeLabel() {
+        const modeLabel = document.getElementById('modeLabel');
+        const modeSubLabel = document.getElementById('modeSubLabel');
+        if (!modeLabel || !modeSubLabel) return;
+
+        modeLabel.textContent = this.isAutoPlay ? 'AutoPlay' : 'Manual';
+
+        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice' };
+        modeSubLabel.textContent = modeNames[this.gameMode] || 'Normal';
+
+        // Update active state in dropdown
+        document.querySelectorAll('.mode-option').forEach(opt => {
+            const isAuto = opt.dataset.auto === 'true';
+            const mode = opt.dataset.mode;
+            opt.classList.toggle('active', isAuto === this.isAutoPlay && mode === this.gameMode);
+        });
     }
 
     _scheduleAutoPlayNotes() {

@@ -22,48 +22,446 @@ body {
 header.top-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
     background: #1a1a1a;
-    padding: 10px 16px;
+    padding: 8px 16px;
     margin: -6px -10px 6px -10px;
     border-bottom: 1px solid #2a2a2a;
     position: relative;
     z-index: 100;
 }
 
+.header-spacer {
+    flex: 1;
+}
+
 .header-logo {
-    font-size: 1.3em;
-    font-weight: 700;
-    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.header-logo-img {
+    height: 60px;
+    object-fit: contain;
+}
+
+.header-divider {
+    width: 1px;
+    height: 24px;
+    background: #444;
+    flex-shrink: 0;
+}
+
+/* Song browser button (hamburger) */
+.header-browser-wrapper {
+    position: relative;
+}
+
+.header-browser-btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 40px;
+    height: 40px;
+    background: #3a3a3a;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 50%;
+    transition: background 0.2s;
     color: #fff;
 }
 
-.header-menu-btn {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 4px;
-    width: 36px;
-    height: 36px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 4px;
-    transition: background 0.2s;
-}
-
-.header-menu-btn:hover {
+.header-browser-btn:hover {
     background: rgba(255, 255, 255, 0.1);
 }
 
-.header-menu-btn .menu-icon {
+.header-browser-btn .menu-icon {
     display: block;
     width: 20px;
     height: 2px;
     background: #fff;
     border-radius: 1px;
+}
+
+/* Song browser dropdown */
+.song-browser-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    width: 480px;
+    max-height: 400px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    z-index: 200;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+}
+
+.song-browser-dropdown.hidden {
+    display: none;
+}
+
+/* Vertical sidebar tabs */
+.song-browser-dropdown .source-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0;
+    width: 100px;
+    flex-shrink: 0;
+    background: #141414;
+    border-right: 1px solid #333;
+}
+
+.song-browser-dropdown .tab-btn {
+    padding: 14px 12px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.5);
+    border: none;
+    border-radius: 0;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    text-align: left;
+    border-left: 3px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.song-browser-dropdown .tab-btn.active {
+    background: #1a1a1a;
+    color: #fff;
+    border-left-color: #4a9eff;
+}
+
+.song-browser-dropdown .tab-btn:not(.active):hover {
+    background: #1e1e1e;
+    color: #ccc;
+}
+
+/* Content area (right side) */
+.song-browser-dropdown .browser-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.song-browser-dropdown .tab-content {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 400px;
+}
+
+.song-browser-dropdown .tab-content.hidden {
+    display: none;
+}
+
+/* Inline midi list inside dropdown */
+.midi-list-inline {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    max-height: 400px;
+}
+
+.midi-list-inline::-webkit-scrollbar {
+    width: 6px;
+}
+
+.midi-list-inline::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+/* BitMidi search inside dropdown */
+.song-browser-dropdown .bitmidi-search-section {
+    display: flex;
+    gap: 6px;
+    padding: 10px;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.song-browser-dropdown .bitmidi-search-section input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #111;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+
+.song-browser-dropdown .bitmidi-search-section button {
+    padding: 8px 14px;
+    background: #6c3bbf;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+
+.song-browser-dropdown .bitmidi-search-section button:hover {
+    background: #7c4bd0;
+}
+
+.song-browser-dropdown .bitmidi-results {
+    overflow-y: auto;
+    max-height: 320px;
+    padding: 4px;
+}
+
+/* Song name in header */
+.header-song-name {
+    font-size: 14px;
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    max-width: 260px;
+    flex-shrink: 1;
+}
+
+/* Player controls in header */
+.header-player-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.header-play-btn,
+.header-stop-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    background: transparent;
+    color: #ccc;
+}
+
+.header-play-btn:not(:disabled):hover,
+.header-stop-btn:not(:disabled):hover {
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+}
+
+.header-play-btn.playing {
+    color: #ff9800;
+}
+
+.header-play-btn:disabled,
+.header-stop-btn:disabled {
+    color: #555;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.header-mode-toggle {
+    margin: 0;
+}
+
+.header-mode-toggle .toggle-track {
+    width: 38px;
+    height: 20px;
+}
+
+.header-mode-toggle .toggle-knob {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    min-height: 14px;
+}
+
+.header-mode-toggle input:checked ~ .toggle-track .toggle-knob {
+    transform: translateX(18px);
+}
+
+/* Mode dropdown button */
+.header-mode-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.header-mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 14px;
+    background: transparent;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-radius: 4px;
+    text-transform: none;
+}
+
+.header-mode-btn:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+.mode-btn-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.1;
+}
+
+.mode-btn-label {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.mode-btn-sublabel {
+    font-size: 10px;
+    color: #999;
+    font-weight: 600;
+    font-style: italic;
+}
+
+.mode-btn-arrow {
+    font-size: 14px;
+    color: #888;
+}
+
+/* Mode dropdown panel */
+.mode-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 6px;
+    width: 240px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    z-index: 200;
+    overflow: hidden;
+}
+
+.mode-dropdown.hidden {
+    display: none;
+}
+
+.mode-dropdown-group {
+    padding: 6px 0;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.mode-dropdown-group:last-child {
+    border-bottom: none;
+}
+
+.mode-dropdown-heading {
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: bold;
+    color: #888;
+    letter-spacing: 0.5px;
+}
+
+.mode-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 14px 8px 24px;
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    text-transform: none;
+    font-weight: normal;
+}
+
+.mode-option:hover {
+    background: #252525;
+}
+
+.mode-option.active {
+    color: #4a9eff;
+    font-weight: bold;
+}
+
+.mode-option.active::before {
+    content: "●";
+    position: absolute;
+    left: 10px;
+    color: #4a9eff;
+    font-size: 8px;
+}
+
+.mode-dropdown-group {
+    position: relative;
+}
+
+.mode-option {
+    position: relative;
+}
+
+/* Settings gear button */
+.header-settings-btn {
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 20px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.header-settings-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+/* Status bar below header */
+.header-status-bar {
+    padding: 2px 14px;
+    min-height: 0;
+    transition: min-height 0.2s;
+}
+
+.header-status-bar:empty,
+.header-status-bar:not(:has(#statusMessage:not(:empty))):not(:has(.progress-bar.visible)) {
+    padding: 0;
+}
+
+.header-status-bar #statusMessage {
+    text-align: center;
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 2px;
+}
+
+.header-status-bar #statusMessage:empty {
+    display: none;
 }
 
 @keyframes glow {
@@ -82,10 +480,6 @@ header.top-header {
     padding: 10px 14px;
     margin-bottom: 6px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-.top-bar .source-tabs {
-    margin-bottom: 8px;
 }
 
 .top-bar .status-section {
@@ -118,7 +512,7 @@ header.top-header {
     margin-bottom: 8px;
 }
 
-/* Source tabs */
+/* Source tabs (used inside dropdown now) */
 .source-tabs {
     display: flex;
     gap: 4px;
@@ -154,79 +548,8 @@ header.top-header {
     display: none;
 }
 
-/* MIDI file selector */
-.midi-list-container {
-    border: 1px solid #333;
-    border-radius: 8px;
-    background: #1a1a1a;
-    position: relative;
-}
-
-.midi-list-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    cursor: pointer;
-    color: #e0e0e0;
-    font-size: 14px;
-    user-select: none;
-}
-
-.midi-list-header:hover {
-    background: #252525;
-    border-radius: 8px;
-}
-
-#midiListHeaderText {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-}
-
-.midi-list-arrow {
-    font-size: 12px;
-    color: #888;
-    transition: transform 0.2s;
-    margin-left: 8px;
-}
-
-.midi-list-container.expanded .midi-list-arrow {
-    transform: rotate(180deg);
-}
-
-.midi-list {
-    display: none;
-    flex-direction: column;
-    max-height: 200px;
-    overflow-y: auto;
-    border-top: 1px solid #333;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 0 0 8px 8px;
-    z-index: 100;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-}
-
-.midi-list-container.expanded .midi-list {
-    display: flex;
-}
-
-.midi-list::-webkit-scrollbar {
-    width: 6px;
-}
-
-.midi-list::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 3px;
-}
-
-.midi-list-empty {
+/* MIDI file list (inline in dropdown) */
+.midi-list-inline .midi-list-empty {
     padding: 12px 16px;
     color: #888;
     font-style: italic;
@@ -524,25 +847,23 @@ button {
 }
 
 #playPauseBtn {
-    background: #4CAF50;
+    background: transparent;
 }
 
 #playPauseBtn.playing {
-    background: #ff9800;
+    color: #ff9800;
 }
 
 #playPauseBtn:not(:disabled):hover {
-    filter: brightness(1.15);
-    transform: translateY(-2px);
+    background: rgba(255,255,255,0.1);
 }
 
 #stopBtn {
-    background: #f44336;
+    background: transparent;
 }
 
 #stopBtn:not(:disabled):hover {
-    background: #da190b;
-    transform: translateY(-2px);
+    background: rgba(255,255,255,0.1);
 }
 
 .score-section {
@@ -972,12 +1293,13 @@ button {
 
 .settings-toolbar-panels {
     display: flex;
+    flex-wrap: wrap;
     gap: 16px;
     padding: 10px 12px;
     transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
-    max-height: 500px;
+    max-height: 70vh;
     opacity: 1;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 .settings-toolbar-panels.collapsed {
@@ -989,11 +1311,22 @@ button {
 
 .settings-panel {
     flex: 1;
+    min-width: 280px;
+    overflow: hidden;
 }
 
 .settings-panel + .settings-panel {
     border-left: 1px solid #2a2a2a;
     padding-left: 16px;
+}
+
+@media (max-width: 700px) {
+    .settings-panel + .settings-panel {
+        border-left: none;
+        padding-left: 0;
+        border-top: 1px solid #2a2a2a;
+        padding-top: 12px;
+    }
 }
 
 .settings-panel h4 {
