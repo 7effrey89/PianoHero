@@ -2764,8 +2764,6 @@ class PianoHero {
         // Position above the hit zone, centered on the key
         el.style.left = (pos.left + pos.width / 2) + 'px';
 
-        const canvas = document.getElementById('notesCanvas');
-        const canvasH = canvas ? canvas.offsetHeight : 400;
         el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
 
         el.onanimationend = () => {
