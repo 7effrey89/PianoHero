@@ -20,6 +20,7 @@ class PianoHero {
         this.songTimeLabel = document.getElementById('songTimeLabel');
         this.midiFileList = document.getElementById('midiFileList');
         this.autoPlayBtn = document.getElementById('modeToggleSwitch');
+        this.gameArea = document.getElementById('gameArea');
         this.modeToggleBtn = document.getElementById('modeToggleSwitch');
         this.modeToggleSwitch = document.getElementById('modeToggleSwitch');
         this.playPauseBtn = document.getElementById('playPauseBtn');
@@ -93,6 +94,9 @@ class PianoHero {
         // Shared wave overlay canvas for classic bars
         this._waveCanvas = null;
         this._waveCtx = null;
+
+        // Reuse timing feedback nodes to reduce frequent DOM allocation/removal churn
+        this._timingFeedbackPool = [];
 
         // Force field hit bar
         this.forceFieldEnabled = false;
@@ -2750,20 +2754,25 @@ class PianoHero {
         if (!pos) return;
 
         const grade = this._getTimingGrade(success, accuracy);
-        const el = document.createElement('div');
+        const gameArea = this.gameArea || document.getElementById('gameArea');
+        if (!gameArea) return;
+
+        const el = this._timingFeedbackPool.pop() || document.createElement('div');
         el.className = 'timing-feedback ' + grade.cls;
         el.textContent = grade.text;
 
         // Position above the hit zone, centered on the key
-        const gameArea = document.getElementById('gameArea');
         el.style.left = (pos.left + pos.width / 2) + 'px';
 
         const canvas = document.getElementById('notesCanvas');
         const canvasH = canvas ? canvas.offsetHeight : 400;
         el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
 
+        el.onanimationend = () => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+            this._timingFeedbackPool.push(el);
+        };
         gameArea.appendChild(el);
-        setTimeout(() => el.remove(), 800);
     }
     
     updateScore() {
