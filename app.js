@@ -49,7 +49,7 @@ class PianoHero {
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
-        this.hitZoneY = this.canvas.height - 80;
+        this.hitZoneY = this.canvas.height;
         this.hitTolerance = 50; // pixels tolerance for hitting notes
         this.showTimingFeedback = true; // show Perfect/Great/Good/OK/Miss text
 
@@ -544,7 +544,7 @@ class PianoHero {
         container.style.width = fullWidth + 'px';
         this.canvas.width = fullWidth;
         this.canvas.height = container.clientHeight;
-        this.hitZoneY = this.canvas.height - 20;
+        this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
         this._laneCacheDirty = true;
     }
@@ -2939,35 +2939,36 @@ class PianoHero {
             }
         }
 
-        // Draw hit zone line
+        // Draw hit zone bar (note-thickness, just above the keyboard)
+        const hitBarHeight = 12;
         if (style === 'synthesia') {
-            // Synthesia: subtle warm line with note-letter labels below
+            // Synthesia: subtle warm bar with note-letter labels
             lctx.fillStyle = 'rgba(180, 60, 60, 0.6)';
-            lctx.fillRect(0, this.hitZoneY - 1, w, 2);
-            // Note letter labels just below the hit line
-            lctx.font = `bold ${Math.max(9, Math.min(13, this.keyWidth * 0.55))}px sans-serif`;
+            lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
+            // Note letter labels inside the hit bar
+            lctx.font = `bold ${Math.max(9, Math.min(11, this.keyWidth * 0.45))}px sans-serif`;
             lctx.textAlign = 'center';
-            lctx.textBaseline = 'top';
+            lctx.textBaseline = 'middle';
             for (const note of this.allNotes) {
                 const pos = this.keyPositions[note];
                 if (!pos || pos.isBlack) continue;
                 const letter = note.charAt(0);
                 const cx = pos.left + pos.width / 2;
                 lctx.fillStyle = 'rgba(220, 180, 180, 0.7)';
-                lctx.fillText(letter, cx, this.hitZoneY + 3);
+                lctx.fillText(letter, cx, this.hitZoneY - hitBarHeight / 2);
             }
         } else {
             lctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-            lctx.fillRect(0, this.hitZoneY - 2, w, 4);
+            lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
         }
 
         // Draw hit zone indicators
         if (style !== 'synthesia') {
             for (const [note, pos] of Object.entries(this.keyPositions)) {
                 const iw = pos.width * 0.9;
-                const ih = 8;
+                const ih = hitBarHeight;
                 const ix = pos.left + (pos.width - iw) / 2;
-                const iy = this.hitZoneY - ih / 2;
+                const iy = this.hitZoneY - ih;
                 lctx.fillStyle = pos.isBlack ? 
                     'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
                 lctx.fillRect(ix, iy, iw, ih);
