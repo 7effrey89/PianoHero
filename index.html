@@ -4,237 +4,305 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="styles.css?v=5">
+    <link rel="icon" type="image/png" href="/images/logo.png">
+    <link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
     <div class="container">
         <header class="top-header">
-            <div class="header-logo">🎹 Piano Hero</div>
-            <button class="header-menu-btn" id="settingsMenuBtn" aria-label="Settings">
-                <span class="menu-icon"></span>
-                <span class="menu-icon"></span>
-                <span class="menu-icon"></span>
-            </button>
+            <div class="header-logo"><img src="/images/logo.png" alt="Piano Hero" class="header-logo-img"></div>
+            <span class="header-divider"></span>
+
+            <!-- Song browser button (hamburger) -->
+            <div class="header-browser-wrapper">
+                <button class="header-browser-btn" id="songBrowserBtn" aria-label="Browse songs">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <line x1="3" y1="6" x2="13" y2="6"/>
+                        <line x1="3" y1="11" x2="13" y2="11"/>
+                        <line x1="3" y1="16" x2="13" y2="16"/>
+                        <polygon points="17,7 17,17 23,12" fill="currentColor" stroke="none"/>
+                    </svg>
+                </button>
+                <!-- Song browser dropdown -->
+                <div class="song-browser-dropdown hidden" id="songBrowserDropdown">
+                    <div class="source-tabs">
+                        <button class="tab-btn active" data-tab="midi">📁 Local</button>
+                        <button class="tab-btn" data-tab="bitmidi">🌐 Bitmidi</button>
+                    </div>
+                    <div class="browser-content">
+                        <div class="tab-content" id="tab-midi">
+                            <div class="midi-list-inline" id="midiFileList"></div>
+                        </div>
+                        <div class="tab-content hidden" id="tab-bitmidi">
+                            <div class="bitmidi-search-section">
+                                <input type="text" id="bitmidiQuery" placeholder="Search songs..." />
+                                <button id="bitmidiSearchBtn">Search</button>
+                            </div>
+                            <div id="bitmidiResults" class="bitmidi-results"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current song name -->
+            <div class="header-song-name" id="midiListHeaderText" title="-- Select a song --">-- Select a song --</div>
+
+            <span class="header-divider"></span>
+
+            <!-- Player controls -->
+            <div class="header-player-controls">
+                <button id="playPauseBtn" class="header-play-btn" disabled>&#9654;</button>
+                <button id="stopBtn" class="header-stop-btn" disabled>&#9632;</button>
+                <label class="mode-toggle header-mode-toggle">
+                    <input type="checkbox" id="modeToggleSwitch">
+                    <span class="toggle-track"><span class="toggle-knob"></span></span>
+                </label>
+            </div>
+
+            <!-- Mode dropdown -->
+            <div class="header-mode-wrapper">
+                <button class="header-mode-btn" id="modeDropdownBtn">
+                    <div class="mode-btn-text">
+                        <span class="mode-btn-label" id="modeLabel">AutoPlay</span>
+                        <span class="mode-btn-sublabel" id="modeSubLabel">Normal</span>
+                    </div>
+                    <span class="mode-btn-arrow">&#9662;</span>
+                </button>
+                <div class="mode-dropdown hidden" id="modeDropdown">
+                    <div class="mode-dropdown-group">
+                        <div class="mode-dropdown-heading">Manual</div>
+                        <button class="mode-option" data-auto="false" data-mode="normal">Normal</button>
+                        <button class="mode-option" data-auto="false" data-mode="simple">Simple (merged notes)</button>
+                        <button class="mode-option" data-auto="false" data-mode="practice">Practice (wait for input)</button>
+                    </div>
+                    <div class="mode-dropdown-group">
+                        <div class="mode-dropdown-heading">Auto Play</div>
+                        <button class="mode-option active" data-auto="true" data-mode="normal">Normal</button>
+                        <button class="mode-option" data-auto="true" data-mode="simple">Simple (merged notes)</button>
+                        <button class="mode-option" data-auto="true" data-mode="coplay">Co-play (pick your lanes)</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="header-spacer"></div>
+
+            <!-- Settings gear -->
+            <button class="header-settings-btn" id="settingsMenuBtn" aria-label="Settings">⚙</button>
+
+            <!-- Settings Panel (toggled by header menu button) -->
+            <div class="settings-toolbar" id="settingsToolbar">
+                <div class="settings-toolbar-panels collapsed" id="settingsPanelsBody">
+                <div class="settings-panel">
+                    <h4>Sound</h4>
+                    <div class="settings-panel-body" id="soundPanelBody">
+                    <div class="sound-row">
+                        <label for="soundPreset">Instrument:</label>
+                        <select id="soundPreset">
+                            <optgroup label="Piano">
+                            <option value="acoustic_grand_piano">Concert Grand Piano</option>
+                            <option value="bright_acoustic_piano">Bright Piano</option>
+                            <option value="electric_grand_piano">Electric Grand</option>
+                            <option value="honkytonk_piano">Honky-tonk</option>
+                            <option value="electric_piano_1">Electric Piano 1</option>
+                            <option value="electric_piano_2">Electric Piano 2</option>
+                            </optgroup>
+                            <optgroup label="Chromatic Percussion">
+                            <option value="celesta">Celesta</option>
+                            <option value="glockenspiel">Glockenspiel</option>
+                            <option value="music_box">Music Box</option>
+                            <option value="vibraphone">Vibraphone</option>
+                            <option value="marimba">Marimba</option>
+                            <option value="xylophone">Xylophone</option>
+                            </optgroup>
+                            <optgroup label="Organ">
+                            <option value="church_organ">Church Organ</option>
+                            <option value="reed_organ">Reed Organ</option>
+                            <option value="rock_organ">Rock Organ</option>
+                            </optgroup>
+                            <optgroup label="Guitar">
+                            <option value="acoustic_guitar_nylon">Acoustic Guitar (Nylon)</option>
+                            <option value="acoustic_guitar_steel">Acoustic Guitar (Steel)</option>
+                            <option value="electric_guitar_clean">Electric Guitar (Clean)</option>
+                            <option value="electric_guitar_jazz">Electric Guitar (Jazz)</option>
+                            <option value="overdriven_guitar">Overdriven Guitar</option>
+                            <option value="distortion_guitar">Distortion Guitar</option>
+                            </optgroup>
+                            <optgroup label="Strings">
+                            <option value="violin">Violin</option>
+                            <option value="viola">Viola</option>
+                            <option value="cello">Cello</option>
+                            <option value="string_ensemble_1">String Ensemble</option>
+                            <option value="synth_strings_1">Synth Strings</option>
+                            </optgroup>
+                            <optgroup label="Brass & Woodwinds">
+                            <option value="trumpet">Trumpet</option>
+                            <option value="french_horn">French Horn</option>
+                            <option value="trombone">Trombone</option>
+                            <option value="soprano_sax">Soprano Sax</option>
+                            <option value="alto_sax">Alto Sax</option>
+                            <option value="tenor_sax">Tenor Sax</option>
+                            <option value="flute">Flute</option>
+                            <option value="clarinet">Clarinet</option>
+                            <option value="oboe">Oboe</option>
+                            </optgroup>
+                            <optgroup label="Synth">
+                            <option value="pad_1_new_age">Pad (New Age)</option>
+                            <option value="pad_2_warm">Pad (Warm)</option>
+                            <option value="lead_1_square">Lead (Square)</option>
+                            <option value="lead_2_sawtooth">Lead (Sawtooth)</option>
+                            </optgroup>
+                            <optgroup label="Other">
+                            <option value="harpsichord">Harpsichord</option>
+                            <option value="clavinet">Clavinet</option>
+                            <option value="accordion">Accordion</option>
+                            <option value="harmonica">Harmonica</option>
+                            </optgroup>
+                        </select>
+                        <span id="soundfontStatus" class="soundfont-status"></span>
+                    </div>
+                    <div class="sound-row">
+                        <label for="soundBankSelect">Sound Bank:</label>
+                        <select id="soundBankSelect">
+                            <option value="Salamander">Salamander Grand (Yamaha C5)</option>
+                            <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
+                            <option value="MusyngKite">MusyngKite (Bright)</option>
+                        </select>
+                    </div>
+                    <div class="sound-row">
+                        <label for="volumeSlider">Volume</label>
+                        <input type="range" id="volumeSlider" min="0" max="100" value="80">
+                        <span id="volumeVal">80%</span>
+                    </div>
+                    <div class="sound-row">
+                        <label for="reverbSlider">Reverb</label>
+                        <input type="range" id="reverbSlider" min="0" max="100" value="0">
+                        <span id="reverbVal">0%</span>
+                    </div>
+                    <div class="sound-row">
+                        <label class="mode-toggle sustain-toggle" title="Adds a dynamics compressor to tame peaks, plus a warm low-shelf boost and subtle high-shelf presence EQ">
+                            <span class="toggle-label">EQ &amp; Compression</span>
+                            <input type="checkbox" id="eqCompressionToggle">
+                            <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        </label>
+                    </div>
+                    <div class="sound-toggle-group">
+                    <div class="sound-row">
+                        <label class="mode-toggle sustain-toggle" title="Hold notes to let them ring out naturally instead of cutting off on key release">
+                            <span class="toggle-label">Sustain</span>
+                            <input type="checkbox" id="sustainToggle" checked>
+                            <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        </label>
+                    </div>
+                    <div class="sound-row">
+                        <label class="mode-toggle sustain-toggle" title="When a note is played, quietly excites harmonically related strings (octave, fifth, third) for a richer, more realistic piano sound. Requires Sustain to be enabled.">
+                            <span class="toggle-label">Sympathetic Resonance</span>
+                            <input type="checkbox" id="sympatheticResonanceToggle">
+                            <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        </label>
+                    </div>
+                    </div>
+                    </div>
+                </div>
+                <div class="settings-panel">
+                    <h4>Game</h4>
+                    <div class="settings-panel-body" id="gameSettingsBody">
+                    <!-- Key Scale / Zoom -->
+                    <div class="setting-row">
+                        <label for="keyScaleSlider">Key Scale</label>
+                        <input type="range" id="keyScaleSlider" min="0.5" max="3" step="0.1" value="1">
+                        <input type="number" id="keyScaleInput" min="0.5" max="3" step="0.1" value="1" class="setting-number">
+                        <span>×</span>
+                    </div>
+                    <!-- Speed Control -->
+                    <div class="setting-row">
+                        <label for="speedSlider">Speed</label>
+                        <input type="range" id="speedSlider" min="25" max="150" step="5" value="100">
+                        <input type="number" id="speedInput" min="25" max="150" step="5" value="100" class="setting-number">
+                        <span id="speedUnit">%</span>
+                    </div>
+                    <div class="setting-row">
+                        <span class="setting-info" id="bpmDisplay">BPM: --</span>
+                    </div>
+                    <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
+                        <span class="setting-info">Use the selectors above each key to pick your manual lanes. Click a selected lane again to remap its keyboard key.</span>
+                    </div>
+                    <div class="setting-row coplay-hint coplay-volume-row" id="coplayVolumeRow" style="display:none">
+                        <label for="coplayAutoVolume">Others Volume</label>
+                        <input type="range" id="coplayAutoVolume" min="0" max="100" value="30" />
+                        <span id="coplayAutoVolumeVal">30%</span>
+                    </div>
+                </div>
+                </div>
+                <div class="settings-panel">
+                    <h4>UI Effects</h4>
+                    <div class="settings-panel-body" id="uiEffectsBody">
+                    <div class="setting-row">
+                        <label for="timingFeedbackToggle">Hit Feedback</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="timingFeedbackToggle" checked>
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <label for="particleStyleSelect">Particle Style</label>
+                        <select id="particleStyleSelect">
+                            <option value="sparkle">Sparkle (beams)</option>
+                            <option value="splash">Splash (droplets)</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <label for="sparkleSlider">Particle FX</label>
+                        <input type="range" id="sparkleSlider" min="0" max="100" step="5" value="100">
+                        <span id="sparkleValue">100%</span>
+                    </div>
+                    <div class="setting-row">
+                        <label for="sparkleHeightSlider">Sparkle Height</label>
+                        <input type="range" id="sparkleHeightSlider" min="10" max="200" step="5" value="100">
+                        <span id="sparkleHeightValue">100%</span>
+                    </div>
+                    <div class="setting-row">
+                        <label for="laneStyleSelect">Lane Lines</label>
+                        <select id="laneStyleSelect">
+                            <option value="full">Full (borders + fill)</option>
+                            <option value="fill">Fill only (no borders)</option>
+                            <option value="blackonly">Black keys only</option>
+                            <option value="dim">Dim (low opacity)</option>
+                            <option value="synthesia" selected>Synthesia grid</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <label for="noteStyleSelect">Note Style</label>
+                        <select id="noteStyleSelect">
+                            <option value="beam">Light Beam</option>
+                            <option value="classic">Classic Bars</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" title="Adds a multi-layer neon bloom glow around falling notes, inspired by glowing tube effects">
+                        <label for="neonGlowToggle">Neon Glow</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="neonGlowToggle">
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
+                    </div>
+                    <div class="setting-row" title="Replaces the static hit bar with an animated flowing energy force field">
+                        <label for="forceFieldToggle">Force Field Bar</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="forceFieldToggle">
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
+                    </div>
+                </div>
+                </div>
+                </div>
+            </div>
         </header>
 
-        <div class="controls top-bar">
-            <div class="source-tabs">
-                <button class="tab-btn active" data-tab="midi">Play MIDI File</button>
-                <button class="tab-btn" data-tab="bitmidi">Browse BitMidi</button>
-            </div>
-
-            <div class="tab-content" id="tab-midi">
-                <div class="midi-list-container" id="midiListContainer">
-                    <div class="midi-list-header" id="midiListHeader">
-                        <span id="midiListHeaderText">-- Select a MIDI file --</span>
-                        <span class="midi-list-arrow">&#9662;</span>
-                    </div>
-                    <div class="midi-list" id="midiFileList"></div>
-                </div>
-            </div>
-
-            <div class="tab-content hidden" id="tab-bitmidi">
-                <div class="bitmidi-search-section">
-                    <input type="text" id="bitmidiQuery" placeholder="Search for songs... e.g. pokemon, zelda, mario" />
-                    <button id="bitmidiSearchBtn">Search</button>
-                </div>
-                <div id="bitmidiResults" class="bitmidi-results"></div>
-            </div>
-
-            <div class="status-section">
-                <p id="statusMessage"></p>
-                <div id="progressBar" class="progress-bar">
-                    <div id="progressFill" class="progress-fill"></div>
-                </div>
-            </div>
-            <div class="controls-row">
-                <div class="game-controls">
-                    <label class="mode-toggle">
-                        <span class="toggle-label toggle-label-manual">Manual</span>
-                        <input type="checkbox" id="modeToggleSwitch">
-                        <span class="toggle-track"><span class="toggle-knob"></span></span>
-                        <span class="toggle-label toggle-label-auto">Auto</span>
-                    </label>
-                    <button id="playPauseBtn" disabled>&#9654; Play</button>
-                    <button id="stopBtn" disabled>&#9632; Stop</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Settings Panel (toggled by header menu button) -->
-        <div class="settings-toolbar" id="settingsToolbar">
-            <div class="settings-toolbar-panels collapsed" id="settingsPanelsBody">
-            <div class="settings-panel">
-                <h4>Sound</h4>
-                <div class="settings-panel-body" id="soundPanelBody">
-                <div class="sound-row">
-                    <label for="soundPreset">Instrument:</label>
-                    <select id="soundPreset">
-                        <optgroup label="Piano">
-                        <option value="acoustic_grand_piano">Concert Grand Piano</option>
-                        <option value="bright_acoustic_piano">Bright Piano</option>
-                        <option value="electric_grand_piano">Electric Grand</option>
-                        <option value="honkytonk_piano">Honky-tonk</option>
-                        <option value="electric_piano_1">Electric Piano 1</option>
-                        <option value="electric_piano_2">Electric Piano 2</option>
-                        </optgroup>
-                        <optgroup label="Chromatic Percussion">
-                        <option value="celesta">Celesta</option>
-                        <option value="glockenspiel">Glockenspiel</option>
-                        <option value="music_box">Music Box</option>
-                        <option value="vibraphone">Vibraphone</option>
-                        <option value="marimba">Marimba</option>
-                        <option value="xylophone">Xylophone</option>
-                        </optgroup>
-                        <optgroup label="Organ">
-                        <option value="church_organ">Church Organ</option>
-                        <option value="reed_organ">Reed Organ</option>
-                        <option value="rock_organ">Rock Organ</option>
-                        </optgroup>
-                        <optgroup label="Guitar">
-                        <option value="acoustic_guitar_nylon">Acoustic Guitar (Nylon)</option>
-                        <option value="acoustic_guitar_steel">Acoustic Guitar (Steel)</option>
-                        <option value="electric_guitar_clean">Electric Guitar (Clean)</option>
-                        <option value="electric_guitar_jazz">Electric Guitar (Jazz)</option>
-                        <option value="overdriven_guitar">Overdriven Guitar</option>
-                        <option value="distortion_guitar">Distortion Guitar</option>
-                        </optgroup>
-                        <optgroup label="Strings">
-                        <option value="violin">Violin</option>
-                        <option value="viola">Viola</option>
-                        <option value="cello">Cello</option>
-                        <option value="string_ensemble_1">String Ensemble</option>
-                        <option value="synth_strings_1">Synth Strings</option>
-                        </optgroup>
-                        <optgroup label="Brass & Woodwinds">
-                        <option value="trumpet">Trumpet</option>
-                        <option value="french_horn">French Horn</option>
-                        <option value="trombone">Trombone</option>
-                        <option value="soprano_sax">Soprano Sax</option>
-                        <option value="alto_sax">Alto Sax</option>
-                        <option value="tenor_sax">Tenor Sax</option>
-                        <option value="flute">Flute</option>
-                        <option value="clarinet">Clarinet</option>
-                        <option value="oboe">Oboe</option>
-                        </optgroup>
-                        <optgroup label="Synth">
-                        <option value="pad_1_new_age">Pad (New Age)</option>
-                        <option value="pad_2_warm">Pad (Warm)</option>
-                        <option value="lead_1_square">Lead (Square)</option>
-                        <option value="lead_2_sawtooth">Lead (Sawtooth)</option>
-                        </optgroup>
-                        <optgroup label="Other">
-                        <option value="harpsichord">Harpsichord</option>
-                        <option value="clavinet">Clavinet</option>
-                        <option value="accordion">Accordion</option>
-                        <option value="harmonica">Harmonica</option>
-                        </optgroup>
-                    </select>
-                    <span id="soundfontStatus" class="soundfont-status"></span>
-                </div>
-                <div class="sound-row">
-                    <label for="soundBankSelect">Sound Bank:</label>
-                    <select id="soundBankSelect">
-                        <option value="Salamander">Salamander Grand (Yamaha C5)</option>
-                        <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
-                        <option value="MusyngKite">MusyngKite (Bright)</option>
-                    </select>
-                </div>
-                <div class="sound-row">
-                    <label for="volumeSlider">Volume</label>
-                    <input type="range" id="volumeSlider" min="0" max="100" value="80">
-                    <span id="volumeVal">80%</span>
-                </div>
-                <div class="sound-row">
-                    <label for="reverbSlider">Reverb</label>
-                    <input type="range" id="reverbSlider" min="0" max="100" value="0">
-                    <span id="reverbVal">0%</span>
-                </div>
-                <div class="sound-row">
-                    <label class="mode-toggle sustain-toggle">
-                        <span class="toggle-label">Sustain</span>
-                        <input type="checkbox" id="sustainToggle" checked>
-                        <span class="toggle-track"><span class="toggle-knob"></span></span>
-                    </label>
-                </div>
-                </div>
-            </div>
-            <div class="settings-panel">
-                <h4>Game</h4>
-                <div class="settings-panel-body" id="gameSettingsBody">
-                <!-- Key Scale / Zoom -->
-                <div class="setting-row">
-                    <label for="keyScaleSlider">Key Scale</label>
-                    <input type="range" id="keyScaleSlider" min="0.5" max="3" step="0.1" value="1">
-                    <input type="number" id="keyScaleInput" min="0.5" max="3" step="0.1" value="1" class="setting-number">
-                    <span>×</span>
-                </div>
-                <!-- Speed Control -->
-                <div class="setting-row">
-                    <label for="speedSlider">Speed</label>
-                    <input type="range" id="speedSlider" min="25" max="150" step="5" value="100">
-                    <input type="number" id="speedInput" min="25" max="150" step="5" value="100" class="setting-number">
-                    <span id="speedUnit">%</span>
-                </div>
-                <div class="setting-row">
-                    <span class="setting-info" id="bpmDisplay">BPM: --</span>
-                </div>
-                <!-- Game Mode -->
-                <div class="setting-row">
-                    <label for="gameModeSelect">Mode</label>
-                    <select id="gameModeSelect">
-                        <option value="normal">Normal</option>
-                        <option value="simple">Simple (merged notes)</option>
-                        <option value="coplay">Co-Play (pick your lanes)</option>
-                        <option value="practice">Practice (wait for input)</option>
-                    </select>
-                </div>
-                <div class="setting-row">
-                    <label for="timingFeedbackToggle">Hit Feedback</label>
-                    <label class="toggle-small">
-                        <input type="checkbox" id="timingFeedbackToggle" checked>
-                        <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
-                    </label>
-                </div>
-                <div class="setting-row">
-                    <label for="particleStyleSelect">Particle Style</label>
-                    <select id="particleStyleSelect">
-                        <option value="sparkle">Sparkle (beams)</option>
-                        <option value="splash">Splash (droplets)</option>
-                    </select>
-                </div>
-                <div class="setting-row">
-                    <label for="sparkleSlider">Particle FX</label>
-                    <input type="range" id="sparkleSlider" min="0" max="100" step="5" value="100">
-                    <span id="sparkleValue">100%</span>
-                </div>
-                <div class="setting-row">
-                    <label for="sparkleHeightSlider">Sparkle Height</label>
-                    <input type="range" id="sparkleHeightSlider" min="10" max="200" step="5" value="100">
-                    <span id="sparkleHeightValue">100%</span>
-                </div>
-                <div class="setting-row">
-                    <label for="laneStyleSelect">Lane Lines</label>
-                    <select id="laneStyleSelect">
-                        <option value="full">Full (borders + fill)</option>
-                        <option value="fill">Fill only (no borders)</option>
-                        <option value="blackonly">Black keys only</option>
-                        <option value="dim">Dim (low opacity)</option>
-                        <option value="synthesia">Synthesia grid</option>
-                        <option value="none">None</option>
-                    </select>
-                </div>
-                <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
-                    <span class="setting-info">Use the selectors above each key to pick your manual lanes. Click a selected lane again to remap its keyboard key.</span>
-                </div>
-                <div class="setting-row coplay-hint coplay-volume-row" id="coplayVolumeRow" style="display:none">
-                    <label for="coplayAutoVolume">Others Volume</label>
-                    <input type="range" id="coplayAutoVolume" min="0" max="100" value="30" />
-                    <span id="coplayAutoVolumeVal">30%</span>
-                </div>
-            </div>
-            </div>
+        <!-- Status bar (below header, minimal) -->
+        <div class="header-status-bar" id="headerStatusBar">
+            <p id="statusMessage"></p>
+            <div id="progressBar" class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
             </div>
         </div>
 
@@ -268,7 +336,7 @@
         </div>
     </div>
 
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=28"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

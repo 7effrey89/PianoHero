@@ -49,7 +49,7 @@ class PianoHero {
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
-        this.hitZoneY = this.canvas.height - 80;
+        this.hitZoneY = this.canvas.height;
         this.hitTolerance = 50; // pixels tolerance for hitting notes
         this.showTimingFeedback = true; // show Perfect/Great/Good/OK/Miss text
 
@@ -82,7 +82,22 @@ class PianoHero {
         this.particleStyle = 'sparkle'; // 'sparkle' or 'splash'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
         this.sparkleHeight = 1.0; // 0.1 to 2.0
-        this.laneStyle = 'full'; // full, fill, blackonly, dim, none
+        this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
+        this.noteStyle = 'beam'; // beam, classic
+
+        // Neon glow effect for falling notes
+        this.neonGlowEnabled = false;
+        this._glowCanvas = null;
+        this._glowCtx = null;
+
+        // Shared wave overlay canvas for classic bars
+        this._waveCanvas = null;
+        this._waveCtx = null;
+
+        // Force field hit bar
+        this.forceFieldEnabled = false;
+        this._forceFieldParticles = [];
+        this._forceFieldTime = 0;
 
         // Co-Play mode: lanes the player chose to play manually
         this.coPlayManualNotes = new Set();       // note names the player toggles as "manual"
@@ -171,6 +186,11 @@ class PianoHero {
         this.sustainEnabled = true;
         this.sustainedNotes = new Set(); // notes held by sustain pedal
 
+        // Audio enhancement settings
+        this.eqCompressionEnabled = false;
+        this.sympatheticResonanceEnabled = false;
+        this._sympatheticPlaying = false; // prevent recursive triggering
+
         // Mouse/touch glissando state
         this._mouseDown = false;
         this._activeTouches = new Map(); // touchId -> last key element
@@ -194,17 +214,75 @@ class PianoHero {
         this.initGameSettings();
         this._loadSettings();
 
-        // MIDI list expand/collapse
-        document.getElementById('midiListHeader').addEventListener('click', () => {
-            document.getElementById('midiListContainer').classList.toggle('expanded');
+        // Song browser dropdown toggle
+        document.getElementById('songBrowserBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = document.getElementById('songBrowserDropdown');
+            dropdown.classList.toggle('hidden');
+            // Close mode dropdown if open
+            document.getElementById('modeDropdown').classList.add('hidden');
         });
 
-        // Close MIDI list when clicking outside
+        // Close song browser when clicking outside
         document.addEventListener('click', (e) => {
-            const container = document.getElementById('midiListContainer');
-            if (container.classList.contains('expanded') && !container.contains(e.target)) {
-                container.classList.remove('expanded');
+            const dropdown = document.getElementById('songBrowserDropdown');
+            const btn = document.getElementById('songBrowserBtn');
+            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+                dropdown.classList.add('hidden');
             }
+            // Close mode dropdown when clicking outside
+            const modeDropdown = document.getElementById('modeDropdown');
+            const modeBtn = document.getElementById('modeDropdownBtn');
+            if (!modeDropdown.classList.contains('hidden') && !modeDropdown.contains(e.target) && !modeBtn.contains(e.target)) {
+                modeDropdown.classList.add('hidden');
+            }
+        });
+
+        // Mode dropdown toggle
+        document.getElementById('modeDropdownBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = document.getElementById('modeDropdown');
+            dropdown.classList.toggle('hidden');
+            // Close song browser if open
+            document.getElementById('songBrowserDropdown').classList.add('hidden');
+        });
+
+        // Mode dropdown option clicks
+        document.querySelectorAll('.mode-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                const isAuto = opt.dataset.auto === 'true';
+                const mode = opt.dataset.mode;
+                // Update active state
+                document.querySelectorAll('.mode-option').forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                // Update toggle switch
+                this.modeToggleSwitch.checked = isAuto;
+                // Update game mode
+                this.gameMode = mode;
+                const gameModeSelect = document.getElementById('gameModeSelect');
+                if (gameModeSelect) gameModeSelect.value = mode;
+                // Update label
+                this._updateModeLabel();
+                // Apply mode change
+                this.isAutoPlay = isAuto;
+                this._saveSettings();
+                // Show/hide co-play controls
+                const coplayHint = document.getElementById('coplayHint');
+                if (coplayHint) coplayHint.style.display = mode === 'coplay' ? '' : 'none';
+                const coplayVolRow = document.getElementById('coplayVolumeRow');
+                if (coplayVolRow) coplayVolRow.style.display = mode === 'coplay' ? '' : 'none';
+                this._updateCoPlayKeyVisuals();
+                this._buildLaneSelectors();
+                if (this.originalNotes.length > 0) this.applyGameMode();
+                // Close dropdown
+                document.getElementById('modeDropdown').classList.add('hidden');
+                // If playing, apply the auto/manual switch
+                if (this.isPlaying && !this.isPaused) {
+                    if (isAuto) this.startAutoPlay();
+                    else this._switchToManual();
+                }
+                this._updateControlButtons();
+            });
         });
         
         // Event listeners
@@ -486,7 +564,7 @@ class PianoHero {
         container.style.width = fullWidth + 'px';
         this.canvas.width = fullWidth;
         this.canvas.height = container.clientHeight;
-        this.hitZoneY = this.canvas.height - 20;
+        this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
         this._laneCacheDirty = true;
     }
@@ -514,10 +592,11 @@ class PianoHero {
     }
 
     initTabs() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
+        const dropdown = document.getElementById('songBrowserDropdown');
+        dropdown.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                dropdown.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                dropdown.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
                 btn.classList.add('active');
                 document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
             });
@@ -601,9 +680,11 @@ class PianoHero {
     async loadMidiFile(filename) {
         if (!filename) return;
 
-        // Collapse the list and update header
-        document.getElementById('midiListContainer').classList.remove('expanded');
-        document.getElementById('midiListHeaderText').textContent = filename;
+        // Close the song browser dropdown and update header song name
+        document.getElementById('songBrowserDropdown').classList.add('hidden');
+        const songNameEl = document.getElementById('midiListHeaderText');
+        songNameEl.textContent = filename;
+        songNameEl.title = filename;
 
         this.statusMessage.textContent = 'Loading MIDI file...';
         this.progressBar.classList.add('visible');
@@ -687,6 +768,11 @@ class PianoHero {
 
     async loadBitMidi(slug, name) {
         this.stopPreview();
+        // Close browser and update song name
+        document.getElementById('songBrowserDropdown').classList.add('hidden');
+        const songNameEl = document.getElementById('midiListHeaderText');
+        songNameEl.textContent = name;
+        songNameEl.title = name;
         this.statusMessage.textContent = `Loading "${name}" from BitMidi…`;
         this.progressBar.classList.add('visible');
         this.updateProgress(20);
@@ -877,6 +963,21 @@ class PianoHero {
 
         // Sustain toggle
         const sustainToggle = document.getElementById('sustainToggle');
+        const sympatheticToggle = document.getElementById('sympatheticResonanceToggle');
+        const _updateSympatheticState = () => {
+            const label = sympatheticToggle?.closest('.mode-toggle');
+            if (label) {
+                if (sustainToggle.checked) {
+                    label.classList.remove('disabled');
+                } else {
+                    label.classList.add('disabled');
+                    if (sympatheticToggle.checked) {
+                        sympatheticToggle.checked = false;
+                        this.sympatheticResonanceEnabled = false;
+                    }
+                }
+            }
+        };
         if (sustainToggle) {
             sustainToggle.addEventListener('change', () => {
                 this.sustainEnabled = sustainToggle.checked;
@@ -887,9 +988,30 @@ class PianoHero {
                     }
                     this.sustainedNotes.clear();
                 }
+                _updateSympatheticState();
                 this._saveSettings();
             });
         }
+
+        // EQ & Compression toggle
+        const eqToggle = document.getElementById('eqCompressionToggle');
+        if (eqToggle) {
+            eqToggle.addEventListener('change', () => {
+                this.eqCompressionEnabled = eqToggle.checked;
+                this._updateEqCompression();
+                this._saveSettings();
+            });
+        }
+
+        // Sympathetic Resonance toggle
+        if (sympatheticToggle) {
+            sympatheticToggle.addEventListener('change', () => {
+                this.sympatheticResonanceEnabled = sympatheticToggle.checked;
+                this._saveSettings();
+            });
+        }
+        // Set initial disabled state based on sustain
+        _updateSympatheticState();
 
         // Auto-load based on the current Sound Bank selection
         const currentBank = document.getElementById('soundBankSelect').value;
@@ -989,12 +1111,35 @@ class PianoHero {
             this._saveSettings();
         });
 
+        // ── Note Style ──
+        const noteStyleSelect = document.getElementById('noteStyleSelect');
+        noteStyleSelect.addEventListener('change', () => {
+            this.noteStyle = noteStyleSelect.value;
+            this._saveSettings();
+        });
+
+        // ── Neon Glow ──
+        const neonGlowToggle = document.getElementById('neonGlowToggle');
+        neonGlowToggle.addEventListener('change', () => {
+            this.neonGlowEnabled = neonGlowToggle.checked;
+            this._saveSettings();
+        });
+
+        // ── Force Field Bar ──
+        const forceFieldToggle = document.getElementById('forceFieldToggle');
+        forceFieldToggle.addEventListener('change', () => {
+            this.forceFieldEnabled = forceFieldToggle.checked;
+            this._laneCacheDirty = true;
+            this._saveSettings();
+        });
+
         // ── Game Mode ──
         const modeSelect = document.getElementById('gameModeSelect');
         const coplayHint = document.getElementById('coplayHint');
-        modeSelect.addEventListener('change', () => {
+        if (modeSelect) modeSelect.addEventListener('change', () => {
             this.gameMode = modeSelect.value;
             this._saveSettings();
+            this._updateModeLabel();
 
             // Show/hide co-play hint and volume control
             if (coplayHint) coplayHint.style.display = this.gameMode === 'coplay' ? '' : 'none';
@@ -1026,7 +1171,7 @@ class PianoHero {
             sustain: document.getElementById('sustainToggle').checked,
             keyScale: document.getElementById('keyScaleSlider').value,
             speed: document.getElementById('speedSlider').value,
-            gameMode: document.getElementById('gameModeSelect').value,
+            gameMode: this.gameMode || 'normal',
             timingFeedback: document.getElementById('timingFeedbackToggle').checked,
             particleStyle: document.getElementById('particleStyleSelect').value,
             sparkle: document.getElementById('sparkleSlider').value,
@@ -1034,6 +1179,11 @@ class PianoHero {
             laneStyle: document.getElementById('laneStyleSelect').value,
             coplayAutoVolume: document.getElementById('coplayAutoVolume').value,
             autoPlay: document.getElementById('modeToggleSwitch').checked,
+            eqCompression: document.getElementById('eqCompressionToggle').checked,
+            sympatheticResonance: document.getElementById('sympatheticResonanceToggle').checked,
+            noteStyle: document.getElementById('noteStyleSelect').value,
+            neonGlow: document.getElementById('neonGlowToggle').checked,
+            forceField: document.getElementById('forceFieldToggle').checked,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
     }
@@ -1101,9 +1251,12 @@ class PianoHero {
             s.dispatchEvent(new Event('input'));
         }
         if (settings.gameMode) {
+            this.gameMode = settings.gameMode;
             const sel = document.getElementById('gameModeSelect');
-            sel.value = settings.gameMode;
-            sel.dispatchEvent(new Event('change'));
+            if (sel) {
+                sel.value = settings.gameMode;
+                sel.dispatchEvent(new Event('change'));
+            }
         }
         if (settings.timingFeedback != null) {
             const cb = document.getElementById('timingFeedbackToggle');
@@ -1135,6 +1288,36 @@ class PianoHero {
             s.value = settings.coplayAutoVolume;
             s.dispatchEvent(new Event('input'));
         }
+        if (settings.eqCompression != null) {
+            const cb = document.getElementById('eqCompressionToggle');
+            cb.checked = settings.eqCompression;
+            this.eqCompressionEnabled = settings.eqCompression;
+            this._updateEqCompression();
+        }
+        if (settings.sympatheticResonance != null) {
+            const cb = document.getElementById('sympatheticResonanceToggle');
+            cb.checked = settings.sympatheticResonance;
+            this.sympatheticResonanceEnabled = settings.sympatheticResonance;
+        }
+        if (settings.noteStyle) {
+            const sel = document.getElementById('noteStyleSelect');
+            sel.value = settings.noteStyle;
+            this.noteStyle = settings.noteStyle;
+        }
+        if (settings.neonGlow != null) {
+            const cb = document.getElementById('neonGlowToggle');
+            cb.checked = settings.neonGlow;
+            this.neonGlowEnabled = settings.neonGlow;
+        }
+        if (settings.forceField != null) {
+            const cb = document.getElementById('forceFieldToggle');
+            cb.checked = settings.forceField;
+            this.forceFieldEnabled = settings.forceField;
+            this._laneCacheDirty = true;
+        }
+
+        // Update header mode label to reflect restored settings
+        this._updateModeLabel();
     }
 
     updateBPMDisplay() {
@@ -1985,18 +2168,40 @@ class PianoHero {
         this.modeToggleSwitch.disabled = false;
         this.modeToggleSwitch.checked = this.isAutoPlay;
 
-        // Play / Pause
+        // Play / Pause (compact header buttons)
         this.playPauseBtn.disabled = !hasNotes;
         if (playing) {
-            this.playPauseBtn.innerHTML = '&#10074;&#10074; Pause';
+            this.playPauseBtn.innerHTML = '&#10074;&#10074;';
             this.playPauseBtn.classList.add('playing');
         } else {
-            this.playPauseBtn.innerHTML = '&#9654; Play';
+            this.playPauseBtn.innerHTML = '&#9654;';
             this.playPauseBtn.classList.remove('playing');
         }
 
         // Stop
         this.stopBtn.disabled = !this.isPlaying && !this.isPaused;
+
+        // Update mode label
+        this._updateModeLabel();
+    }
+
+    /** Update mode dropdown button label */
+    _updateModeLabel() {
+        const modeLabel = document.getElementById('modeLabel');
+        const modeSubLabel = document.getElementById('modeSubLabel');
+        if (!modeLabel || !modeSubLabel) return;
+
+        modeLabel.textContent = this.isAutoPlay ? 'AutoPlay' : 'Manual';
+
+        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice' };
+        modeSubLabel.textContent = modeNames[this.gameMode] || 'Normal';
+
+        // Update active state in dropdown
+        document.querySelectorAll('.mode-option').forEach(opt => {
+            const isAuto = opt.dataset.auto === 'true';
+            const mode = opt.dataset.mode;
+            opt.classList.toggle('active', isAuto === this.isAutoPlay && mode === this.gameMode);
+        });
     }
 
     _scheduleAutoPlayNotes() {
@@ -2187,7 +2392,7 @@ class PianoHero {
         }
     }
     
-    playNoteSound(note, duration, volumeOverride) {
+    playNoteSound(note, duration, volumeOverride, velocity) {
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.setupAudioGraph();
@@ -2199,6 +2404,9 @@ class PianoHero {
         if (this.audioContext.state === 'suspended') {
             this.audioContext.resume();
         }
+
+        // Default velocity: 1.0 for manual, 0.8 for auto-play
+        if (velocity == null) velocity = (duration != null) ? 0.8 : 1.0;
 
         // Stop any existing source for the same note to prevent polyphony buildup
         const existing = this.activeNoteSources.get(note);
@@ -2229,7 +2437,7 @@ class PianoHero {
         const now = this.audioContext.currentTime;
 
         // Enforce polyphony limit — stop oldest notes if too many are active
-        const MAX_POLYPHONY = 16;
+        const MAX_POLYPHONY = 32;
         if (this.activeNoteSources.size >= MAX_POLYPHONY) {
             // Find and stop the oldest entries
             const iter = this.activeNoteSources.entries();
@@ -2250,11 +2458,18 @@ class PianoHero {
         source.buffer = buffer;
         if (playbackRate !== 1) source.playbackRate.value = playbackRate;
 
-        // Apply volume override (used for co-play auto-played notes)
-        const baseLevel = 3.0 * (volumeOverride != null ? volumeOverride : 1);
+        // Velocity-sensitive tone shaping: softer = darker, louder = brighter
+        const velFilter = this.audioContext.createBiquadFilter();
+        velFilter.type = 'lowpass';
+        velFilter.frequency.value = 800 + velocity * 12000;  // 800-12800 Hz
+        velFilter.Q.value = 0.7;
+
+        // Apply volume with velocity scaling
+        const baseLevel = 3.0 * (volumeOverride != null ? volumeOverride : 1) * (0.3 + 0.7 * velocity);
         const noteGain = this.audioContext.createGain();
         noteGain.gain.setValueAtTime(baseLevel, now);
-        source.connect(noteGain);
+        source.connect(velFilter);
+        velFilter.connect(noteGain);
         noteGain.connect(this.dryGain);
         if (p.reverb > 0.01) noteGain.connect(this.wetGain);
 
@@ -2286,11 +2501,12 @@ class PianoHero {
         }
 
         // Track for later stop-on-release
-        this.activeNoteSources.set(note, { source, noteGain });
+        this.activeNoteSources.set(note, { source, noteGain, velFilter });
 
         // Disconnect nodes after playback to prevent memory leaks
         source.onended = () => {
             source.disconnect();
+            velFilter.disconnect();
             noteGain.disconnect();
             // Clean up tracking if this source is still the active one
             const active = this.activeNoteSources.get(note);
@@ -2298,6 +2514,11 @@ class PianoHero {
                 this.activeNoteSources.delete(note);
             }
         };
+
+        // Sympathetic resonance — excite harmonically related strings
+        if (this.sustainEnabled && !this._sympatheticPlaying) {
+            this._triggerSympatheticResonance(note);
+        }
     }
 
     stopNoteSound(note) {
@@ -2318,59 +2539,118 @@ class PianoHero {
         this.masterGain = this.audioContext.createGain();
         this.masterGain.gain.value = this.soundParams.volume;
 
-        // Direct connection — no processing, clean sample playback
-        this.masterGain.connect(this.audioContext.destination);
+        // Compressor (always in chain; neutral when disabled)
+        this.compressorNode = this.audioContext.createDynamicsCompressor();
 
-        // Dry path: source → masterGain (clean, no EQ)
+        // EQ: low-shelf for warmth, high-shelf for presence
+        this.eqLowShelf = this.audioContext.createBiquadFilter();
+        this.eqLowShelf.type = 'lowshelf';
+        this.eqLowShelf.frequency.value = 250;
+
+        this.eqHighShelf = this.audioContext.createBiquadFilter();
+        this.eqHighShelf.type = 'highshelf';
+        this.eqHighShelf.frequency.value = 3000;
+
+        // Apply current EQ/compression state (neutral or active)
+        this._updateEqCompression();
+
+        // Chain: masterGain → compressor → eqLow → eqHigh → destination
+        this.masterGain.connect(this.compressorNode);
+        this.compressorNode.connect(this.eqLowShelf);
+        this.eqLowShelf.connect(this.eqHighShelf);
+        this.eqHighShelf.connect(this.audioContext.destination);
+
+        // Dry path: source → dryGain → masterGain
         this.dryGain = this.audioContext.createGain();
         this.dryGain.gain.value = 1 - this.soundParams.reverb * 0.5;
         this.dryGain.connect(this.masterGain);
 
-        // Reverb path — multi-tap delay network for richer reflections
+        // Wet/reverb path — convolution reverb for realistic room sound
         this.wetGain = this.audioContext.createGain();
         this.wetGain.gain.value = this.soundParams.reverb * 0.5;
 
-        // Early reflections
-        const preDelay = this.audioContext.createDelay(0.1);
-        preDelay.delayTime.value = 0.015;
+        this.convolverNode = this.audioContext.createConvolver();
+        this.convolverNode.buffer = this._generateImpulseResponse(2.5, 2.5);
 
-        const tap1 = this.audioContext.createDelay(0.5);
-        tap1.delayTime.value = 0.05;
-        const tap2 = this.audioContext.createDelay(0.5);
-        tap2.delayTime.value = 0.12;
-        const tap3 = this.audioContext.createDelay(0.5);
-        tap3.delayTime.value = 0.20;
-        const tap4 = this.audioContext.createDelay(0.5);
-        tap4.delayTime.value = 0.30;
-
-        // Feedback for tail — kept low to avoid long echo
-        const fb = this.audioContext.createGain();
-        fb.gain.value = 0.18;
-
-        // Soften the reverb tail (but keep it brighter than before)
-        const lpf = this.audioContext.createBiquadFilter();
-        lpf.type = 'lowpass';
-        lpf.frequency.value = 5000;
-
-        // Reverb mix bus
+        // Reverb output bus (slightly reduced to blend naturally)
         const reverbBus = this.audioContext.createGain();
         reverbBus.gain.value = 0.45;
         reverbBus.connect(this.masterGain);
 
-        this.wetGain.connect(preDelay);
-        preDelay.connect(tap1);
-        preDelay.connect(tap2);
-        tap1.connect(reverbBus);
-        tap2.connect(reverbBus);
-        tap2.connect(tap3);
-        tap3.connect(reverbBus);
-        tap3.connect(tap4);
-        tap4.connect(reverbBus);
-        tap4.connect(lpf);
-        lpf.connect(fb);
-        fb.connect(tap1);
+        this.wetGain.connect(this.convolverNode);
+        this.convolverNode.connect(reverbBus);
     }
-    
+
+    _generateImpulseResponse(duration, decay) {
+        const sampleRate = this.audioContext.sampleRate;
+        const length = Math.ceil(sampleRate * duration);
+        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+            const data = impulse.getChannelData(ch);
+            for (let i = 0; i < length; i++) {
+                const t = i / sampleRate;
+                // Exponential decay; boost early reflections for realism
+                const envelope = Math.exp(-t * decay);
+                const earlyBoost = t < 0.08 ? 1.5 : 1;
+                data[i] = (Math.random() * 2 - 1) * envelope * earlyBoost;
+            }
+        }
+        return impulse;
+    }
+
+    _updateEqCompression() {
+        if (!this.compressorNode) return;
+        const now = this.audioContext.currentTime;
+        if (this.eqCompressionEnabled) {
+            // Musical compression: tame peaks, glue the sound
+            this.compressorNode.threshold.setValueAtTime(-18, now);
+            this.compressorNode.ratio.setValueAtTime(3, now);
+            this.compressorNode.knee.setValueAtTime(10, now);
+            this.compressorNode.attack.setValueAtTime(0.003, now);
+            this.compressorNode.release.setValueAtTime(0.25, now);
+            // Warm low-shelf boost
+            this.eqLowShelf.gain.setValueAtTime(3, now);
+            // Subtle high-shelf presence
+            this.eqHighShelf.gain.setValueAtTime(1.5, now);
+        } else {
+            // Neutral / pass-through
+            this.compressorNode.threshold.setValueAtTime(0, now);
+            this.compressorNode.ratio.setValueAtTime(1, now);
+            this.compressorNode.knee.setValueAtTime(0, now);
+            this.compressorNode.attack.setValueAtTime(0.003, now);
+            this.compressorNode.release.setValueAtTime(0.25, now);
+            this.eqLowShelf.gain.setValueAtTime(0, now);
+            this.eqHighShelf.gain.setValueAtTime(0, now);
+        }
+    }
+
+    _triggerSympatheticResonance(note) {
+        if (!this.sympatheticResonanceEnabled || this._sympatheticPlaying) return;
+        if (!this.useSalamander || !this.salamanderLoaded) return;
+
+        this._sympatheticPlaying = true;
+        const baseMidi = this._gameNoteToMidi(note);
+        // Harmonically related intervals: octave, fifth, major third
+        const intervals = [12, -12, 7, -7, 4, -4];
+        for (const offset of intervals) {
+            const sympatheticMidi = baseMidi + offset;
+            if (sympatheticMidi < 21 || sympatheticMidi > 108) continue;
+            const sympatheticNote = this._midiToGameNote(sympatheticMidi);
+            if (sympatheticNote) {
+                // Very quiet ghost note (3% volume, short)
+                this.playNoteSound(sympatheticNote, 1.5, 0.03, 0.3);
+            }
+        }
+        this._sympatheticPlaying = false;
+    }
+
+    _midiToGameNote(midi) {
+        const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const octave = Math.floor(midi / 12) - 1;
+        const note = names[midi % 12];
+        return note + octave;
+    }
+
     releaseKey(key) {
         this.heldKeys.delete(key);
         const keyElement = document.querySelector(`.key[data-key="${key}"]`);
@@ -2745,16 +3025,60 @@ class PianoHero {
         // Draw falling notes (including hit notes — they stay visible until scrolled off)
         const canvasH = h + 50;
         const speed = this.speedMultiplier;
-        for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
-            const note = this.fallingNotes[i];
-            // note.y = bottom edge; top edge = note.y - noteHeight
-            const dur = note.duration || 0.15;
-            const noteH = Math.max(12, dur * this.noteSpeed * speed);
-            const topEdge = note.y - noteH;
-            // Visible if top edge is above bottom of canvas AND bottom edge is below top
-            if (topEdge < canvasH && note.y > -50) {
-                this.drawNote(note);
+
+        // Pre-render shared wave overlay once per frame for classic bars
+        if (this.noteStyle === 'classic') {
+            this._renderWaveOverlay();
+        }
+
+        // If neon glow is enabled, draw notes to a glow canvas first for bloom
+        if (this.neonGlowEnabled) {
+            this._ensureGlowCanvas(w, h);
+            const gctx = this._glowCtx;
+            gctx.clearRect(0, 0, w, h);
+            // Temporarily swap context to draw notes onto glow canvas
+            const origCtx = this.ctx;
+            this.ctx = gctx;
+            for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                const note = this.fallingNotes[i];
+                const dur = note.duration || 0.15;
+                const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                const topEdge = note.y - noteH;
+                if (topEdge < canvasH && note.y > -50) {
+                    this.drawNote(note);
+                }
             }
+            this.ctx = origCtx;
+
+            // Draw bloom layers (blurred copies composited with 'screen')
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            // Layer 1: wide soft bloom
+            ctx.filter = 'blur(12px) brightness(1.5)';
+            ctx.globalAlpha = 0.35;
+            ctx.drawImage(this._glowCanvas, 0, 0);
+            // Layer 2: medium bloom
+            ctx.filter = 'blur(5px) brightness(1.2)';
+            ctx.globalAlpha = 0.5;
+            ctx.drawImage(this._glowCanvas, 0, 0);
+            ctx.restore();
+            // Layer 3: sharp original on top
+            ctx.drawImage(this._glowCanvas, 0, 0);
+        } else {
+            for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                const note = this.fallingNotes[i];
+                const dur = note.duration || 0.15;
+                const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                const topEdge = note.y - noteH;
+                if (topEdge < canvasH && note.y > -50) {
+                    this.drawNote(note);
+                }
+            }
+        }
+
+        // Draw animated force field hit bar (drawn each frame, on top of notes)
+        if (this.forceFieldEnabled) {
+            this._drawForceField(ctx, w);
         }
 
         // Emit and draw sparkle particles for held notes
@@ -2844,35 +3168,39 @@ class PianoHero {
             }
         }
 
-        // Draw hit zone line
-        if (style === 'synthesia') {
-            // Synthesia: subtle warm line with note-letter labels below
-            lctx.fillStyle = 'rgba(180, 60, 60, 0.6)';
-            lctx.fillRect(0, this.hitZoneY - 1, w, 2);
-            // Note letter labels just below the hit line
-            lctx.font = `bold ${Math.max(9, Math.min(13, this.keyWidth * 0.55))}px sans-serif`;
+        // Draw hit zone bar (note-thickness, just above the keyboard)
+        // Skip static hit bar if force field is enabled (drawn dynamically each frame)
+        const hitBarHeight = 12;
+        if (this.forceFieldEnabled) {
+            // Force field is animated — skip static bar rendering
+        } else if (style === 'synthesia') {
+            // Synthesia: golden hit bar with note-letter labels
+            lctx.fillStyle = 'rgba(218, 165, 32, 0.7)';
+            lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
+            // Note letter labels inside the hit bar
+            lctx.font = `bold ${Math.max(9, Math.min(11, this.keyWidth * 0.45))}px sans-serif`;
             lctx.textAlign = 'center';
-            lctx.textBaseline = 'top';
+            lctx.textBaseline = 'middle';
             for (const note of this.allNotes) {
                 const pos = this.keyPositions[note];
                 if (!pos || pos.isBlack) continue;
                 const letter = note.charAt(0);
                 const cx = pos.left + pos.width / 2;
-                lctx.fillStyle = 'rgba(220, 180, 180, 0.7)';
-                lctx.fillText(letter, cx, this.hitZoneY + 3);
+                lctx.fillStyle = 'rgba(255, 223, 100, 0.8)';
+                lctx.fillText(letter, cx, this.hitZoneY - hitBarHeight / 2);
             }
         } else {
             lctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-            lctx.fillRect(0, this.hitZoneY - 2, w, 4);
+            lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
         }
 
         // Draw hit zone indicators
-        if (style !== 'synthesia') {
+        if (style !== 'synthesia' && !this.forceFieldEnabled) {
             for (const [note, pos] of Object.entries(this.keyPositions)) {
                 const iw = pos.width * 0.9;
-                const ih = 8;
+                const ih = hitBarHeight;
                 const ix = pos.left + (pos.width - iw) / 2;
-                const iy = this.hitZoneY - ih / 2;
+                const iy = this.hitZoneY - ih;
                 lctx.fillStyle = pos.isBlack ? 
                     'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
                 lctx.fillRect(ix, iy, iw, ih);
@@ -2886,6 +3214,7 @@ class PianoHero {
     }
     
     drawNote(note) {
+        if (this.noteStyle === 'classic') return this.drawNoteClassic(note);
         const pos = this.keyPositions[note.note];
         if (!pos) return;
         const ctx = this.ctx;
@@ -3030,6 +3359,236 @@ class PianoHero {
         }
     }
 
+    /** Render the shared wave animation overlay (called once per frame when classic bars are active) */
+    _renderWaveOverlay() {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        if (!this._waveCanvas || this._waveCanvas.width !== w || this._waveCanvas.height !== h) {
+            this._waveCanvas = document.createElement('canvas');
+            this._waveCanvas.width = w;
+            this._waveCanvas.height = h;
+            this._waveCtx = this._waveCanvas.getContext('2d');
+        }
+        const wctx = this._waveCtx;
+        wctx.clearRect(0, 0, w, h);
+
+        const t = Date.now() / 1000;
+
+        // Smooth flowing ribbon waves (like the reference image)
+        const ribbons = [
+            { yBase: 0.20, thickness: 0.18, freq: 0.6, amp: 0.12, speed: 0.4, hue: 170, sat: 50, alpha: 0.25 },
+            { yBase: 0.40, thickness: 0.22, freq: 0.45, amp: 0.15, speed: -0.3, hue: 190, sat: 45, alpha: 0.20 },
+            { yBase: 0.60, thickness: 0.20, freq: 0.7, amp: 0.10, speed: 0.55, hue: 210, sat: 55, alpha: 0.22 },
+            { yBase: 0.80, thickness: 0.16, freq: 0.5, amp: 0.13, speed: -0.45, hue: 160, sat: 40, alpha: 0.18 },
+            { yBase: 0.35, thickness: 0.25, freq: 0.35, amp: 0.18, speed: 0.25, hue: 200, sat: 50, alpha: 0.15 },
+            { yBase: 0.70, thickness: 0.14, freq: 0.8, amp: 0.08, speed: 0.65, hue: 180, sat: 60, alpha: 0.20 },
+        ];
+
+        const segments = 8; // bezier control points across width
+
+        for (const ribbon of ribbons) {
+            // Compute top and bottom edges of ribbon using smooth sine curves
+            const topPoints = [];
+            const botPoints = [];
+            for (let i = 0; i <= segments; i++) {
+                const frac = i / segments;
+                const px = frac * w;
+                const phase = frac * Math.PI * 2 * ribbon.freq + t * ribbon.speed;
+                const wave = Math.sin(phase) * ribbon.amp * h;
+                const wave2 = Math.sin(phase * 1.3 + 1.7) * ribbon.amp * h * 0.3;
+                const centerY = ribbon.yBase * h + wave + wave2;
+                const halfThick = ribbon.thickness * h * 0.5 * (0.7 + 0.3 * Math.sin(frac * Math.PI));
+                topPoints.push({ x: px, y: centerY - halfThick });
+                botPoints.push({ x: px, y: centerY + halfThick });
+            }
+
+            // Draw ribbon as a filled path using smooth curves
+            wctx.beginPath();
+            wctx.moveTo(topPoints[0].x, topPoints[0].y);
+            // Top edge (left to right) — smooth quadratic through points
+            for (let i = 1; i < topPoints.length; i++) {
+                const prev = topPoints[i - 1];
+                const curr = topPoints[i];
+                const cpx = (prev.x + curr.x) / 2;
+                const cpy = (prev.y + curr.y) / 2;
+                wctx.quadraticCurveTo(prev.x + (curr.x - prev.x) * 0.5, prev.y, cpx, cpy);
+            }
+            wctx.lineTo(topPoints[topPoints.length - 1].x, topPoints[topPoints.length - 1].y);
+            // Bottom edge (right to left)
+            wctx.lineTo(botPoints[botPoints.length - 1].x, botPoints[botPoints.length - 1].y);
+            for (let i = botPoints.length - 2; i >= 0; i--) {
+                const prev = botPoints[i + 1];
+                const curr = botPoints[i];
+                const cpx = (prev.x + curr.x) / 2;
+                const cpy = (prev.y + curr.y) / 2;
+                wctx.quadraticCurveTo(prev.x + (curr.x - prev.x) * 0.5, prev.y, cpx, cpy);
+            }
+            wctx.closePath();
+
+            // Fill with a gradient along the ribbon height
+            const midY = ribbon.yBase * h;
+            const grad = wctx.createLinearGradient(0, midY - ribbon.thickness * h * 0.5, 0, midY + ribbon.thickness * h * 0.5);
+            grad.addColorStop(0, `hsla(${ribbon.hue}, ${ribbon.sat}%, 75%, ${ribbon.alpha * 0.3})`);
+            grad.addColorStop(0.3, `hsla(${ribbon.hue}, ${ribbon.sat}%, 85%, ${ribbon.alpha})`);
+            grad.addColorStop(0.5, `hsla(${ribbon.hue}, ${ribbon.sat + 10}%, 90%, ${ribbon.alpha * 1.2})`);
+            grad.addColorStop(0.7, `hsla(${ribbon.hue}, ${ribbon.sat}%, 85%, ${ribbon.alpha})`);
+            grad.addColorStop(1, `hsla(${ribbon.hue}, ${ribbon.sat}%, 75%, ${ribbon.alpha * 0.3})`);
+            wctx.fillStyle = grad;
+            wctx.fill();
+
+            // Soft inner glow along center line
+            const glowGrad = wctx.createLinearGradient(0, midY - ribbon.thickness * h * 0.15, 0, midY + ribbon.thickness * h * 0.15);
+            glowGrad.addColorStop(0, 'transparent');
+            glowGrad.addColorStop(0.5, `hsla(${ribbon.hue}, 30%, 95%, ${ribbon.alpha * 0.5})`);
+            glowGrad.addColorStop(1, 'transparent');
+            wctx.fillStyle = glowGrad;
+            wctx.fill();
+        }
+    }
+
+    drawNoteClassic(note) {
+        const pos = this.keyPositions[note.note];
+        if (!pos) return;
+        const ctx = this.ctx;
+
+        const noteWidth = pos.width * 0.85;
+        const dur = note.duration || 0.15;
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
+        const x = pos.left + (pos.width - noteWidth) / 2;
+        const y = note.y - noteHeight;
+        const r = Math.min(5, noteWidth / 2, noteHeight / 2);
+
+        const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
+        const hand = note.hand || 0;
+        const isBlackKey = pos.isBlack;
+
+        let hue, sat, lum, alpha;
+        if (note.missed) {
+            hue = 0; sat = 70; lum = 45; alpha = 0.85;
+        } else if (note.hit && isHeld) {
+            hue = hand === 0 ? (isBlackKey ? 160 : 130) : (isBlackKey ? 240 : 210);
+            sat = 80; lum = 50; alpha = 1.0;
+        } else if (note.hit) {
+            hue = hand === 0 ? (isBlackKey ? 160 : 130) : (isBlackKey ? 240 : 210);
+            sat = 50; lum = 35; alpha = 0.3;
+        } else {
+            hue = hand === 0 ? (isBlackKey ? 160 : 130) : (isBlackKey ? 240 : 210);
+            sat = 70; lum = 50; alpha = 0.9;
+        }
+
+        // Per-note deterministic seed for variety (stable across frames)
+        if (note._glassSeed == null) {
+            const raw = ((note.note?.charCodeAt(0) || 0) * 7 + (note.startTime || 0) * 13 + (note.note?.length || 0) * 31) >>> 0;
+            note._glassSeed = (raw % 1000) / 1000; // 0..1
+        }
+        const seed = note._glassSeed;
+        // Derive per-note properties from seed
+        const variant = (seed * 5) | 0;        // 0-4: five visual variants
+        const glossIntensity = 0.3 + seed * 0.3; // 0.3 - 0.6
+        const edgeSide = seed > 0.4;             // left or right highlight
+        const tintShift = ((seed - 0.5) * 16) | 0; // -8 to +8 hue shift
+        const adjHue = hue + tintShift;
+
+        ctx.save();
+
+        // Clip to rounded rect for all layers
+        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        ctx.clip();
+
+        // 1) Base fill — translucent glass body with per-note tint
+        const bodyGrad = ctx.createLinearGradient(x, y, x, y + noteHeight);
+        if (variant === 0 || variant === 1) {
+            // Standard vertical gradient
+            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${sat}%, ${lum + 8}%, ${alpha * 0.75})`);
+            bodyGrad.addColorStop(0.45, `hsla(${adjHue}, ${sat}%, ${lum}%, ${alpha * 0.6})`);
+            bodyGrad.addColorStop(0.55, `hsla(${adjHue}, ${sat}%, ${lum - 5}%, ${alpha * 0.65})`);
+            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 3}%, ${alpha * 0.7})`);
+        } else if (variant === 2) {
+            // Deeper, more saturated glass
+            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${Math.min(sat + 15, 100)}%, ${lum + 5}%, ${alpha * 0.8})`);
+            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${sat}%, ${lum - 8}%, ${alpha * 0.55})`);
+            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat + 5}%, ${lum}%, ${alpha * 0.7})`);
+        } else if (variant === 3) {
+            // Frosted — lighter, more washed out
+            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${Math.max(sat - 20, 20)}%, ${lum + 15}%, ${alpha * 0.7})`);
+            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${Math.max(sat - 10, 30)}%, ${lum + 5}%, ${alpha * 0.55})`);
+            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 10}%, ${alpha * 0.65})`);
+        } else {
+            // Inverted gradient (darker top, lighter bottom)
+            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${sat}%, ${lum - 5}%, ${alpha * 0.65})`);
+            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${sat}%, ${lum}%, ${alpha * 0.6})`);
+            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 10}%, ${alpha * 0.75})`);
+        }
+        ctx.fillStyle = bodyGrad;
+        ctx.fillRect(x, y, noteWidth, noteHeight);
+
+        // 2) Glossy reflection — varies position and intensity
+        const glossH = Math.min(noteHeight * (0.25 + seed * 0.2), 20);
+        const glossY = variant === 4 ? y + noteHeight - glossH : y; // bottom gloss for variant 4
+        const glossGrad = ctx.createLinearGradient(x, glossY, x, glossY + glossH);
+        glossGrad.addColorStop(0, `hsla(${adjHue}, 20%, 95%, ${alpha * glossIntensity})`);
+        glossGrad.addColorStop(0.5, `hsla(${adjHue}, 30%, 80%, ${alpha * glossIntensity * 0.5})`);
+        glossGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = glossGrad;
+        ctx.fillRect(x, glossY, noteWidth, glossH);
+
+        // 3) Water wave overlay — sample from shared wave canvas, tinted per-note
+        if (this._waveCanvas) {
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = alpha * (0.7 + seed * 0.3);
+            ctx.drawImage(this._waveCanvas, x, y, noteWidth, noteHeight, x, y, noteWidth, noteHeight);
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1;
+        }
+
+        // 5) Edge specular highlight — left or right side per note
+        const edgeW = Math.max(2, noteWidth * 0.12);
+        if (edgeSide) {
+            // Right edge
+            const edgeGrad = ctx.createLinearGradient(x + noteWidth - edgeW, 0, x + noteWidth, 0);
+            edgeGrad.addColorStop(0, 'transparent');
+            edgeGrad.addColorStop(1, `hsla(${adjHue}, 20%, 90%, ${alpha * 0.3})`);
+            ctx.fillStyle = edgeGrad;
+            ctx.fillRect(x + noteWidth - edgeW, y, edgeW, noteHeight);
+        } else {
+            // Left edge
+            const edgeGrad = ctx.createLinearGradient(x, 0, x + edgeW, 0);
+            edgeGrad.addColorStop(0, `hsla(${adjHue}, 20%, 90%, ${alpha * 0.35})`);
+            edgeGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = edgeGrad;
+            ctx.fillRect(x, y, edgeW, noteHeight);
+        }
+
+        // 6) Inner edge glow — dual-edge for some variants
+        if (variant === 2 || variant === 4) {
+            const dualW = Math.max(1.5, noteWidth * 0.08);
+            const otherSide = edgeSide ? x : x + noteWidth - dualW;
+            const dualGrad = edgeSide
+                ? ctx.createLinearGradient(x, 0, x + dualW, 0)
+                : ctx.createLinearGradient(x + noteWidth - dualW, 0, x + noteWidth, 0);
+            dualGrad.addColorStop(0, edgeSide ? `hsla(${adjHue}, 30%, 85%, ${alpha * 0.15})` : 'transparent');
+            dualGrad.addColorStop(1, edgeSide ? 'transparent' : `hsla(${adjHue}, 30%, 85%, ${alpha * 0.15})`);
+            ctx.fillStyle = dualGrad;
+            ctx.fillRect(otherSide, y, dualW, noteHeight);
+        }
+
+        // 7) Bottom inner glow
+        const botH = Math.min(noteHeight * 0.15, 8);
+        const botGrad = ctx.createLinearGradient(x, y + noteHeight - botH, x, y + noteHeight);
+        botGrad.addColorStop(0, 'transparent');
+        botGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 15}%, ${alpha * 0.2})`);
+        ctx.fillStyle = botGrad;
+        ctx.fillRect(x, y + noteHeight - botH, noteWidth, botH);
+
+        ctx.restore();
+
+        // 8) Glass border
+        ctx.strokeStyle = `hsla(${adjHue}, ${sat}%, ${Math.min(lum + 25, 80)}%, ${alpha * 0.5})`;
+        ctx.lineWidth = 1;
+        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
+        ctx.stroke();
+    }
+
     _roundRect(ctx, x, y, w, h, r) {
         ctx.beginPath();
         ctx.moveTo(x + r, y);
@@ -3042,6 +3601,142 @@ class PianoHero {
         ctx.lineTo(x, y + r);
         ctx.arcTo(x, y, x + r, y, r);
         ctx.closePath();
+    }
+
+    _ensureGlowCanvas(w, h) {
+        if (!this._glowCanvas || this._glowCanvas.width !== w || this._glowCanvas.height !== h) {
+            this._glowCanvas = document.createElement('canvas');
+            this._glowCanvas.width = w;
+            this._glowCanvas.height = h;
+            this._glowCtx = this._glowCanvas.getContext('2d');
+        }
+    }
+
+    _drawForceField(ctx, canvasWidth) {
+        const y = this.hitZoneY;
+        const t = performance.now() / 1000;
+        const barHeight = 24; // taller than the old 12px static bar
+        const barTop = y - barHeight;
+
+        // Spawn force field particles where notes are being held
+        for (const [noteName, fallingNote] of this.heldFallingNotes) {
+            const pos = this.keyPositions[noteName];
+            if (!pos) continue;
+            const hand = fallingNote.hand || 0;
+            const isBlack = pos.isBlack;
+            // Spawn 2-3 energy particles per frame per held note
+            const count = 2 + Math.floor(Math.random() * 2);
+            for (let i = 0; i < count; i++) {
+                const hue = hand === 0 ? (isBlack ? 160 : 130) : (isBlack ? 240 : 210);
+                this._forceFieldParticles.push({
+                    x: pos.x + (Math.random() - 0.5) * pos.width * 0.8,
+                    y: y - Math.random() * barHeight * 0.5,
+                    vx: (Math.random() - 0.5) * 3.0,
+                    vy: (Math.random() - 0.5) * 0.8,
+                    life: 1.0,
+                    decay: 0.015 + Math.random() * 0.02,
+                    size: 2 + Math.random() * 4,
+                    hue: hue + (Math.random() - 0.5) * 20,
+                });
+            }
+        }
+
+        // Always spawn ambient drift particles along the bar
+        if (Math.random() < 0.3) {
+            this._forceFieldParticles.push({
+                x: Math.random() * canvasWidth,
+                y: barTop + Math.random() * barHeight,
+                vx: (Math.random() - 0.5) * 1.5,
+                vy: (Math.random() - 0.5) * 0.3,
+                life: 1.0,
+                decay: 0.008 + Math.random() * 0.01,
+                size: 1 + Math.random() * 2,
+                hue: 200 + Math.random() * 60,
+            });
+        }
+
+        ctx.save();
+
+        // Draw base energy bar — animated flowing gradient
+        const waveOffset = t * 80;
+        const grad = ctx.createLinearGradient(0, barTop, 0, y);
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        grad.addColorStop(0.2, 'rgba(100, 180, 255, 0.05)');
+        grad.addColorStop(0.5, 'rgba(80, 160, 255, 0.12)');
+        grad.addColorStop(0.8, 'rgba(100, 200, 255, 0.08)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, barTop, canvasWidth, barHeight);
+
+        // Draw flowing energy waves (sine-based undulating lines)
+        for (let layer = 0; layer < 3; layer++) {
+            const freq = 0.015 + layer * 0.008;
+            const amp = 3 + layer * 2;
+            const speed = (1.5 + layer * 0.7) * (layer % 2 === 0 ? 1 : -1);
+            const alpha = 0.15 - layer * 0.03;
+            const hue = 200 + layer * 30;
+            ctx.beginPath();
+            ctx.strokeStyle = `hsla(${hue}, 80%, 65%, ${alpha})`;
+            ctx.lineWidth = 1.5 - layer * 0.3;
+            ctx.shadowColor = `hsla(${hue}, 80%, 65%, 0.5)`;
+            ctx.shadowBlur = 8;
+            for (let x = 0; x < canvasWidth; x += 2) {
+                const wave = Math.sin(x * freq + t * speed) * amp;
+                const py = y - barHeight / 2 + wave;
+                if (x === 0) ctx.moveTo(x, py);
+                else ctx.lineTo(x, py);
+            }
+            ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+
+        // Draw the bright center line (the actual hit threshold)
+        const centerAlpha = 0.3 + 0.15 * Math.sin(t * 3);
+        const centerGrad = ctx.createLinearGradient(0, y - 2, 0, y + 2);
+        centerGrad.addColorStop(0, `rgba(150, 220, 255, 0)`);
+        centerGrad.addColorStop(0.5, `rgba(150, 220, 255, ${centerAlpha})`);
+        centerGrad.addColorStop(1, `rgba(150, 220, 255, 0)`);
+        ctx.fillStyle = centerGrad;
+        ctx.fillRect(0, y - 3, canvasWidth, 6);
+
+        // Update and draw force field particles
+        for (let i = this._forceFieldParticles.length - 1; i >= 0; i--) {
+            const p = this._forceFieldParticles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= p.decay;
+            if (p.life <= 0 || p.x < -20 || p.x > canvasWidth + 20) {
+                this._forceFieldParticles.splice(i, 1);
+                continue;
+            }
+
+            const alpha = p.life * p.life;
+            const sz = p.size * p.life;
+
+            // Glow orb
+            ctx.globalAlpha = alpha * 0.6;
+            ctx.shadowColor = `hsla(${p.hue}, 80%, 60%, 0.8)`;
+            ctx.shadowBlur = sz * 3;
+            ctx.fillStyle = `hsla(${p.hue}, 80%, 70%, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Bright core
+            ctx.globalAlpha = alpha * 0.9;
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = `hsla(${p.hue}, 40%, 90%, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, sz * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Cap particle count for performance
+        if (this._forceFieldParticles.length > 300) {
+            this._forceFieldParticles.splice(0, this._forceFieldParticles.length - 300);
+        }
+
+        ctx.restore();
     }
 
     _emitHeldNoteParticles() {
