@@ -82,7 +82,7 @@ class PianoHero {
         this.particleStyle = 'sparkle'; // 'sparkle' or 'splash'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
         this.sparkleHeight = 1.0; // 0.1 to 2.0
-        this.laneStyle = 'full'; // full, fill, blackonly, dim, none
+        this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
         this.noteStyle = 'beam'; // beam, classic
 
         // Neon glow effect for falling notes
@@ -3174,8 +3174,8 @@ class PianoHero {
         if (this.forceFieldEnabled) {
             // Force field is animated — skip static bar rendering
         } else if (style === 'synthesia') {
-            // Synthesia: subtle warm bar with note-letter labels
-            lctx.fillStyle = 'rgba(180, 60, 60, 0.6)';
+            // Synthesia: golden hit bar with note-letter labels
+            lctx.fillStyle = 'rgba(218, 165, 32, 0.7)';
             lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
             // Note letter labels inside the hit bar
             lctx.font = `bold ${Math.max(9, Math.min(11, this.keyWidth * 0.45))}px sans-serif`;
@@ -3186,7 +3186,7 @@ class PianoHero {
                 if (!pos || pos.isBlack) continue;
                 const letter = note.charAt(0);
                 const cx = pos.left + pos.width / 2;
-                lctx.fillStyle = 'rgba(220, 180, 180, 0.7)';
+                lctx.fillStyle = 'rgba(255, 223, 100, 0.8)';
                 lctx.fillText(letter, cx, this.hitZoneY - hitBarHeight / 2);
             }
         } else {
