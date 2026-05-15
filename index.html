@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
     <link rel="icon" type="image/png" href="/images/logo.png">
-    <link rel="stylesheet" href="styles.css?v=5">
+    <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
     <div class="container">
@@ -179,11 +179,27 @@
                         <span id="reverbVal">0%</span>
                     </div>
                     <div class="sound-row">
-                        <label class="mode-toggle sustain-toggle">
+                        <label class="mode-toggle sustain-toggle" title="Adds a dynamics compressor to tame peaks, plus a warm low-shelf boost and subtle high-shelf presence EQ">
+                            <span class="toggle-label">EQ &amp; Compression</span>
+                            <input type="checkbox" id="eqCompressionToggle">
+                            <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        </label>
+                    </div>
+                    <div class="sound-toggle-group">
+                    <div class="sound-row">
+                        <label class="mode-toggle sustain-toggle" title="Hold notes to let them ring out naturally instead of cutting off on key release">
                             <span class="toggle-label">Sustain</span>
                             <input type="checkbox" id="sustainToggle" checked>
                             <span class="toggle-track"><span class="toggle-knob"></span></span>
                         </label>
+                    </div>
+                    <div class="sound-row">
+                        <label class="mode-toggle sustain-toggle" title="When a note is played, quietly excites harmonically related strings (octave, fifth, third) for a richer, more realistic piano sound. Requires Sustain to be enabled.">
+                            <span class="toggle-label">Sympathetic Resonance</span>
+                            <input type="checkbox" id="sympatheticResonanceToggle">
+                            <span class="toggle-track"><span class="toggle-knob"></span></span>
+                        </label>
+                    </div>
                     </div>
                     </div>
                 </div>

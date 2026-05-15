@@ -171,6 +171,11 @@ class PianoHero {
         this.sustainEnabled = true;
         this.sustainedNotes = new Set(); // notes held by sustain pedal
 
+        // Audio enhancement settings
+        this.eqCompressionEnabled = false;
+        this.sympatheticResonanceEnabled = false;
+        this._sympatheticPlaying = false; // prevent recursive triggering
+
         // Mouse/touch glissando state
         this._mouseDown = false;
         this._activeTouches = new Map(); // touchId -> last key element
@@ -943,6 +948,21 @@ class PianoHero {
 
         // Sustain toggle
         const sustainToggle = document.getElementById('sustainToggle');
+        const sympatheticToggle = document.getElementById('sympatheticResonanceToggle');
+        const _updateSympatheticState = () => {
+            const label = sympatheticToggle?.closest('.mode-toggle');
+            if (label) {
+                if (sustainToggle.checked) {
+                    label.classList.remove('disabled');
+                } else {
+                    label.classList.add('disabled');
+                    if (sympatheticToggle.checked) {
+                        sympatheticToggle.checked = false;
+                        this.sympatheticResonanceEnabled = false;
+                    }
+                }
+            }
+        };
         if (sustainToggle) {
             sustainToggle.addEventListener('change', () => {
                 this.sustainEnabled = sustainToggle.checked;
@@ -953,9 +973,30 @@ class PianoHero {
                     }
                     this.sustainedNotes.clear();
                 }
+                _updateSympatheticState();
                 this._saveSettings();
             });
         }
+
+        // EQ & Compression toggle
+        const eqToggle = document.getElementById('eqCompressionToggle');
+        if (eqToggle) {
+            eqToggle.addEventListener('change', () => {
+                this.eqCompressionEnabled = eqToggle.checked;
+                this._updateEqCompression();
+                this._saveSettings();
+            });
+        }
+
+        // Sympathetic Resonance toggle
+        if (sympatheticToggle) {
+            sympatheticToggle.addEventListener('change', () => {
+                this.sympatheticResonanceEnabled = sympatheticToggle.checked;
+                this._saveSettings();
+            });
+        }
+        // Set initial disabled state based on sustain
+        _updateSympatheticState();
 
         // Auto-load based on the current Sound Bank selection
         const currentBank = document.getElementById('soundBankSelect').value;
@@ -1101,6 +1142,8 @@ class PianoHero {
             laneStyle: document.getElementById('laneStyleSelect').value,
             coplayAutoVolume: document.getElementById('coplayAutoVolume').value,
             autoPlay: document.getElementById('modeToggleSwitch').checked,
+            eqCompression: document.getElementById('eqCompressionToggle').checked,
+            sympatheticResonance: document.getElementById('sympatheticResonanceToggle').checked,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
     }
@@ -1204,6 +1247,17 @@ class PianoHero {
             const s = document.getElementById('coplayAutoVolume');
             s.value = settings.coplayAutoVolume;
             s.dispatchEvent(new Event('input'));
+        }
+        if (settings.eqCompression != null) {
+            const cb = document.getElementById('eqCompressionToggle');
+            cb.checked = settings.eqCompression;
+            this.eqCompressionEnabled = settings.eqCompression;
+            this._updateEqCompression();
+        }
+        if (settings.sympatheticResonance != null) {
+            const cb = document.getElementById('sympatheticResonanceToggle');
+            cb.checked = settings.sympatheticResonance;
+            this.sympatheticResonanceEnabled = settings.sympatheticResonance;
         }
 
         // Update header mode label to reflect restored settings
@@ -2282,7 +2336,7 @@ class PianoHero {
         }
     }
     
-    playNoteSound(note, duration, volumeOverride) {
+    playNoteSound(note, duration, volumeOverride, velocity) {
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.setupAudioGraph();
@@ -2294,6 +2348,9 @@ class PianoHero {
         if (this.audioContext.state === 'suspended') {
             this.audioContext.resume();
         }
+
+        // Default velocity: 1.0 for manual, 0.8 for auto-play
+        if (velocity == null) velocity = (duration != null) ? 0.8 : 1.0;
 
         // Stop any existing source for the same note to prevent polyphony buildup
         const existing = this.activeNoteSources.get(note);
@@ -2324,7 +2381,7 @@ class PianoHero {
         const now = this.audioContext.currentTime;
 
         // Enforce polyphony limit — stop oldest notes if too many are active
-        const MAX_POLYPHONY = 16;
+        const MAX_POLYPHONY = 32;
         if (this.activeNoteSources.size >= MAX_POLYPHONY) {
             // Find and stop the oldest entries
             const iter = this.activeNoteSources.entries();
@@ -2345,11 +2402,18 @@ class PianoHero {
         source.buffer = buffer;
         if (playbackRate !== 1) source.playbackRate.value = playbackRate;
 
-        // Apply volume override (used for co-play auto-played notes)
-        const baseLevel = 3.0 * (volumeOverride != null ? volumeOverride : 1);
+        // Velocity-sensitive tone shaping: softer = darker, louder = brighter
+        const velFilter = this.audioContext.createBiquadFilter();
+        velFilter.type = 'lowpass';
+        velFilter.frequency.value = 800 + velocity * 12000;  // 800-12800 Hz
+        velFilter.Q.value = 0.7;
+
+        // Apply volume with velocity scaling
+        const baseLevel = 3.0 * (volumeOverride != null ? volumeOverride : 1) * (0.3 + 0.7 * velocity);
         const noteGain = this.audioContext.createGain();
         noteGain.gain.setValueAtTime(baseLevel, now);
-        source.connect(noteGain);
+        source.connect(velFilter);
+        velFilter.connect(noteGain);
         noteGain.connect(this.dryGain);
         if (p.reverb > 0.01) noteGain.connect(this.wetGain);
 
@@ -2381,11 +2445,12 @@ class PianoHero {
         }
 
         // Track for later stop-on-release
-        this.activeNoteSources.set(note, { source, noteGain });
+        this.activeNoteSources.set(note, { source, noteGain, velFilter });
 
         // Disconnect nodes after playback to prevent memory leaks
         source.onended = () => {
             source.disconnect();
+            velFilter.disconnect();
             noteGain.disconnect();
             // Clean up tracking if this source is still the active one
             const active = this.activeNoteSources.get(note);
@@ -2393,6 +2458,11 @@ class PianoHero {
                 this.activeNoteSources.delete(note);
             }
         };
+
+        // Sympathetic resonance — excite harmonically related strings
+        if (this.sustainEnabled && !this._sympatheticPlaying) {
+            this._triggerSympatheticResonance(note);
+        }
     }
 
     stopNoteSound(note) {
@@ -2413,59 +2483,118 @@ class PianoHero {
         this.masterGain = this.audioContext.createGain();
         this.masterGain.gain.value = this.soundParams.volume;
 
-        // Direct connection — no processing, clean sample playback
-        this.masterGain.connect(this.audioContext.destination);
+        // Compressor (always in chain; neutral when disabled)
+        this.compressorNode = this.audioContext.createDynamicsCompressor();
 
-        // Dry path: source → masterGain (clean, no EQ)
+        // EQ: low-shelf for warmth, high-shelf for presence
+        this.eqLowShelf = this.audioContext.createBiquadFilter();
+        this.eqLowShelf.type = 'lowshelf';
+        this.eqLowShelf.frequency.value = 250;
+
+        this.eqHighShelf = this.audioContext.createBiquadFilter();
+        this.eqHighShelf.type = 'highshelf';
+        this.eqHighShelf.frequency.value = 3000;
+
+        // Apply current EQ/compression state (neutral or active)
+        this._updateEqCompression();
+
+        // Chain: masterGain → compressor → eqLow → eqHigh → destination
+        this.masterGain.connect(this.compressorNode);
+        this.compressorNode.connect(this.eqLowShelf);
+        this.eqLowShelf.connect(this.eqHighShelf);
+        this.eqHighShelf.connect(this.audioContext.destination);
+
+        // Dry path: source → dryGain → masterGain
         this.dryGain = this.audioContext.createGain();
         this.dryGain.gain.value = 1 - this.soundParams.reverb * 0.5;
         this.dryGain.connect(this.masterGain);
 
-        // Reverb path — multi-tap delay network for richer reflections
+        // Wet/reverb path — convolution reverb for realistic room sound
         this.wetGain = this.audioContext.createGain();
         this.wetGain.gain.value = this.soundParams.reverb * 0.5;
 
-        // Early reflections
-        const preDelay = this.audioContext.createDelay(0.1);
-        preDelay.delayTime.value = 0.015;
+        this.convolverNode = this.audioContext.createConvolver();
+        this.convolverNode.buffer = this._generateImpulseResponse(2.5, 2.5);
 
-        const tap1 = this.audioContext.createDelay(0.5);
-        tap1.delayTime.value = 0.05;
-        const tap2 = this.audioContext.createDelay(0.5);
-        tap2.delayTime.value = 0.12;
-        const tap3 = this.audioContext.createDelay(0.5);
-        tap3.delayTime.value = 0.20;
-        const tap4 = this.audioContext.createDelay(0.5);
-        tap4.delayTime.value = 0.30;
-
-        // Feedback for tail — kept low to avoid long echo
-        const fb = this.audioContext.createGain();
-        fb.gain.value = 0.18;
-
-        // Soften the reverb tail (but keep it brighter than before)
-        const lpf = this.audioContext.createBiquadFilter();
-        lpf.type = 'lowpass';
-        lpf.frequency.value = 5000;
-
-        // Reverb mix bus
+        // Reverb output bus (slightly reduced to blend naturally)
         const reverbBus = this.audioContext.createGain();
         reverbBus.gain.value = 0.45;
         reverbBus.connect(this.masterGain);
 
-        this.wetGain.connect(preDelay);
-        preDelay.connect(tap1);
-        preDelay.connect(tap2);
-        tap1.connect(reverbBus);
-        tap2.connect(reverbBus);
-        tap2.connect(tap3);
-        tap3.connect(reverbBus);
-        tap3.connect(tap4);
-        tap4.connect(reverbBus);
-        tap4.connect(lpf);
-        lpf.connect(fb);
-        fb.connect(tap1);
+        this.wetGain.connect(this.convolverNode);
+        this.convolverNode.connect(reverbBus);
     }
-    
+
+    _generateImpulseResponse(duration, decay) {
+        const sampleRate = this.audioContext.sampleRate;
+        const length = Math.ceil(sampleRate * duration);
+        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+            const data = impulse.getChannelData(ch);
+            for (let i = 0; i < length; i++) {
+                const t = i / sampleRate;
+                // Exponential decay; boost early reflections for realism
+                const envelope = Math.exp(-t * decay);
+                const earlyBoost = t < 0.08 ? 1.5 : 1;
+                data[i] = (Math.random() * 2 - 1) * envelope * earlyBoost;
+            }
+        }
+        return impulse;
+    }
+
+    _updateEqCompression() {
+        if (!this.compressorNode) return;
+        const now = this.audioContext.currentTime;
+        if (this.eqCompressionEnabled) {
+            // Musical compression: tame peaks, glue the sound
+            this.compressorNode.threshold.setValueAtTime(-18, now);
+            this.compressorNode.ratio.setValueAtTime(3, now);
+            this.compressorNode.knee.setValueAtTime(10, now);
+            this.compressorNode.attack.setValueAtTime(0.003, now);
+            this.compressorNode.release.setValueAtTime(0.25, now);
+            // Warm low-shelf boost
+            this.eqLowShelf.gain.setValueAtTime(3, now);
+            // Subtle high-shelf presence
+            this.eqHighShelf.gain.setValueAtTime(1.5, now);
+        } else {
+            // Neutral / pass-through
+            this.compressorNode.threshold.setValueAtTime(0, now);
+            this.compressorNode.ratio.setValueAtTime(1, now);
+            this.compressorNode.knee.setValueAtTime(0, now);
+            this.compressorNode.attack.setValueAtTime(0.003, now);
+            this.compressorNode.release.setValueAtTime(0.25, now);
+            this.eqLowShelf.gain.setValueAtTime(0, now);
+            this.eqHighShelf.gain.setValueAtTime(0, now);
+        }
+    }
+
+    _triggerSympatheticResonance(note) {
+        if (!this.sympatheticResonanceEnabled || this._sympatheticPlaying) return;
+        if (!this.useSalamander || !this.salamanderLoaded) return;
+
+        this._sympatheticPlaying = true;
+        const baseMidi = this._gameNoteToMidi(note);
+        // Harmonically related intervals: octave, fifth, major third
+        const intervals = [12, -12, 7, -7, 4, -4];
+        for (const offset of intervals) {
+            const sympatheticMidi = baseMidi + offset;
+            if (sympatheticMidi < 21 || sympatheticMidi > 108) continue;
+            const sympatheticNote = this._midiToGameNote(sympatheticMidi);
+            if (sympatheticNote) {
+                // Very quiet ghost note (3% volume, short)
+                this.playNoteSound(sympatheticNote, 1.5, 0.03, 0.3);
+            }
+        }
+        this._sympatheticPlaying = false;
+    }
+
+    _midiToGameNote(midi) {
+        const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const octave = Math.floor(midi / 12) - 1;
+        const note = names[midi % 12];
+        return note + octave;
+    }
+
     releaseKey(key) {
         this.heldKeys.delete(key);
         const keyElement = document.querySelector(`.key[data-key="${key}"]`);
