@@ -84,7 +84,7 @@ class PianoHero {
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
         this.sparkleHeight = 1.0; // 0.1 to 2.0
         this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
-        this.noteStyle = 'beam'; // beam, classic
+        this.noteStyle = 'classic'; // beam, classic
 
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
@@ -219,19 +219,22 @@ class PianoHero {
         this._loadSettings();
 
         // Song browser dropdown toggle
-        document.getElementById('songBrowserBtn').addEventListener('click', (e) => {
+        const toggleSongBrowser = (e) => {
             e.stopPropagation();
             const dropdown = document.getElementById('songBrowserDropdown');
             dropdown.classList.toggle('hidden');
             // Close mode dropdown if open
             document.getElementById('modeDropdown').classList.add('hidden');
-        });
+        };
+        document.getElementById('songBrowserBtn').addEventListener('click', toggleSongBrowser);
+        document.getElementById('midiListHeaderText').addEventListener('click', toggleSongBrowser);
 
         // Close song browser when clicking outside
         document.addEventListener('click', (e) => {
             const dropdown = document.getElementById('songBrowserDropdown');
             const btn = document.getElementById('songBrowserBtn');
-            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+            const songName = document.getElementById('midiListHeaderText');
+            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target) && !songName.contains(e.target)) {
                 dropdown.classList.add('hidden');
             }
             // Close mode dropdown when clicking outside
@@ -3228,7 +3231,8 @@ class PianoHero {
         
         const noteWidth = pos.width * 0.9;
         const dur = note.duration || 0.15;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
+        const noteGap = 4; // gap between consecutive notes
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
         
@@ -3460,7 +3464,8 @@ class PianoHero {
 
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
+        const noteGap = 4; // gap between consecutive notes
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
         const r = Math.min(5, noteWidth / 2, noteHeight / 2);
