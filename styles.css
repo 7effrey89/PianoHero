@@ -1526,7 +1526,7 @@ button {
     color: white;
 }
 
-.setting-row span {
+.setting-row span:not(.toggle-track-small):not(.toggle-knob-small) {
     font-size: 13px;
     opacity: 0.8;
     min-width: 20px;
