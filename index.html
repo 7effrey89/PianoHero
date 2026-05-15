@@ -271,6 +271,27 @@
                             <option value="none">None</option>
                         </select>
                     </div>
+                    <div class="setting-row">
+                        <label for="noteStyleSelect">Note Style</label>
+                        <select id="noteStyleSelect">
+                            <option value="beam">Light Beam</option>
+                            <option value="classic">Classic Bars</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" title="Adds a multi-layer neon bloom glow around falling notes, inspired by glowing tube effects">
+                        <label for="neonGlowToggle">Neon Glow</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="neonGlowToggle">
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
+                    </div>
+                    <div class="setting-row" title="Replaces the static hit bar with an animated flowing energy force field">
+                        <label for="forceFieldToggle">Force Field Bar</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="forceFieldToggle">
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
+                    </div>
                 </div>
                 </div>
                 </div>
@@ -315,7 +336,7 @@
         </div>
     </div>
 
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=27"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">
