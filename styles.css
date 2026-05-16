@@ -932,8 +932,9 @@ button {
     background: linear-gradient(90deg, #2a1f5e, #3d2d7a);
     border-radius: 0;
     width: 0%;
-    transition: width 0.1s linear;
     pointer-events: none;
+    will-change: width;
+    contain: layout style;
 }
 
 .song-timeline-thumb {
@@ -948,6 +949,8 @@ button {
     box-shadow: 0 0 4px rgba(0,0,0,0.5);
     pointer-events: none;
     z-index: 2;
+    will-change: left;
+    contain: layout style;
 }
 
 .song-time-label {
@@ -959,6 +962,7 @@ button {
     color: #888;
     pointer-events: none;
     z-index: 3;
+    contain: layout style;
 }
 
 #gameArea {
@@ -989,10 +993,25 @@ button {
     /* width set dynamically by JS */
 }
 
+#glCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+}
+
 #notesCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
     display: block;
     width: 100%;
     height: 100%;
+    z-index: 2;
+    pointer-events: none;
 }
 
 #piano {
@@ -1017,10 +1036,10 @@ button {
     position: relative;
     border: 2px solid #000;
     cursor: pointer;
-    transition: background 0.05s ease, transform 0.05s ease;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: none;
+    contain: layout style;
 }
 
 .key.white {
@@ -1157,6 +1176,7 @@ button {
 
 .hit-success {
     animation: hitSuccess 0.3s ease;
+    contain: layout style;
 }
 
 @keyframes hitMiss {
@@ -1183,6 +1203,7 @@ button {
     animation: hitMiss 0.35s ease !important;
     background: linear-gradient(to bottom, #f44336 0%, #d32f2f 100%) !important;
     color: #fff !important;
+    contain: layout style;
 }
 
 /* Timing feedback text */
@@ -1198,6 +1219,7 @@ button {
     text-shadow: 0 0 6px currentColor, 0 2px 4px rgba(0,0,0,0.6);
     animation: timingFloat 0.8s ease-out forwards;
     white-space: nowrap;
+    contain: layout style;
 }
 
 .timing-perfect { color: #FFD700; }
