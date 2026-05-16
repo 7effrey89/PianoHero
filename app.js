@@ -79,12 +79,27 @@ class PianoHero {
         this.speedMultiplier = 1.0;
         this.songBPM = null; // detected from loaded notes
 
-        // Game mode: 'normal', 'simple', 'coplay', 'practice'
+        // Game mode: 'normal', 'simple', 'coplay', 'practice', 'micpractice'
         this.gameMode = 'normal';
         this.originalNotes = []; // unmodified notes from loader
         this.practiceWaiting = false; // true when waiting for player input
         this.practiceExpectedNotes = new Set(); // notes that must be pressed (chord support)
         this.practiceHitNotes = new Set(); // notes already pressed in current chord
+        this.practiceExpectedCounts = new Map(); // note name -> required hits for this chord
+        this.practiceHitCounts = new Map(); // note name -> completed hits for this chord
+        this.practiceChordTime = null;
+        this.pitchfinderModule = null;
+        this.pitchfinderPromise = null;
+        this.pitchDetector = null;
+        this.micStream = null;
+        this.micSourceNode = null;
+        this.micAnalyser = null;
+        this.micBuffer = null;
+        this.micDetectionFrame = null;
+        this.micStartPromise = null;
+        this.micDetectedNote = null;
+        this.micCandidateNote = null;
+        this.micCandidateSince = 0;
 
         // Hold-note tracking
         this.heldKeys = new Set();                // keyboard keys currently held down
@@ -303,11 +318,15 @@ class PianoHero {
                 if (this.originalNotes.length > 0) this.applyGameMode();
                 // Close dropdown
                 document.getElementById('modeDropdown').classList.add('hidden');
+                if (!isAuto && mode === 'micpractice' && !this.isPlaying && !this.isPaused) {
+                    this.statusMessage.textContent = 'Mic Practice armed: press Play and allow microphone access.';
+                }
                 // If playing, apply the auto/manual switch
                 if (this.isPlaying && !this.isPaused) {
                     if (isAuto) this.startAutoPlay();
                     else this._switchToManual();
                 }
+                this._syncMicPracticeState();
                 this._updateControlButtons();
             });
         });
@@ -351,6 +370,269 @@ class PianoHero {
     // Convert a semitone index back to a note name
     semitoneToNote(s) {
         return this.NOTE_NAMES[s % 12] + Math.floor(s / 12);
+    }
+
+    _isManualPracticeMode() {
+        return !this.isAutoPlay && (this.gameMode === 'practice' || this.gameMode === 'micpractice');
+    }
+
+    _isMicPracticeMode() {
+        return !this.isAutoPlay && this.gameMode === 'micpractice';
+    }
+
+    _getModeDisplayName() {
+        if (this.gameMode === 'micpractice') return 'Mic Practice';
+        if (this.gameMode === 'practice') return 'Practice mode';
+        if (this.gameMode === 'coplay') return 'Co-Play';
+        if (this.gameMode === 'simple') return 'Simple mode';
+        return this.isAutoPlay ? 'Auto Play' : 'Game';
+    }
+
+    _getMicPracticeErrorMessage(err) {
+        if (!err) return 'Mic Practice unavailable: Unable to access the microphone.';
+        if (err.name === 'NotAllowedError' || /permission denied/i.test(err.message || '')) {
+            return 'Mic blocked: allow microphone access for this site, then press Play again.';
+        }
+        if (err.name === 'NotFoundError') {
+            return 'Mic unavailable: no microphone was found on this device.';
+        }
+        return `Mic Practice unavailable: ${err.message || 'Unable to access the microphone.'}`;
+    }
+
+    _frequencyToNoteName(frequency) {
+        if (!Number.isFinite(frequency) || frequency <= 0) return null;
+        const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
+        return this._midiToNoteName(midi);
+    }
+
+    _incrementCount(map, key) {
+        map.set(key, (map.get(key) || 0) + 1);
+    }
+
+    _getHitCount(noteName) {
+        return this.practiceHitCounts.get(noteName) || 0;
+    }
+
+    _getExpectedCount(noteName) {
+        return this.practiceExpectedCounts.get(noteName) || 0;
+    }
+
+    _hasRemainingPracticeHits(noteName) {
+        return this._getHitCount(noteName) < this._getExpectedCount(noteName);
+    }
+
+    _clearPracticeState() {
+        this.practiceWaiting = false;
+        this.practiceExpectedNotes = new Set();
+        this.practiceHitNotes = new Set();
+        this.practiceExpectedCounts = new Map();
+        this.practiceHitCounts = new Map();
+        this.practiceChordTime = null;
+    }
+
+    _getActivePracticeNotes() {
+        const activeNotes = new Set();
+        for (const key of this.heldKeys) {
+            const note = this.keyToNote[key];
+            if (note) activeNotes.add(note);
+        }
+        document.querySelectorAll('.key.active').forEach((el) => {
+            const note = el.dataset.note;
+            if (note) activeNotes.add(note);
+        });
+        return activeNotes;
+    }
+
+    _completePracticeChord() {
+        if (this.practiceChordTime == null || this.practiceExpectedNotes.size === 0) return false;
+
+        const targets = this.fallingNotes.filter(
+            n => !n.hit && !n.missed && this.practiceExpectedNotes.has(n.note) && Math.abs(n.time - this.practiceChordTime) < 0.03
+        );
+        if (targets.length === 0) return false;
+
+        for (const target of targets) {
+            target.hit = true;
+            this.combo++;
+            this.hitNotes++;
+            this.score += Math.floor(100 * (1 + this.combo * 0.1));
+            this.updateScore();
+            this.showHitFeedback(target.note, true, 1);
+            this._emitHitBurst(target.note, target.hand || 0);
+        }
+
+        if (this._practiceHighlighted) {
+            for (const noteName of this._practiceHighlighted) {
+                const el = this._keyElementCache && this._keyElementCache[noteName];
+                if (el) el.classList.remove('practice-target');
+            }
+            this._practiceHighlighted = null;
+        }
+
+        this._clearPracticeState();
+        return true;
+    }
+
+    _tryResolvePracticeChord() {
+        if (this.gameMode !== 'practice' || !this.practiceWaiting || this.practiceExpectedNotes.size === 0) {
+            return false;
+        }
+
+        const activeNotes = this._getActivePracticeNotes();
+        for (const noteName of this.practiceExpectedNotes) {
+            if (!activeNotes.has(noteName)) return false;
+        }
+
+        return this._completePracticeChord();
+    }
+
+    _totalCount(map) {
+        let total = 0;
+        for (const value of map.values()) total += value;
+        return total;
+    }
+
+    _countMapsEqual(a, b) {
+        if (a.size !== b.size) return false;
+        for (const [key, value] of a) {
+            if (b.get(key) !== value) return false;
+        }
+        return true;
+    }
+
+    async _ensurePitchDetector() {
+        if (this.pitchDetector) return this.pitchDetector;
+        if (!this.pitchfinderPromise) {
+            this.pitchfinderPromise = import('https://cdn.jsdelivr.net/npm/pitchfinder@2.3.2/+esm');
+        }
+        this.pitchfinderModule = await this.pitchfinderPromise;
+        this.pitchDetector = this.pitchfinderModule.YIN({
+            sampleRate: this.audioContext.sampleRate,
+            threshold: 0.12,
+            probabilityThreshold: 0.9,
+        });
+        return this.pitchDetector;
+    }
+
+    async _startMicPracticeDetection() {
+        if (this.micDetectionFrame || this.micStartPromise) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Microphone input is not supported in this browser.');
+        }
+
+        this.statusMessage.textContent = 'Mic Practice: requesting microphone access...';
+
+        this.micStartPromise = (async () => {
+            if (!this.audioContext) {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                this.setupAudioGraph();
+                if (this.soundfontRawData && !this.soundfontLoaded) {
+                    this._decodeSoundfontSamples(this.soundfontRawData);
+                }
+            }
+            if (this.audioContext.state === 'suspended') {
+                await this.audioContext.resume();
+            }
+
+            await this._ensurePitchDetector();
+
+            this.micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                }
+            });
+
+            this.micSourceNode = this.audioContext.createMediaStreamSource(this.micStream);
+            this.micAnalyser = this.audioContext.createAnalyser();
+            this.micAnalyser.fftSize = 4096;
+            this.micBuffer = new Float32Array(this.micAnalyser.fftSize);
+            this.micSourceNode.connect(this.micAnalyser);
+            this.micDetectedNote = null;
+            this.micCandidateNote = null;
+            this.micCandidateSince = 0;
+            this.statusMessage.textContent = 'Mic Practice: microphone ready. Play the highlighted notes.';
+            this._runMicPracticeDetection();
+        })();
+
+        try {
+            await this.micStartPromise;
+        } finally {
+            this.micStartPromise = null;
+        }
+    }
+
+    _stopMicPracticeDetection() {
+        if (this.micDetectionFrame) {
+            cancelAnimationFrame(this.micDetectionFrame);
+            this.micDetectionFrame = null;
+        }
+        if (this.micSourceNode) {
+            try { this.micSourceNode.disconnect(); } catch (e) {}
+            this.micSourceNode = null;
+        }
+        if (this.micAnalyser) {
+            try { this.micAnalyser.disconnect(); } catch (e) {}
+            this.micAnalyser = null;
+        }
+        if (this.micStream) {
+            this.micStream.getTracks().forEach(track => track.stop());
+            this.micStream = null;
+        }
+        this.micBuffer = null;
+        this.micDetectedNote = null;
+        this.micCandidateNote = null;
+        this.micCandidateSince = 0;
+    }
+
+    _runMicPracticeDetection() {
+        if (!this._isMicPracticeMode() || !this.isPlaying || this.isPaused || !this.micAnalyser || !this.micBuffer || !this.pitchDetector) {
+            this.micDetectionFrame = null;
+            return;
+        }
+
+        this.micAnalyser.getFloatTimeDomainData(this.micBuffer);
+
+        let energy = 0;
+        for (let i = 0; i < this.micBuffer.length; i++) {
+            const sample = this.micBuffer[i];
+            energy += sample * sample;
+        }
+        const rms = Math.sqrt(energy / this.micBuffer.length);
+        const frequency = rms > 0.015 ? this.pitchDetector(this.micBuffer) : null;
+        const detectedNote = this._frequencyToNoteName(frequency);
+        const now = performance.now();
+
+        this.micDetectedNote = detectedNote;
+
+        if (this.practiceWaiting && detectedNote && this.practiceExpectedNotes.has(detectedNote) && this._hasRemainingPracticeHits(detectedNote)) {
+            if (this.micCandidateNote !== detectedNote) {
+                this.micCandidateNote = detectedNote;
+                this.micCandidateSince = now;
+            } else if (now - this.micCandidateSince >= 90) {
+                this._practiceHitNote(detectedNote);
+                this.micCandidateNote = null;
+                this.micCandidateSince = 0;
+            }
+        } else if (this.micCandidateNote && this.micCandidateNote !== detectedNote) {
+            this.micCandidateNote = null;
+            this.micCandidateSince = 0;
+        }
+
+        this.micDetectionFrame = requestAnimationFrame(() => this._runMicPracticeDetection());
+    }
+
+    _syncMicPracticeState() {
+        if (this._isMicPracticeMode() && this.isPlaying && !this.isPaused) {
+            this._startMicPracticeDetection().catch((err) => {
+                console.error('[PianoHero] Mic practice failed to start', err);
+                this.reset();
+                this.statusMessage.textContent = this._getMicPracticeErrorMessage(err);
+            });
+            return;
+        }
+        this._stopMicPracticeDetection();
     }
 
     // Build a chromatic scale from lowNote to highNote inclusive
@@ -2290,14 +2572,10 @@ class PianoHero {
         this._updateControlButtons();
 
         // Practice mode setup
-        this.practiceWaiting = false;
-        this.practiceExpectedNotes = new Set();
-        this.practiceHitNotes = new Set();
+        this._clearPracticeState();
         this.practicePauseOffset = 0;
 
-        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'coplay' ? 'Co-Play' :
-                          this.gameMode === 'simple' ? 'Simple mode' : 'Game';
+        const modeLabel = this._getModeDisplayName();
         this.statusMessage.textContent = `${modeLabel} in progress...`;
         
         this.totalNotes = this.fallingNotes.length;
@@ -2307,6 +2585,8 @@ class PianoHero {
             this.isAutoPlay = true;
             this._scheduleAutoPlayNotes();
         }
+
+        this._syncMicPracticeState();
     }
 
     _switchToManual() {
@@ -2336,10 +2616,9 @@ class PianoHero {
         }
 
         this._updateControlButtons();
-        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'coplay' ? 'Co-Play' :
-                          this.gameMode === 'simple' ? 'Simple mode' : 'Manual play';
+        const modeLabel = this.gameMode === 'normal' ? 'Manual play' : this._getModeDisplayName();
         this.statusMessage.textContent = `${modeLabel} — continuing from current position!`;
+        this._syncMicPracticeState();
     }
 
     /** Apply or remove coplay-manual CSS class on all piano keys and update lane selectors */
@@ -2606,9 +2885,7 @@ class PianoHero {
             this.heldFallingNotes.clear();
 
             // Clear practice mode state
-            this.practiceWaiting = false;
-            this.practiceExpectedNotes = new Set();
-            this.practiceHitNotes = new Set();
+            this._clearPracticeState();
             document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
 
             // Unpause if paused
@@ -2620,6 +2897,7 @@ class PianoHero {
         }
 
         this.isAutoPlay = true;
+        this._syncMicPracticeState();
         this._updateControlButtons();
 
         const isCoPlay = this.gameMode === 'coplay';
@@ -2651,6 +2929,7 @@ class PianoHero {
         } else {
             this._switchToManual();
         }
+        this._syncMicPracticeState();
         this._updateControlButtons();
         this._saveSettings();
     }
@@ -2692,9 +2971,10 @@ class PianoHero {
                 this._scheduleAutoPlayNotes();
                 this.statusMessage.textContent = 'Auto Play in progress...';
             } else {
-                this.statusMessage.textContent = 'Game in progress...';
+                this.statusMessage.textContent = `${this._getModeDisplayName()} in progress...`;
             }
         }
+        this._syncMicPracticeState();
         this._updateControlButtons();
     }
 
@@ -2732,7 +3012,7 @@ class PianoHero {
 
         modeLabel.textContent = this.isAutoPlay ? 'AutoPlay' : 'Manual';
 
-        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice' };
+        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice', micpractice: 'Mic Practice' };
         modeSubLabel.textContent = modeNames[this.gameMode] || 'Normal';
 
         // Update active state in dropdown
@@ -2804,6 +3084,7 @@ class PianoHero {
         this.isPlaying = false;
         this.isPaused = false;
         this.isAutoPlay = this.modeToggleSwitch.checked;
+        this._stopMicPracticeDetection();
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
@@ -2820,9 +3101,7 @@ class PianoHero {
         this.hitNotes = 0;
         this.missedNotes = 0;
         this.totalNotes = 0;
-        this.practiceWaiting = false;
-        this.practiceExpectedNotes = new Set();
-        this.practiceHitNotes = new Set();
+        this._clearPracticeState();
         document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
         document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
         this.updateScore();
@@ -2885,9 +3164,9 @@ class PianoHero {
                 this.playNoteSound(note);
                 if (this.isPlaying && !this.isPaused) {
                     if (this.gameMode === 'practice' && this.practiceWaiting) {
-                        if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
-                            this._practiceHitNote(note);
-                        }
+                        this._tryResolvePracticeChord();
+                    } else if (this.gameMode === 'micpractice' && this.practiceWaiting) {
+                        return;
                     } else {
                         this._checkHitByNote(note);
                     }
@@ -3225,10 +3504,12 @@ class PianoHero {
 
         // ── Practice mode: check if it's one of the expected notes ──
         if (this.gameMode === 'practice' && this.practiceWaiting) {
-            if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
-                this._practiceHitNote(note);
-            }
+            this._tryResolvePracticeChord();
             return; // In practice mode, only expected notes count
+        }
+
+        if (this.gameMode === 'micpractice' && this.practiceWaiting) {
+            return;
         }
         
         // Find the closest note in the hit zone for this key
@@ -3440,7 +3721,7 @@ class PianoHero {
         if (!this.isPlaying || this.isPaused) return;
 
         // ── Practice mode: freeze time until correct note is played ──
-        if (this.gameMode === 'practice' && !this.isAutoPlay) {
+        if (this._isManualPracticeMode()) {
             return this.updatePracticeMode();
         }
         
@@ -3510,8 +3791,9 @@ class PianoHero {
                 }
                 this._practiceHighlighted = null;
             }
+            const modeName = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
             this.statusMessage.textContent = 
-                `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
+                `${modeName} complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this._updateControlButtons();
             return;
         }
@@ -3533,19 +3815,29 @@ class PianoHero {
 
         // Build the set of expected notes for this chord
         const expectedSet = new Set(chordNotes.map(n => n.note));
+        const expectedCounts = new Map();
+        for (const chordNote of chordNotes) {
+            this._incrementCount(expectedCounts, chordNote.note);
+        }
 
         // Only reset tracking if the chord changed
-        if (!this.practiceWaiting || !this._setsEqual(expectedSet, this.practiceExpectedNotes)) {
+        if (!this.practiceWaiting || !this._countMapsEqual(expectedCounts, this.practiceExpectedCounts)) {
             this.practiceExpectedNotes = expectedSet;
+            this.practiceExpectedCounts = expectedCounts;
             this.practiceHitNotes = new Set();
+            this.practiceHitCounts = new Map();
+            this.practiceChordTime = virtualTime;
         }
 
         this.practiceWaiting = true;
 
+        if (this._tryResolvePracticeChord()) {
+            return;
+        }
+
         // Highlight expected keys on the piano (diff-based to avoid per-frame DOM thrashing)
         const newTargets = new Set();
         for (const noteName of this.practiceExpectedNotes) {
-            if (this.practiceHitNotes.has(noteName)) continue;
             newTargets.add(noteName);
         }
         // Remove highlight from keys no longer targeted
@@ -3566,8 +3858,11 @@ class PianoHero {
         }
         this._practiceHighlighted = newTargets;
 
-        const remaining = [...this.practiceExpectedNotes].filter(n => !this.practiceHitNotes.has(n));
-        this.statusMessage.textContent = `Practice: play ${remaining.join(' + ')}`;
+        const remaining = [...this.practiceExpectedNotes];
+        const prefix = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
+        const detected = this.gameMode === 'micpractice' && this.micDetectedNote ? ` | mic: ${this.micDetectedNote}` : '';
+        const instruction = remaining.length > 0 ? remaining.join(' + ') : 'hold the highlighted chord';
+        this.statusMessage.textContent = `${prefix}: play ${instruction}${detected}`;
     }
 
     _setsEqual(a, b) {
@@ -3590,17 +3885,18 @@ class PianoHero {
         this.score += Math.floor(100 * (1 + this.combo * 0.1));
         this.updateScore();
         this.showHitFeedback(noteName, true, 1);
-        this.practiceHitNotes.add(noteName);
+        this._incrementCount(this.practiceHitCounts, noteName);
+        if (!this._hasRemainingPracticeHits(noteName)) {
+            this.practiceHitNotes.add(noteName);
+        }
 
         // Remove highlight from this key
         const keyEl = this._keyElementCache && this._keyElementCache[noteName];
         if (keyEl) keyEl.classList.remove('practice-target');
 
         // If all chord notes are hit, advance
-        if (this.practiceHitNotes.size >= this.practiceExpectedNotes.size) {
-            this.practiceWaiting = false;
-            this.practiceExpectedNotes = new Set();
-            this.practiceHitNotes = new Set();
+        if (this._totalCount(this.practiceHitCounts) >= this._totalCount(this.practiceExpectedCounts)) {
+            this._clearPracticeState();
         }
         return true;
     }
@@ -3864,7 +4160,7 @@ class PianoHero {
         } else if (note.hit) {
             hue = hand === 0 ? (isBlackKey ? 160 : 130) : (isBlackKey ? 240 : 210);
             sat = 60; lum = 40; alpha = 0.35;
-        } else if (this.gameMode === 'practice' && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
+        } else if (this._isManualPracticeMode() && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
             hue = 50; sat = 100; lum = 55; alpha = 1.0;
         } else if (isCoPlayManual) {
             hue = 30; sat = 100; lum = 55; alpha = 1.0;
