@@ -58,6 +58,12 @@ class PianoHero {
         this._laneCanvas = null; // offscreen canvas for lanes + hit zone
         this._laneCacheDirty = true;
         this._boundRender = (ts) => this._renderFrame(ts);
+        this._fixedStepSec = 1 / 60;
+        this._maxCatchupSteps = 5;
+        this._logicAccumulatorSec = 0;
+        this._logicClockSec = 0;
+        this._logicLastTargetSec = 0;
+        this._hasLogicClock = false;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
         this.glCanvas = document.getElementById('glCanvas');
@@ -1107,6 +1113,8 @@ class PianoHero {
                 } else {
                     this.startTime = performance.now() - newCurrentTime * 1000;
                 }
+                this._hasLogicClock = false;
+                this._logicAccumulatorSec = 0;
             }
 
             this.speedMultiplier = newSpeed;
@@ -1948,6 +1956,8 @@ class PianoHero {
             const gameClockSec = (refTime - this.startTime) / 1000;
             this.startTime = performance.now() - gameClockSec * 1000;
         }
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
 
         this._updateControlButtons();
 
@@ -2337,6 +2347,7 @@ class PianoHero {
 
         if (this.isPaused) {
             this.pauseTime = performance.now();
+            this._logicAccumulatorSec = 0;
             if (this.isAutoPlay) {
                 this.autoPlayTimeouts.forEach(t => clearTimeout(t));
                 this.autoPlayTimeouts = [];
@@ -2350,6 +2361,8 @@ class PianoHero {
         } else {
             const pauseDuration = performance.now() - this.pauseTime;
             this.startTime += pauseDuration;
+            this._hasLogicClock = false;
+            this._logicAccumulatorSec = 0;
             if (this.isAutoPlay) {
                 this._scheduleAutoPlayNotes();
                 this.statusMessage.textContent = 'Auto Play in progress...';
@@ -2469,6 +2482,8 @@ class PianoHero {
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
         this.heldFallingNotes.clear();
         this.heldKeys.clear();
         this.particles = [];
@@ -3047,6 +3062,8 @@ class PianoHero {
         } else {
             this.startTime = performance.now() - gameClockSec * 1000;
         }
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
 
         // Cancel auto-play timeouts and clear active sounds
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
@@ -3095,10 +3112,10 @@ class PianoHero {
             const timeUntilHit = scaledNoteTime - gameClockSec;
             note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
         }
-        this.draw();
+        this._renderFrame(this.startTime + (gameClockSec * 1000), false);
     }
     
-    update() {
+    update(currentTimeOverride) {
         if (!this.isPlaying || this.isPaused) return;
 
         // ── Practice mode: freeze time until correct note is played ──
@@ -3106,7 +3123,9 @@ class PianoHero {
             return this.updatePracticeMode();
         }
         
-        const currentTime = (this._frameTime - this.startTime) / 1000;
+        const currentTime = typeof currentTimeOverride === 'number'
+            ? currentTimeOverride
+            : (this._frameTime - this.startTime) / 1000;
         const speed = this.speedMultiplier;
 
         // Update song progress timeline
@@ -3267,9 +3286,48 @@ class PianoHero {
         return true;
     }
     
-    _renderFrame(ts) {
+    _renderFrame(ts, scheduleNext = true) {
         this._frameTime = ts || performance.now();
-        this.update();
+        if (this.isPlaying && !this.isPaused) {
+            const targetTimeSec = Math.max(0, (this._frameTime - this.startTime) / 1000);
+            if (!this._hasLogicClock) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                this._hasLogicClock = true;
+            }
+            let deltaToTarget = targetTimeSec - this._logicLastTargetSec;
+            this._logicLastTargetSec = targetTimeSec;
+            if (deltaToTarget < 0) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                deltaToTarget = 0;
+            }
+            const maxBacklog = this._fixedStepSec * this._maxCatchupSteps;
+            this._logicAccumulatorSec = Math.min(this._logicAccumulatorSec + deltaToTarget, maxBacklog);
+
+            let steps = 0;
+            while (this._logicAccumulatorSec >= this._fixedStepSec && steps < this._maxCatchupSteps) {
+                this._logicClockSec += this._fixedStepSec;
+                this.update(this._logicClockSec);
+                this._logicAccumulatorSec -= this._fixedStepSec;
+                steps++;
+            }
+
+            if (steps === this._maxCatchupSteps) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                this.update(this._logicClockSec);
+            } else if (steps === 0) {
+                this.update(this._logicClockSec);
+            }
+        } else {
+            this._logicAccumulatorSec = 0;
+            this._hasLogicClock = false;
+            this.update();
+        }
         
         const w = this.canvas.width, h = this.canvas.height;
         const ctx = this.ctx;
@@ -3368,7 +3426,7 @@ class PianoHero {
         this._emitHeldNoteParticles();
         this._updateAndDrawParticles(ctx);
         
-        requestAnimationFrame(this._boundRender);
+        if (scheduleNext) requestAnimationFrame(this._boundRender);
     }
     
     _rebuildLaneCache() {
