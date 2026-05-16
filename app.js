@@ -88,9 +88,12 @@ class PianoHero {
         this.particles = [];
         this.particleStyle = 'sparkle'; // 'sparkle' or 'splash'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
+        this.sparkleEnabled = true;
         this.sparkleHeight = 1.0; // 0.1 to 2.0
         this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
         this.noteStyle = 'classic'; // beam, classic
+        this.waveEnabled = true;
+        this.waveCount = 6;
 
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
@@ -1141,6 +1144,7 @@ class PianoHero {
         // ── Sparkle FX ──
         const sparkleSlider = document.getElementById('sparkleSlider');
         const sparkleValue = document.getElementById('sparkleValue');
+        this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
         sparkleSlider.addEventListener('input', () => {
             this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
             sparkleValue.textContent = sparkleSlider.value + '%';
@@ -1175,8 +1179,7 @@ class PianoHero {
         const waveToggle = document.getElementById('waveToggle');
         this.waveEnabled = waveToggle.checked;
         const updateWaveRows = () => {
-            const el = document.getElementById('waveCountRow');
-            if (el) el.style.display = waveToggle.checked ? '' : 'none';
+            // Wave count slider is always visible; toggle only controls rendering
         };
         waveToggle.addEventListener('change', () => {
             this.waveEnabled = waveToggle.checked;
@@ -1189,7 +1192,7 @@ class PianoHero {
         const waveCountSlider = document.getElementById('waveCountSlider');
         this.waveCount = parseInt(waveCountSlider.value) || 6;
         waveCountSlider.addEventListener('input', () => {
-            this.waveCount = parseInt(waveCountSlider.value) || 0;
+            this.waveCount = parseInt(waveCountSlider.value) || 1;
             document.getElementById('waveCountVal').textContent = this.waveCount;
             this._saveSettings();
         });
@@ -1279,6 +1282,7 @@ class PianoHero {
     }
 
     _saveSettings() {
+        if (this._loading) return;
         const settings = {
             volume: document.getElementById('volumeSlider').value,
             reverb: document.getElementById('reverbSlider').value,
@@ -1338,6 +1342,7 @@ class PianoHero {
         let settings;
         try { settings = JSON.parse(localStorage.getItem('pianoHeroSettings')); } catch(e) {}
         if (!settings) return;
+        this._loading = true;
 
         // Restore autoPlay FIRST — before any dispatchEvent triggers _saveSettings()
         if (settings.autoPlay != null) {
@@ -1461,10 +1466,11 @@ class PianoHero {
             cb.dispatchEvent(new Event('change'));
         }
         if (settings.waveCount != null) {
+            const val = Math.max(1, parseInt(settings.waveCount) || 6);
             const s = document.getElementById('waveCountSlider');
-            s.value = settings.waveCount;
-            document.getElementById('waveCountVal').textContent = settings.waveCount;
-            this.waveCount = parseInt(settings.waveCount) || 0;
+            s.value = val;
+            document.getElementById('waveCountVal').textContent = val;
+            this.waveCount = val;
         }
         if (settings.neonGlow != null) {
             const cb = document.getElementById('neonGlowToggle');
@@ -1488,6 +1494,8 @@ class PianoHero {
 
         // Update header mode label to reflect restored settings
         this._updateModeLabel();
+        this._loading = false;
+        this._saveSettings(); // save once with fully restored state
     }
 
     updateBPMDisplay() {
@@ -2212,6 +2220,7 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -2404,6 +2413,7 @@ class PianoHero {
                     this.updateScore();
                     this.showHitFeedback(note.note, true, 1);
                     this.heldFallingNotes.set(note.note, note);
+                    this._emitHitBurst(note.note, note.hand || 0);
                 }
 
                 // Play sound + visual (hold for note duration)
@@ -2894,6 +2904,7 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -3253,7 +3264,7 @@ class PianoHero {
                 heldFallingNotes: this.heldFallingNotes,
                 time: this._frameTime / 1000,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
-                waveCount: this.waveEnabled ? (this.waveCount || 0) : 0,
+                waveCount: this.waveEnabled ? (this.waveCount || 6) : 0,
             });
 
             // No drawImage needed — browser composites the DOM canvases natively
@@ -3830,6 +3841,72 @@ class PianoHero {
         ctx.restore();
     }
 
+    /** Emit a one-time burst of sparkle particles when a note is hit */
+    _emitHitBurst(noteName, hand) {
+        if (!this.sparkleEnabled || this.sparkleIntensity <= 0) return;
+        const pos = this.keyPositions[noteName];
+        if (!pos) return;
+        if (!this._particlePool) this._particlePool = [];
+        const pool = this._particlePool;
+        const isBlackKey = pos.isBlack;
+        const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : 5) * this.sparkleIntensity));
+        for (let i = 0; i < burstCount; i++) {
+            if (this.particleStyle === 'splash') {
+                const isWhite = Math.random() < 0.3;
+                let color;
+                if (isWhite) {
+                    color = `hsla(200, 100%, ${90 + Math.random() * 10}%, 0.95)`;
+                } else if (hand === 0) {
+                    const hue = isBlackKey ? 160 + Math.random() * 40 : 140 + Math.random() * 40;
+                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
+                } else {
+                    const hue = isBlackKey ? 210 + Math.random() * 40 : 190 + Math.random() * 40;
+                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
+                }
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2;
+                const speed = (3.0 + Math.random() * 4.0) * this.sparkleHeight;
+                const spikeLen = (18 + Math.random() * 28) * this.sparkleHeight;
+                const p = pool.pop() || {};
+                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.5;
+                p.y = this.hitZoneY - 12 - Math.random() * 3;
+                p.vx = Math.cos(angle) * speed;
+                p.vy = Math.sin(angle) * speed;
+                p.life = 1.0;
+                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
+                p.size = 1.8 + Math.random() * 2.2;
+                p.spikeLength = spikeLen;
+                p.spikeAngle = angle;
+                p.color = color;
+                p.type = 'splash';
+                this.particles.push(p);
+            } else {
+                const isWhite = Math.random() < 0.35;
+                let color;
+                if (isWhite) {
+                    color = `hsl(0, 0%, ${85 + Math.random() * 15}%)`;
+                } else if (hand === 0) {
+                    const baseHue = isBlackKey ? 150 + Math.random() * 30 : 120 + Math.random() * 30;
+                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
+                } else {
+                    const baseHue = isBlackKey ? 230 + Math.random() * 30 : 200 + Math.random() * 30;
+                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
+                }
+                const p = pool.pop() || {};
+                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.8;
+                p.y = this.hitZoneY - 12 - Math.random() * 10;
+                p.vx = (Math.random() - 0.5) * 2.0;
+                p.vy = -(Math.random() * 5 + 3.0) * this.sparkleHeight;
+                p.life = 1.0;
+                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
+                p.size = 2.0 + Math.random() * 2.5;
+                p.length = (10 + Math.random() * 16) * this.sparkleHeight;
+                p.color = color;
+                p.type = 'sparkle';
+                this.particles.push(p);
+            }
+        }
+    }
+
     _emitHeldNoteParticles() {
         if (!this.isPlaying || this.isPaused || this.sparkleIntensity <= 0 || !this.sparkleEnabled) return;
         // Reusable pool to avoid GC pressure
@@ -3871,8 +3948,7 @@ class PianoHero {
             if (this.particleStyle === 'splash') {
                 // Splash: sharp spiky bursts radiating outward from hit zone
                 const baseCount = Math.random() < 0.4 ? 5 : 4;
-                const count = Math.round(baseCount * this.sparkleIntensity);
-                if (count <= 0) continue;
+                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
                 for (let i = 0; i < count; i++) {
                     const isWhite = Math.random() < 0.3;
                     let color;
@@ -3891,7 +3967,7 @@ class PianoHero {
                     const spikeLen = (15 + Math.random() * 25) * this.sparkleHeight;
                     const p = pool.pop() || {};
                     p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.4;
-                    p.y = this.hitZoneY - Math.random() * 2;
+                    p.y = this.hitZoneY - 12 - Math.random() * 2;
                     p.vx = Math.cos(angle) * speed;
                     p.vy = Math.sin(angle) * speed;
                     p.life = 1.0;
@@ -3906,8 +3982,7 @@ class PianoHero {
             } else {
                 // Sparkle (default): beam/streak particles
                 const baseCount = Math.random() < 0.5 ? 3 : 2;
-                const count = Math.round(baseCount * this.sparkleIntensity);
-                if (count <= 0) continue;
+                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
                 for (let i = 0; i < count; i++) {
                     const isWhite = Math.random() < 0.35;
                     let color;
@@ -3922,7 +3997,7 @@ class PianoHero {
                     }
                     const p = pool.pop() || {};
                     p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.7;
-                    p.y = this.hitZoneY - Math.random() * 8;
+                    p.y = this.hitZoneY - 12 - Math.random() * 8;
                     p.vx = (Math.random() - 0.5) * 1.5;
                     p.vy = -(Math.random() * 4 + 2.5) * this.sparkleHeight;
                     p.life = 1.0;
