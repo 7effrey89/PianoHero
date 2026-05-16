@@ -599,9 +599,19 @@ class PianoHero {
     calculateKeyPositions() {
         const positions = {};
 
+        // Build a lookup of all key DOM elements in one pass (no per-note querySelector)
+        if (!this._keyElementCache) this._keyElementCache = {};
+        const container = document.querySelector('.piano-keys');
+        if (container) {
+            const allKeys = container.querySelectorAll('.key[data-note]');
+            for (let i = 0; i < allKeys.length; i++) {
+                this._keyElementCache[allKeys[i].dataset.note] = allKeys[i];
+            }
+        }
+
         // Use offsetLeft/offsetWidth — relative to offset parent, unaffected by scroll
         this.allNotes.forEach(note => {
-            const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+            const keyElement = this._keyElementCache[note];
             if (keyElement) {
                 const left = keyElement.offsetLeft;
                 const width = keyElement.offsetWidth;
@@ -2021,6 +2031,12 @@ class PianoHero {
         // Remove any existing selectors
         document.querySelectorAll('.lane-selector').forEach(el => el.remove());
 
+        // Remove previous delegated listeners
+        if (this._laneSelectorCleanup) {
+            this._laneSelectorCleanup();
+            this._laneSelectorCleanup = null;
+        }
+
         if (this.gameMode !== 'coplay') return;
 
         const container = document.querySelector('.piano-keys');
@@ -2044,18 +2060,23 @@ class PianoHero {
             btn.style.top = pos.isBlack ? '0px' : '20px';
             btn.style.zIndex = pos.isBlack ? '10' : '5';
 
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._handleLaneSelectorClick(note, btn);
-            });
-            btn.addEventListener('touchstart', (e) => {
-                e.stopPropagation();
-                e.preventDefault(); // prevent default touch action and duplicate mouse events
-                this._handleLaneSelectorClick(note, btn);
-            }, { passive: false });
-
             container.appendChild(btn);
         }
+
+        // Delegated event handler for all lane selectors (2 listeners total instead of 2×N)
+        const handleLaneEvent = (e) => {
+            const btn = e.target.closest('.lane-selector');
+            if (!btn || !btn.dataset.note) return;
+            e.stopPropagation();
+            if (e.type === 'touchstart') e.preventDefault();
+            this._handleLaneSelectorClick(btn.dataset.note, btn);
+        };
+        container.addEventListener('click', handleLaneEvent);
+        container.addEventListener('touchstart', handleLaneEvent, { passive: false });
+        this._laneSelectorCleanup = () => {
+            container.removeEventListener('click', handleLaneEvent);
+            container.removeEventListener('touchstart', handleLaneEvent);
+        };
     }
 
     /** Toggle a lane and (when selecting) open the key remap modal */
@@ -2180,7 +2201,8 @@ class PianoHero {
 
     /** Refresh the label shown on a piano key element */
     _refreshKeyLabel(note) {
-        const keyEl = document.querySelector(`.key[data-note="${note}"]`);
+        const keyEl = this._keyElementCache && this._keyElementCache[note]
+            || document.querySelector(`.key[data-note="${note}"]`);
         if (!keyEl) return;
         const newBind = this.noteToKey[note];
         const noteName = note.replace(/\d+/, '');
@@ -2418,13 +2440,10 @@ class PianoHero {
 
                 // Play sound + visual (hold for note duration)
                 if (!this._keyElementCache) this._keyElementCache = {};
-                const cacheKey = key ? `key:${key}` : `note:${note.note}`;
-                let keyElement = this._keyElementCache[cacheKey];
+                let keyElement = this._keyElementCache[note.note];
                 if (keyElement === undefined) {
-                    keyElement = key
-                        ? document.querySelector(`.key[data-key="${key}"]`)
-                        : document.querySelector(`.key[data-note="${note.note}"]`);
-                    this._keyElementCache[cacheKey] = keyElement || null;
+                    keyElement = document.querySelector(`.key[data-note="${note.note}"]`);
+                    this._keyElementCache[note.note] = keyElement || null;
                 }
                 if (keyElement) keyElement.classList.add('active');
                 // In co-play mode, reduce volume for auto-played (non-manual) notes
@@ -2951,9 +2970,9 @@ class PianoHero {
         const pos = this.keyPositions[note];
         if (!pos) return;
 
-        // Limit concurrent timing elements to avoid DOM thrashing
-        const activeCount = document.querySelectorAll('.timing-feedback').length;
-        if (activeCount > 8) return;
+        // Limit concurrent timing elements to avoid DOM thrashing (counter instead of querySelectorAll)
+        if (!this._activeTimingCount) this._activeTimingCount = 0;
+        if (this._activeTimingCount > 8) return;
 
         const grade = this._getTimingGrade(success, accuracy);
         const gameArea = this.gameArea || document.getElementById('gameArea');
@@ -2968,8 +2987,10 @@ class PianoHero {
 
         el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
 
+        this._activeTimingCount++;
         el.onanimationend = () => {
             if (el.parentNode) el.parentNode.removeChild(el);
+            this._activeTimingCount = Math.max(0, (this._activeTimingCount || 1) - 1);
             this._timingFeedbackPool.push(el);
         };
         gameArea.appendChild(el);
@@ -3144,7 +3165,13 @@ class PianoHero {
         if (!nextNote) {
             // All done
             this.isPlaying = false;
-            document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+            if (this._practiceHighlighted) {
+                for (const noteName of this._practiceHighlighted) {
+                    const el = this._keyElementCache && this._keyElementCache[noteName];
+                    if (el) el.classList.remove('practice-target');
+                }
+                this._practiceHighlighted = null;
+            }
             this.statusMessage.textContent = 
                 `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this._updateControlButtons();
@@ -3177,13 +3204,29 @@ class PianoHero {
 
         this.practiceWaiting = true;
 
-        // Highlight expected keys on the piano
-        document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+        // Highlight expected keys on the piano (diff-based to avoid per-frame DOM thrashing)
+        const newTargets = new Set();
         for (const noteName of this.practiceExpectedNotes) {
-            if (this.practiceHitNotes.has(noteName)) continue; // already pressed
-            const targetKey = document.querySelector(`.key[data-note="${noteName}"]`);
-            if (targetKey) targetKey.classList.add('practice-target');
+            if (this.practiceHitNotes.has(noteName)) continue;
+            newTargets.add(noteName);
         }
+        // Remove highlight from keys no longer targeted
+        if (this._practiceHighlighted) {
+            for (const noteName of this._practiceHighlighted) {
+                if (!newTargets.has(noteName)) {
+                    const el = this._keyElementCache && this._keyElementCache[noteName];
+                    if (el) el.classList.remove('practice-target');
+                }
+            }
+        }
+        // Add highlight to newly targeted keys
+        for (const noteName of newTargets) {
+            if (!this._practiceHighlighted || !this._practiceHighlighted.has(noteName)) {
+                const el = this._keyElementCache && this._keyElementCache[noteName];
+                if (el) el.classList.add('practice-target');
+            }
+        }
+        this._practiceHighlighted = newTargets;
 
         const remaining = [...this.practiceExpectedNotes].filter(n => !this.practiceHitNotes.has(n));
         this.statusMessage.textContent = `Practice: play ${remaining.join(' + ')}`;
@@ -3212,7 +3255,7 @@ class PianoHero {
         this.practiceHitNotes.add(noteName);
 
         // Remove highlight from this key
-        const keyEl = document.querySelector(`.key[data-note="${noteName}"]`);
+        const keyEl = this._keyElementCache && this._keyElementCache[noteName];
         if (keyEl) keyEl.classList.remove('practice-target');
 
         // If all chord notes are hit, advance
