@@ -20,6 +20,7 @@ class PianoHero {
         this.songTimeLabel = document.getElementById('songTimeLabel');
         this.midiFileList = document.getElementById('midiFileList');
         this.autoPlayBtn = document.getElementById('modeToggleSwitch');
+        this.gameArea = document.getElementById('gameArea');
         this.modeToggleBtn = document.getElementById('modeToggleSwitch');
         this.modeToggleSwitch = document.getElementById('modeToggleSwitch');
         this.playPauseBtn = document.getElementById('playPauseBtn');
@@ -56,7 +57,13 @@ class PianoHero {
         // Performance: cached static layers
         this._laneCanvas = null; // offscreen canvas for lanes + hit zone
         this._laneCacheDirty = true;
-        this._boundRender = () => this._renderFrame();
+        this._boundRender = (ts) => this._renderFrame(ts);
+
+        // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
+        this.glCanvas = document.getElementById('glCanvas');
+        this.glRenderer = this.glCanvas ? new PixiNoteRenderer(this.glCanvas) : null;
+        if (this.glRenderer) console.log('[PianoHero] Using PixiJS note renderer');
+        else console.log('[PianoHero] PixiJS not available, using Canvas 2D fallback');
 
         // Key scale / zoom
         this.keyScale = 1.0;
@@ -81,18 +88,26 @@ class PianoHero {
         this.particles = [];
         this.particleStyle = 'sparkle'; // 'sparkle' or 'splash'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
+        this.sparkleEnabled = true;
         this.sparkleHeight = 1.0; // 0.1 to 2.0
         this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
-        this.noteStyle = 'beam'; // beam, classic
+        this.noteStyle = 'classic'; // beam, classic
+        this.waveEnabled = true;
+        this.waveCount = 6;
 
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
+        this.hasBgImage = false;
+        this.bgOverlayOpacity = 0.25;
         this._glowCanvas = null;
         this._glowCtx = null;
 
         // Shared wave overlay canvas for classic bars
         this._waveCanvas = null;
         this._waveCtx = null;
+
+        // Reuse timing feedback nodes to reduce frequent DOM allocation/removal churn
+        this._timingFeedbackPool = [];
 
         // Force field hit bar
         this.forceFieldEnabled = false;
@@ -213,21 +228,25 @@ class PianoHero {
         this.initSoundPanel();
         this.initGameSettings();
         this._loadSettings();
+        this._ensureSoundfontLoaded();
 
         // Song browser dropdown toggle
-        document.getElementById('songBrowserBtn').addEventListener('click', (e) => {
+        const toggleSongBrowser = (e) => {
             e.stopPropagation();
             const dropdown = document.getElementById('songBrowserDropdown');
             dropdown.classList.toggle('hidden');
             // Close mode dropdown if open
             document.getElementById('modeDropdown').classList.add('hidden');
-        });
+        };
+        document.getElementById('songBrowserBtn').addEventListener('click', toggleSongBrowser);
+        document.getElementById('midiListHeaderText').addEventListener('click', toggleSongBrowser);
 
         // Close song browser when clicking outside
         document.addEventListener('click', (e) => {
             const dropdown = document.getElementById('songBrowserDropdown');
             const btn = document.getElementById('songBrowserBtn');
-            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+            const songName = document.getElementById('midiListHeaderText');
+            if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && !btn.contains(e.target) && !songName.contains(e.target)) {
                 dropdown.classList.add('hidden');
             }
             // Close mode dropdown when clicking outside
@@ -455,7 +474,7 @@ class PianoHero {
             btn.style.width = blackWidth + 'px';
             container.appendChild(btn);
         }
-        this._pendingBlackKeys = null;
+        this._pendingBlackKeys = [];
 
         // Now recalculate canvas and key positions
         this.resizeCanvas();
@@ -564,6 +583,14 @@ class PianoHero {
         container.style.width = fullWidth + 'px';
         this.canvas.width = fullWidth;
         this.canvas.height = container.clientHeight;
+        if (this.glRenderer) {
+            this.glRenderer.resize(fullWidth, container.clientHeight);
+        }
+        // Also resize the glCanvas element itself for PixiJS
+        if (this.glCanvas) {
+            this.glCanvas.width = fullWidth;
+            this.glCanvas.height = container.clientHeight;
+        }
         this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
         this._laneCacheDirty = true;
@@ -572,9 +599,19 @@ class PianoHero {
     calculateKeyPositions() {
         const positions = {};
 
+        // Build a lookup of all key DOM elements in one pass (no per-note querySelector)
+        if (!this._keyElementCache) this._keyElementCache = {};
+        const container = document.querySelector('.piano-keys');
+        if (container) {
+            const allKeys = container.querySelectorAll('.key[data-note]');
+            for (let i = 0; i < allKeys.length; i++) {
+                this._keyElementCache[allKeys[i].dataset.note] = allKeys[i];
+            }
+        }
+
         // Use offsetLeft/offsetWidth — relative to offset parent, unaffected by scroll
         this.allNotes.forEach(note => {
-            const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+            const keyElement = this._keyElementCache[note];
             if (keyElement) {
                 const left = keyElement.offsetLeft;
                 const width = keyElement.offsetWidth;
@@ -1013,15 +1050,25 @@ class PianoHero {
         // Set initial disabled state based on sustain
         _updateSympatheticState();
 
-        // Auto-load based on the current Sound Bank selection
-        const currentBank = document.getElementById('soundBankSelect').value;
-        if (currentBank === 'Salamander') {
-            this.useSalamander = true;
-            document.getElementById('soundPreset').disabled = true;
-            this.loadSalamander();
-        } else {
-            document.getElementById('soundPreset').disabled = false;
-            this.loadSoundfont(this.currentInstrument);
+        // Don't load soundfont here — _loadSettings() will restore saved bank/instrument
+        // and trigger the load. If no saved settings, we load the default after _loadSettings.
+        this._soundInitDeferred = true;
+    }
+
+    // Called after _loadSettings to ensure a soundfont is loaded if settings didn't trigger one
+    _ensureSoundfontLoaded() {
+        if (!this.soundfontLoading && !this.soundfontLoaded && !this.salamanderLoaded &&
+            Object.keys(this.soundfontBuffers).length === 0 &&
+            Object.keys(this.salamanderBuffers).length === 0) {
+            const currentBank = document.getElementById('soundBankSelect').value;
+            if (currentBank === 'Salamander') {
+                this.useSalamander = true;
+                document.getElementById('soundPreset').disabled = true;
+                this.loadSalamander();
+            } else {
+                document.getElementById('soundPreset').disabled = false;
+                this.loadSoundfont(this.currentInstrument);
+            }
         }
     }
 
@@ -1051,14 +1098,14 @@ class PianoHero {
 
             // Adjust startTime to preserve current song position when speed changes mid-song
             if (this.isPlaying && oldSpeed !== newSpeed) {
-                const now = this.isPaused ? this.pauseTime : Date.now();
+                const now = this.isPaused ? this.pauseTime : performance.now();
                 const currentTime = (now - this.startTime) / 1000;
                 // songPos = currentTime * oldSpeed; newCurrentTime = songPos / newSpeed
                 const newCurrentTime = currentTime * oldSpeed / newSpeed;
                 if (this.isPaused) {
                     this.startTime = this.pauseTime - newCurrentTime * 1000;
                 } else {
-                    this.startTime = Date.now() - newCurrentTime * 1000;
+                    this.startTime = performance.now() - newCurrentTime * 1000;
                 }
             }
 
@@ -1085,9 +1132,29 @@ class PianoHero {
             this._saveSettings();
         });
 
+        // ── Sparkle FX Toggle ──
+        const sparkleToggle = document.getElementById('sparkleToggle');
+        this.sparkleEnabled = sparkleToggle.checked;
+        const sparkleSubRows = ['particleStyleRow', 'sparkleSliderRow', 'sparkleHeightRow'];
+        const updateSparkleRows = () => {
+            const show = sparkleToggle.checked;
+            sparkleSubRows.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = show ? '' : 'none';
+            });
+        };
+        sparkleToggle.addEventListener('change', () => {
+            this.sparkleEnabled = sparkleToggle.checked;
+            if (!this.sparkleEnabled) this.particles = [];
+            updateSparkleRows();
+            this._saveSettings();
+        });
+        updateSparkleRows();
+
         // ── Sparkle FX ──
         const sparkleSlider = document.getElementById('sparkleSlider');
         const sparkleValue = document.getElementById('sparkleValue');
+        this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
         sparkleSlider.addEventListener('input', () => {
             this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
             sparkleValue.textContent = sparkleSlider.value + '%';
@@ -1118,6 +1185,28 @@ class PianoHero {
             this._saveSettings();
         });
 
+        // ── Wave Ribbon Toggle ──
+        const waveToggle = document.getElementById('waveToggle');
+        this.waveEnabled = waveToggle.checked;
+        const updateWaveRows = () => {
+            // Wave count slider is always visible; toggle only controls rendering
+        };
+        waveToggle.addEventListener('change', () => {
+            this.waveEnabled = waveToggle.checked;
+            updateWaveRows();
+            this._saveSettings();
+        });
+        updateWaveRows();
+
+        // ── Wave Ribbon Count ──
+        const waveCountSlider = document.getElementById('waveCountSlider');
+        this.waveCount = parseInt(waveCountSlider.value) || 6;
+        waveCountSlider.addEventListener('input', () => {
+            this.waveCount = parseInt(waveCountSlider.value) || 1;
+            document.getElementById('waveCountVal').textContent = this.waveCount;
+            this._saveSettings();
+        });
+
         // ── Neon Glow ──
         const neonGlowToggle = document.getElementById('neonGlowToggle');
         neonGlowToggle.addEventListener('change', () => {
@@ -1132,6 +1221,46 @@ class PianoHero {
             this._laneCacheDirty = true;
             this._saveSettings();
         });
+
+        // ── Custom Background Image ──
+        const bgImageBtn = document.getElementById('bgImageBtn');
+        const bgImageClearBtn = document.getElementById('bgImageClearBtn');
+        const bgImageInput = document.getElementById('bgImageInput');
+        bgImageBtn.addEventListener('click', () => bgImageInput.click());
+        bgImageInput.addEventListener('change', () => {
+            const file = bgImageInput.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this._setBackgroundImage(e.target.result);
+                bgImageClearBtn.disabled = false;
+            };
+            reader.readAsDataURL(file);
+            bgImageInput.value = '';
+        });
+        bgImageClearBtn.addEventListener('click', () => {
+            this._clearBackgroundImage();
+            bgImageClearBtn.disabled = true;
+        });
+
+        // ── Overlay Opacity Slider ──
+        const bgOpacitySlider = document.getElementById('bgOpacitySlider');
+        const bgOpacityVal = document.getElementById('bgOpacityVal');
+        bgOpacitySlider.addEventListener('input', () => {
+            const val = parseInt(bgOpacitySlider.value);
+            bgOpacityVal.textContent = val + '%';
+            this.bgOverlayOpacity = val / 100;
+            this._applyOverlayOpacity();
+            this._laneCacheDirty = true;
+            this._saveSettings();
+        });
+
+        // Restore saved background
+        const savedBg = localStorage.getItem('pianoHeroBgImage');
+        if (savedBg) {
+            this._setBackgroundImage(savedBg);
+            bgImageClearBtn.disabled = false;
+        }
 
         // ── Game Mode ──
         const modeSelect = document.getElementById('gameModeSelect');
@@ -1163,6 +1292,7 @@ class PianoHero {
     }
 
     _saveSettings() {
+        if (this._loading) return;
         const settings = {
             volume: document.getElementById('volumeSlider').value,
             reverb: document.getElementById('reverbSlider').value,
@@ -1173,6 +1303,7 @@ class PianoHero {
             speed: document.getElementById('speedSlider').value,
             gameMode: this.gameMode || 'normal',
             timingFeedback: document.getElementById('timingFeedbackToggle').checked,
+            sparkleEnabled: document.getElementById('sparkleToggle').checked,
             particleStyle: document.getElementById('particleStyleSelect').value,
             sparkle: document.getElementById('sparkleSlider').value,
             sparkleHeight: document.getElementById('sparkleHeightSlider').value,
@@ -1182,16 +1313,46 @@ class PianoHero {
             eqCompression: document.getElementById('eqCompressionToggle').checked,
             sympatheticResonance: document.getElementById('sympatheticResonanceToggle').checked,
             noteStyle: document.getElementById('noteStyleSelect').value,
+            waveEnabled: document.getElementById('waveToggle').checked,
+            waveCount: document.getElementById('waveCountSlider').value,
             neonGlow: document.getElementById('neonGlowToggle').checked,
             forceField: document.getElementById('forceFieldToggle').checked,
+            bgOverlayOpacity: document.getElementById('bgOpacitySlider').value,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
+    }
+
+    _setBackgroundImage(dataUrl) {
+        document.body.style.backgroundImage = `url(${dataUrl})`;
+        document.body.style.backgroundSize = 'cover';
+        document.body.style.backgroundPosition = 'center';
+        this.hasBgImage = true;
+        this._applyOverlayOpacity();
+        this._laneCacheDirty = true;
+        try { localStorage.setItem('pianoHeroBgImage', dataUrl); } catch(e) {}
+    }
+
+    _clearBackgroundImage() {
+        document.body.style.backgroundImage = '';
+        document.body.style.backgroundSize = '';
+        document.body.style.backgroundPosition = '';
+        this.hasBgImage = false;
+        this._applyOverlayOpacity();
+        this._laneCacheDirty = true;
+        try { localStorage.removeItem('pianoHeroBgImage'); } catch(e) {}
+    }
+
+    _applyOverlayOpacity() {
+        const o = this.bgOverlayOpacity;
+        document.getElementById('gameArea').style.background = `rgba(14, 11, 34, ${o})`;
+        document.getElementById('gameCanvas').style.background = `rgba(14, 11, 34, ${o * 0.4})`;
     }
 
     _loadSettings() {
         let settings;
         try { settings = JSON.parse(localStorage.getItem('pianoHeroSettings')); } catch(e) {}
         if (!settings) return;
+        this._loading = true;
 
         // Restore autoPlay FIRST — before any dispatchEvent triggers _saveSettings()
         if (settings.autoPlay != null) {
@@ -1263,6 +1424,11 @@ class PianoHero {
             cb.checked = settings.timingFeedback;
             cb.dispatchEvent(new Event('change'));
         }
+        if (settings.sparkleEnabled != null) {
+            const cb = document.getElementById('sparkleToggle');
+            cb.checked = settings.sparkleEnabled;
+            cb.dispatchEvent(new Event('change'));
+        }
         if (settings.sparkle != null) {
             const s = document.getElementById('sparkleSlider');
             s.value = settings.sparkle;
@@ -1304,6 +1470,18 @@ class PianoHero {
             sel.value = settings.noteStyle;
             this.noteStyle = settings.noteStyle;
         }
+        if (settings.waveEnabled != null) {
+            const cb = document.getElementById('waveToggle');
+            cb.checked = settings.waveEnabled;
+            cb.dispatchEvent(new Event('change'));
+        }
+        if (settings.waveCount != null) {
+            const val = Math.max(1, parseInt(settings.waveCount) || 6);
+            const s = document.getElementById('waveCountSlider');
+            s.value = val;
+            document.getElementById('waveCountVal').textContent = val;
+            this.waveCount = val;
+        }
         if (settings.neonGlow != null) {
             const cb = document.getElementById('neonGlowToggle');
             cb.checked = settings.neonGlow;
@@ -1315,9 +1493,19 @@ class PianoHero {
             this.forceFieldEnabled = settings.forceField;
             this._laneCacheDirty = true;
         }
+        if (settings.bgOverlayOpacity != null) {
+            const s = document.getElementById('bgOpacitySlider');
+            s.value = settings.bgOverlayOpacity;
+            document.getElementById('bgOpacityVal').textContent = settings.bgOverlayOpacity + '%';
+            this.bgOverlayOpacity = parseInt(settings.bgOverlayOpacity) / 100;
+            this._applyOverlayOpacity();
+            this._laneCacheDirty = true;
+        }
 
         // Update header mode label to reflect restored settings
         this._updateModeLabel();
+        this._loading = false;
+        this._saveSettings(); // save once with fully restored state
     }
 
     updateBPMDisplay() {
@@ -1746,7 +1934,7 @@ class PianoHero {
         const preSeeked = this.fallingNotes.length > 0 && this.startTime;
         if (!preSeeked) {
             const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
-            this.startTime = Date.now() + leadInSec * 1000;
+            this.startTime = performance.now() + leadInSec * 1000;
 
             this.fallingNotes = this.notes.map(note => ({
                 ...note,
@@ -1756,9 +1944,9 @@ class PianoHero {
             }));
         } else {
             // Shift startTime so the game clock picks up from the pre-seeked position
-            const refTime = this.pauseTime || Date.now();
+            const refTime = this.pauseTime || performance.now();
             const gameClockSec = (refTime - this.startTime) / 1000;
-            this.startTime = Date.now() - gameClockSec * 1000;
+            this.startTime = performance.now() - gameClockSec * 1000;
         }
 
         this._updateControlButtons();
@@ -1797,7 +1985,7 @@ class PianoHero {
         // Unpause if paused
         if (this.isPaused) {
             this.isPaused = false;
-            const pauseDuration = Date.now() - this.pauseTime;
+            const pauseDuration = performance.now() - this.pauseTime;
             this.startTime += pauseDuration;
         }
 
@@ -1843,6 +2031,12 @@ class PianoHero {
         // Remove any existing selectors
         document.querySelectorAll('.lane-selector').forEach(el => el.remove());
 
+        // Remove previous delegated listeners
+        if (this._laneSelectorCleanup) {
+            this._laneSelectorCleanup();
+            this._laneSelectorCleanup = null;
+        }
+
         if (this.gameMode !== 'coplay') return;
 
         const container = document.querySelector('.piano-keys');
@@ -1866,18 +2060,23 @@ class PianoHero {
             btn.style.top = pos.isBlack ? '0px' : '20px';
             btn.style.zIndex = pos.isBlack ? '10' : '5';
 
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._handleLaneSelectorClick(note, btn);
-            });
-            btn.addEventListener('touchstart', (e) => {
-                e.stopPropagation();
-                e.preventDefault(); // prevent default touch action and duplicate mouse events
-                this._handleLaneSelectorClick(note, btn);
-            }, { passive: false });
-
             container.appendChild(btn);
         }
+
+        // Delegated event handler for all lane selectors (2 listeners total instead of 2×N)
+        const handleLaneEvent = (e) => {
+            const btn = e.target.closest('.lane-selector');
+            if (!btn || !btn.dataset.note) return;
+            e.stopPropagation();
+            if (e.type === 'touchstart') e.preventDefault();
+            this._handleLaneSelectorClick(btn.dataset.note, btn);
+        };
+        container.addEventListener('click', handleLaneEvent);
+        container.addEventListener('touchstart', handleLaneEvent, { passive: false });
+        this._laneSelectorCleanup = () => {
+            container.removeEventListener('click', handleLaneEvent);
+            container.removeEventListener('touchstart', handleLaneEvent);
+        };
     }
 
     /** Toggle a lane and (when selecting) open the key remap modal */
@@ -2002,7 +2201,8 @@ class PianoHero {
 
     /** Refresh the label shown on a piano key element */
     _refreshKeyLabel(note) {
-        const keyEl = document.querySelector(`.key[data-note="${note}"]`);
+        const keyEl = this._keyElementCache && this._keyElementCache[note]
+            || document.querySelector(`.key[data-note="${note}"]`);
         if (!keyEl) return;
         const newBind = this.noteToKey[note];
         const noteName = note.replace(/\d+/, '');
@@ -2033,7 +2233,7 @@ class PianoHero {
 
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (Date.now() - this.startTime) / 1000;
+            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
             this.combo++;
             this.hitNotes++;
             const accuracy = 1 - (closestDistance / this.hitTolerance);
@@ -2042,6 +2242,7 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -2075,7 +2276,7 @@ class PianoHero {
             // Unpause if paused
             if (this.isPaused) {
                 this.isPaused = false;
-                const pauseDuration = Date.now() - this.pauseTime;
+                const pauseDuration = performance.now() - this.pauseTime;
                 this.startTime += pauseDuration;
             }
         }
@@ -2135,7 +2336,7 @@ class PianoHero {
         this.isPaused = !this.isPaused;
 
         if (this.isPaused) {
-            this.pauseTime = Date.now();
+            this.pauseTime = performance.now();
             if (this.isAutoPlay) {
                 this.autoPlayTimeouts.forEach(t => clearTimeout(t));
                 this.autoPlayTimeouts = [];
@@ -2147,7 +2348,7 @@ class PianoHero {
             }
             this.statusMessage.textContent = 'Paused — press Play to continue';
         } else {
-            const pauseDuration = Date.now() - this.pauseTime;
+            const pauseDuration = performance.now() - this.pauseTime;
             this.startTime += pauseDuration;
             if (this.isAutoPlay) {
                 this._scheduleAutoPlayNotes();
@@ -2206,7 +2407,7 @@ class PianoHero {
 
     _scheduleAutoPlayNotes() {
         // Use real game clock (negative during lead-in) so sounds sync with visual notes
-        const currentTime = (Date.now() - this.startTime) / 1000;
+        const currentTime = (performance.now() - this.startTime) / 1000;
 
         // Schedule automatic key presses for remaining notes
         const speed = this.speedMultiplier;
@@ -2227,19 +2428,23 @@ class PianoHero {
                 // Directly mark the note as hit (bypasses timing-sensitive position check)
                 if (!note.hit && !note.missed) {
                     note.hit = true;
-                    note.holdStart = (Date.now() - this.startTime) / 1000;
+                    note.holdStart = (performance.now() - this.startTime) / 1000;
                     this.combo++;
                     this.hitNotes++;
                     this.score += Math.floor(100 * (1 + this.combo * 0.1));
                     this.updateScore();
                     this.showHitFeedback(note.note, true, 1);
                     this.heldFallingNotes.set(note.note, note);
+                    this._emitHitBurst(note.note, note.hand || 0);
                 }
 
                 // Play sound + visual (hold for note duration)
-                const keyElement = key
-                    ? document.querySelector(`.key[data-key="${key}"]`)
-                    : document.querySelector(`.key[data-note="${note.note}"]`);
+                if (!this._keyElementCache) this._keyElementCache = {};
+                let keyElement = this._keyElementCache[note.note];
+                if (keyElement === undefined) {
+                    keyElement = document.querySelector(`.key[data-note="${note.note}"]`);
+                    this._keyElementCache[note.note] = keyElement || null;
+                }
                 if (keyElement) keyElement.classList.add('active');
                 // In co-play mode, reduce volume for auto-played (non-manual) notes
                 const autoVol = isCoPlay ? this.coPlayAutoVolume : undefined;
@@ -2361,11 +2566,12 @@ class PianoHero {
             keyElement.classList.remove('active');
             const note = keyElement.dataset.note;
             if (note) {
+                // Always update visual held state on release
+                this.heldFallingNotes.delete(note);
                 if (this.sustainEnabled) {
                     this.sustainedNotes.add(note);
                 } else {
                     this.stopNoteSound(note);
-                    this.heldFallingNotes.delete(note);
                 }
             }
         }
@@ -2483,21 +2689,27 @@ class PianoHero {
             const fadeTime = Math.min(0.3, holdTime * 0.3);
             const fadeStart = now + holdTime;
             const fadeEnd   = fadeStart + fadeTime;
+            // Loop so short samples sustain for the full note duration
+            source.loop = true;
             noteGain.gain.setValueAtTime(baseLevel, fadeStart);
             noteGain.gain.linearRampToValueAtTime(0, fadeEnd);
             source.stop(fadeEnd);
         } else if (this.sustainEnabled) {
             // Sustain mode: natural piano decay — long ring-out
+            source.loop = true;
             const decayTime = 5;
             noteGain.gain.setValueAtTime(baseLevel, now);
             noteGain.gain.exponentialRampToValueAtTime(0.001, now + decayTime);
             source.stop(now + decayTime + 0.1);
         } else {
-            // No sustain: hold until key release (stopNoteSound), cap at 10s
-            const maxSustain = now + 10;
-            noteGain.gain.setValueAtTime(baseLevel, maxSustain);
-            noteGain.gain.linearRampToValueAtTime(0, maxSustain + 0.3);
-            source.stop(maxSustain + 0.3);
+            // No sustain: loop sample and hold until key release (stopNoteSound)
+            // Apply gentle piano-like decay so it doesn't sound static
+            source.loop = true;
+            const decayTime = 8;
+            noteGain.gain.setValueAtTime(baseLevel, now);
+            noteGain.gain.exponentialRampToValueAtTime(baseLevel * 0.15, now + decayTime);
+            noteGain.gain.linearRampToValueAtTime(0, now + decayTime + 0.5);
+            source.stop(now + decayTime + 0.5);
         }
 
         // Track for later stop-on-release
@@ -2657,14 +2869,14 @@ class PianoHero {
         if (keyElement) {
             keyElement.classList.remove('active');
         }
-        // Stop the sustained sound (unless sustain pedal is on)
         const note = this.keyToNote[key];
         if (note) {
+            // Always update visual held state on release
+            this.heldFallingNotes.delete(note);
             if (this.sustainEnabled) {
                 this.sustainedNotes.add(note);
             } else {
                 this.stopNoteSound(note);
-                this.heldFallingNotes.delete(note);
             }
         }
     }
@@ -2700,7 +2912,7 @@ class PianoHero {
         
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (Date.now() - this.startTime) / 1000;
+            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
             this.combo++;
             this.hitNotes++;
             
@@ -2711,6 +2923,7 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
+            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -2720,9 +2933,17 @@ class PianoHero {
     }
     
     showHitFeedback(note, success, accuracy) {
-        const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+        // Skip all DOM feedback during autoplay — no one is watching the keys
+        if (this.isAutoPlay) return;
+
+        // Cache key element lookups to avoid querySelector per hit
+        if (!this._keyElementCache) this._keyElementCache = {};
+        let keyElement = this._keyElementCache[note];
+        if (keyElement === undefined) {
+            keyElement = document.querySelector(`.key[data-note="${note}"]`);
+            this._keyElementCache[note] = keyElement || null;
+        }
         if (keyElement) {
-            // Use co-play specific hit animation for manual lanes
             const isCoPlayManual = this.gameMode === 'coplay' && this.coPlayManualNotes.has(note);
             const hitClass = (success && isCoPlayManual) ? 'coplay-hit-success' : (success ? 'hit-success' : 'hit-miss');
             keyElement.classList.add(hitClass);
@@ -2731,7 +2952,7 @@ class PianoHero {
             }, 350);
         }
 
-        // Show timing feedback text
+        // Show timing feedback text (skip in autoplay already handled above)
         if (this.showTimingFeedback) {
             this._showTimingText(note, success, accuracy);
         }
@@ -2749,33 +2970,44 @@ class PianoHero {
         const pos = this.keyPositions[note];
         if (!pos) return;
 
+        // Limit concurrent timing elements to avoid DOM thrashing (counter instead of querySelectorAll)
+        if (!this._activeTimingCount) this._activeTimingCount = 0;
+        if (this._activeTimingCount > 8) return;
+
         const grade = this._getTimingGrade(success, accuracy);
-        const el = document.createElement('div');
+        const gameArea = this.gameArea || document.getElementById('gameArea');
+        if (!gameArea) return;
+
+        const el = this._timingFeedbackPool.pop() || document.createElement('div');
         el.className = 'timing-feedback ' + grade.cls;
         el.textContent = grade.text;
 
         // Position above the hit zone, centered on the key
-        const gameArea = document.getElementById('gameArea');
         el.style.left = (pos.left + pos.width / 2) + 'px';
 
-        const canvas = document.getElementById('notesCanvas');
-        const canvasH = canvas ? canvas.offsetHeight : 400;
         el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
 
+        this._activeTimingCount++;
+        el.onanimationend = () => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+            this._activeTimingCount = Math.max(0, (this._activeTimingCount || 1) - 1);
+            this._timingFeedbackPool.push(el);
+        };
         gameArea.appendChild(el);
-        setTimeout(() => el.remove(), 800);
     }
     
     updateScore() {
-        this.scoreElement.textContent = this.score;
-        this.comboElement.textContent = this.combo;
+        // Only write to DOM when values actually change
+        const score = String(this.score);
+        const combo = String(this.combo);
         if (this.combo > this.maxCombo) this.maxCombo = this.combo;
-        this.streakElement.textContent = this.maxCombo;
-        
+        const streak = String(this.maxCombo);
         const processedNotes = this.hitNotes + this.missedNotes;
-        const accuracy = processedNotes > 0 ? 
-            Math.floor((this.hitNotes / processedNotes) * 100) : 0;
-        this.accuracyElement.textContent = accuracy;
+        const accuracy = String(processedNotes > 0 ? Math.floor((this.hitNotes / processedNotes) * 100) : 0);
+        if (this.scoreElement.textContent !== score) this.scoreElement.textContent = score;
+        if (this.comboElement.textContent !== combo) this.comboElement.textContent = combo;
+        if (this.streakElement.textContent !== streak) this.streakElement.textContent = streak;
+        if (this.accuracyElement.textContent !== accuracy) this.accuracyElement.textContent = accuracy;
     }
 
     _formatTime(sec) {
@@ -2786,6 +3018,10 @@ class PianoHero {
 
     updateSongTimeline(currentTimeSec) {
         if (!this.songDuration || this.songDuration <= 0) return;
+        // Throttle DOM updates to ~15fps to avoid layout thrashing
+        const now = performance.now();
+        if (this._lastTimelineUpdate && now - this._lastTimelineUpdate < 66) return;
+        this._lastTimelineUpdate = now;
         const pct = Math.max(0, Math.min(100, (currentTimeSec / this.songDuration) * 100));
         this.songTimelineFill.style.width = pct + '%';
         this.songTimelineThumb.style.left = pct + '%';
@@ -2806,10 +3042,10 @@ class PianoHero {
 
         // Adjust startTime so the game clock reads gameClockSec
         if (this.isPaused || notYetStarted) {
-            const refTime = this.pauseTime || Date.now();
+            const refTime = this.pauseTime || performance.now();
             this.startTime = refTime - gameClockSec * 1000;
         } else {
-            this.startTime = Date.now() - gameClockSec * 1000;
+            this.startTime = performance.now() - gameClockSec * 1000;
         }
 
         // Cancel auto-play timeouts and clear active sounds
@@ -2870,7 +3106,7 @@ class PianoHero {
             return this.updatePracticeMode();
         }
         
-        const currentTime = (Date.now() - this.startTime) / 1000;
+        const currentTime = (this._frameTime - this.startTime) / 1000;
         const speed = this.speedMultiplier;
 
         // Update song progress timeline
@@ -2899,7 +3135,14 @@ class PianoHero {
             const dur = note.duration || 0.15;
             const noteHeight = Math.max(12, dur * this.noteSpeed * speed);
             if ((note.y - noteHeight) > this.canvas.height + 50) {
-                this.fallingNotes.splice(i, 1);
+                // Clean up held-note tracking so particles stop
+                if (this.heldFallingNotes.get(note.note) === note) {
+                    this.heldFallingNotes.delete(note.note);
+                }
+                // Swap-and-pop: O(1) removal
+                const last = this.fallingNotes.length - 1;
+                if (i !== last) this.fallingNotes[i] = this.fallingNotes[last];
+                this.fallingNotes.pop();
             }
         }
         
@@ -2922,7 +3165,13 @@ class PianoHero {
         if (!nextNote) {
             // All done
             this.isPlaying = false;
-            document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+            if (this._practiceHighlighted) {
+                for (const noteName of this._practiceHighlighted) {
+                    const el = this._keyElementCache && this._keyElementCache[noteName];
+                    if (el) el.classList.remove('practice-target');
+                }
+                this._practiceHighlighted = null;
+            }
             this.statusMessage.textContent = 
                 `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this._updateControlButtons();
@@ -2955,13 +3204,29 @@ class PianoHero {
 
         this.practiceWaiting = true;
 
-        // Highlight expected keys on the piano
-        document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
+        // Highlight expected keys on the piano (diff-based to avoid per-frame DOM thrashing)
+        const newTargets = new Set();
         for (const noteName of this.practiceExpectedNotes) {
-            if (this.practiceHitNotes.has(noteName)) continue; // already pressed
-            const targetKey = document.querySelector(`.key[data-note="${noteName}"]`);
-            if (targetKey) targetKey.classList.add('practice-target');
+            if (this.practiceHitNotes.has(noteName)) continue;
+            newTargets.add(noteName);
         }
+        // Remove highlight from keys no longer targeted
+        if (this._practiceHighlighted) {
+            for (const noteName of this._practiceHighlighted) {
+                if (!newTargets.has(noteName)) {
+                    const el = this._keyElementCache && this._keyElementCache[noteName];
+                    if (el) el.classList.remove('practice-target');
+                }
+            }
+        }
+        // Add highlight to newly targeted keys
+        for (const noteName of newTargets) {
+            if (!this._practiceHighlighted || !this._practiceHighlighted.has(noteName)) {
+                const el = this._keyElementCache && this._keyElementCache[noteName];
+                if (el) el.classList.add('practice-target');
+            }
+        }
+        this._practiceHighlighted = newTargets;
 
         const remaining = [...this.practiceExpectedNotes].filter(n => !this.practiceHitNotes.has(n));
         this.statusMessage.textContent = `Practice: play ${remaining.join(' + ')}`;
@@ -2990,7 +3255,7 @@ class PianoHero {
         this.practiceHitNotes.add(noteName);
 
         // Remove highlight from this key
-        const keyEl = document.querySelector(`.key[data-note="${noteName}"]`);
+        const keyEl = this._keyElementCache && this._keyElementCache[noteName];
         if (keyEl) keyEl.classList.remove('practice-target');
 
         // If all chord notes are hit, advance
@@ -3002,7 +3267,8 @@ class PianoHero {
         return true;
     }
     
-    _renderFrame() {
+    _renderFrame(ts) {
+        this._frameTime = ts || performance.now();
         this.update();
         
         const w = this.canvas.width, h = this.canvas.height;
@@ -3026,52 +3292,69 @@ class PianoHero {
         const canvasH = h + 50;
         const speed = this.speedMultiplier;
 
-        // Pre-render shared wave overlay once per frame for classic bars
-        if (this.noteStyle === 'classic') {
-            this._renderWaveOverlay();
-        }
+        if (this.glRenderer && this.glRenderer.available) {
+            // === PixiJS GPU-accelerated rendering (notes + wave ribbons) ===
+            this.glRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
+                noteSpeed: this.noteSpeed,
+                speedMultiplier: speed,
+                noteStyle: this.noteStyle,
+                hitZoneY: this.hitZoneY,
+                canvasH: canvasH,
+                gameMode: this.gameMode,
+                practiceWaiting: this.practiceWaiting,
+                practiceExpectedNotes: this.practiceExpectedNotes,
+                coPlayManualNotes: this.coPlayManualNotes,
+                heldFallingNotes: this.heldFallingNotes,
+                time: this._frameTime / 1000,
+                bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
+                waveCount: this.waveEnabled ? (this.waveCount || 6) : 0,
+            });
 
-        // If neon glow is enabled, draw notes to a glow canvas first for bloom
-        if (this.neonGlowEnabled) {
-            this._ensureGlowCanvas(w, h);
-            const gctx = this._glowCtx;
-            gctx.clearRect(0, 0, w, h);
-            // Temporarily swap context to draw notes onto glow canvas
-            const origCtx = this.ctx;
-            this.ctx = gctx;
-            for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
-                const note = this.fallingNotes[i];
-                const dur = note.duration || 0.15;
-                const noteH = Math.max(12, dur * this.noteSpeed * speed);
-                const topEdge = note.y - noteH;
-                if (topEdge < canvasH && note.y > -50) {
-                    this.drawNote(note);
-                }
-            }
-            this.ctx = origCtx;
+            // No drawImage needed — browser composites the DOM canvases natively
 
-            // Draw bloom layers (blurred copies composited with 'screen')
-            ctx.save();
-            ctx.globalCompositeOperation = 'screen';
-            // Layer 1: wide soft bloom
-            ctx.filter = 'blur(12px) brightness(1.5)';
-            ctx.globalAlpha = 0.35;
-            ctx.drawImage(this._glowCanvas, 0, 0);
-            // Layer 2: medium bloom
-            ctx.filter = 'blur(5px) brightness(1.2)';
-            ctx.globalAlpha = 0.5;
-            ctx.drawImage(this._glowCanvas, 0, 0);
-            ctx.restore();
-            // Layer 3: sharp original on top
-            ctx.drawImage(this._glowCanvas, 0, 0);
+            // Draw note labels on the 2D overlay canvas
+            this._drawNoteLabels(ctx, speed, canvasH);
         } else {
-            for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
-                const note = this.fallingNotes[i];
-                const dur = note.duration || 0.15;
-                const noteH = Math.max(12, dur * this.noteSpeed * speed);
-                const topEdge = note.y - noteH;
-                if (topEdge < canvasH && note.y > -50) {
-                    this.drawNote(note);
+            // === Canvas 2D fallback ===
+            // Pre-render shared wave overlay once per frame for classic bars
+            if (this.noteStyle === 'classic') {
+                this._renderWaveOverlay();
+            }
+
+            // If neon glow is enabled, draw notes to a glow canvas first for bloom
+            if (this.neonGlowEnabled) {
+                this._ensureGlowCanvas(w, h);
+                const gctx = this._glowCtx;
+                gctx.clearRect(0, 0, w, h);
+                const origCtx = this.ctx;
+                this.ctx = gctx;
+                for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                    const note = this.fallingNotes[i];
+                    const dur = note.duration || 0.15;
+                    const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                    const topEdge = note.y - noteH;
+                    if (topEdge < canvasH && note.y > -50) {
+                        this.drawNote(note);
+                    }
+                }
+                this.ctx = origCtx;
+
+                ctx.save();
+                ctx.globalCompositeOperation = 'screen';
+                ctx.filter = 'blur(8px) brightness(1.3)';
+                ctx.globalAlpha = 0.4;
+                ctx.drawImage(this._glowCanvas, 0, 0);
+                ctx.restore();
+                ctx.drawImage(this._glowCanvas, 0, 0);
+            } else {
+                for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                    const note = this.fallingNotes[i];
+                    const dur = note.duration || 0.15;
+                    const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                    const topEdge = note.y - noteH;
+                    if (topEdge < canvasH && note.y > -50) {
+                        this.drawNote(note);
+                    }
                 }
             }
         }
@@ -3105,8 +3388,11 @@ class PianoHero {
         const style = this.laneStyle;
         if (style === 'synthesia') {
             // Synthesia-inspired: dark background with octave separator lines
-            lctx.fillStyle = 'rgba(10, 10, 18, 1)';
-            lctx.fillRect(0, 0, w, h);
+            // When PixiJS renderer is active, bg overlay is drawn on GPU canvas instead
+            if (!this.glRenderer || !this.glRenderer.available) {
+                lctx.fillStyle = `rgba(14, 11, 34, ${this.bgOverlayOpacity})`;
+                lctx.fillRect(0, 0, w, h);
+            }
             // Draw vertical lines only at octave boundaries (C notes)
             lctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
             lctx.lineWidth = 1;
@@ -3221,17 +3507,16 @@ class PianoHero {
         
         const noteWidth = pos.width * 0.9;
         const dur = note.duration || 0.15;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
+        const noteGap = 4;
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
         
         const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
         const isCoPlayManual = this.gameMode === 'coplay' && this.coPlayManualNotes.has(note.note);
         const hand = note.hand || 0;
-
-        // Light beam color palette — hue based
-        // Black keys use a shifted shade (teal for left, indigo for right)
         const isBlackKey = pos.isBlack;
+
         let hue, sat, lum, alpha;
         if (note.missed) {
             hue = 0; sat = 85; lum = 55; alpha = 0.9;
@@ -3253,109 +3538,79 @@ class PianoHero {
             sat = 80; lum = 45; alpha = 0.9;
         }
 
-        const baseColor = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
-        const brightCore = `hsla(${hue}, ${sat}%, ${Math.min(lum + 15, 70)}%, ${alpha})`;
-        const outerGlow = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha * 0.25})`;
-        const whiteCore = `hsla(${hue}, 30%, ${Math.min(lum + 25, 75)}%, ${alpha * 0.7})`;
-
-        // Animated pulse — varies with time
-        const t = Date.now() / 1000;
-        const pulse = 0.7 + 0.3 * Math.sin(t * 4 + (pos.x * 0.1)); // per-lane offset
-        const fastPulse = 0.8 + 0.2 * Math.sin(t * 7 + (pos.x * 0.05));
-
         // Beam dimensions
-        const beamWidth = noteWidth * (0.35 + 0.08 * pulse);
-        const beamX = x + (noteWidth - beamWidth) / 2;
+        const centerX = x + noteWidth / 2;
+        const beamWidth = noteWidth * 0.35;
         const headHeight = Math.min(14, noteHeight);
         const tailHeight = noteHeight - headHeight;
         const headY = note.y - headHeight;
 
-        // Animated glow
-        if (alpha > 0.4) {
-            ctx.shadowColor = baseColor;
-            ctx.shadowBlur = isHeld ? (8 + 6 * pulse) : (2 + 4 * pulse);
-        }
-
-        // Draw beam tail — laser style with gradient core
+        // Draw beam tail — outer glow + bright core (just two fillRects, no gradients)
         if (tailHeight > 2) {
-            // Outer glow layer — pulsing width
-            const glowW = beamWidth * (1.4 + 0.4 * pulse);
-            const glowX = x + (noteWidth - glowW) / 2;
-            const glowGrad = ctx.createLinearGradient(glowX, 0, glowX + glowW, 0);
-            glowGrad.addColorStop(0, 'transparent');
-            glowGrad.addColorStop(0.25, outerGlow);
-            glowGrad.addColorStop(0.5, baseColor);
-            glowGrad.addColorStop(0.75, outerGlow);
-            glowGrad.addColorStop(1, 'transparent');
-            ctx.fillStyle = glowGrad;
-            ctx.fillRect(glowX, y, glowW, tailHeight);
+            // Outer glow
+            const glowW = beamWidth * 1.6;
+            ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha * 0.2})`;
+            ctx.fillRect(centerX - glowW / 2, y, glowW, tailHeight);
 
-            // Bright core beam
+            // Bright core
             const coreW = beamWidth * 0.4;
-            const coreX = x + (noteWidth - coreW) / 2;
-            const coreGrad = ctx.createLinearGradient(coreX, 0, coreX + coreW, 0);
-            coreGrad.addColorStop(0, brightCore);
-            coreGrad.addColorStop(0.5, whiteCore);
-            coreGrad.addColorStop(1, brightCore);
-            ctx.fillStyle = coreGrad;
-            ctx.fillRect(coreX, y, coreW, tailHeight);
-
-            // Edge highlights (skip in synthesia mode for clean look)
-            if (this.laneStyle !== 'synthesia') {
-                ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${lum + 15}%, ${alpha * 0.3})`;
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(beamX, y);
-                ctx.lineTo(beamX, y + tailHeight);
-                ctx.moveTo(beamX + beamWidth, y);
-                ctx.lineTo(beamX + beamWidth, y + tailHeight);
-                ctx.stroke();
-            }
+            ctx.fillStyle = `hsla(${hue}, ${Math.max(30, sat - 20)}%, ${Math.min(lum + 20, 75)}%, ${alpha * 0.8})`;
+            ctx.fillRect(centerX - coreW / 2, y, coreW, tailHeight);
         }
 
-        // Draw head — compact gem
-        const headR = Math.min(5, headHeight / 2, noteWidth / 2);
-        const headCenterX = x + noteWidth / 2;
-        const headCenterY = headY + headHeight / 2;
+        // Draw head — solid rectangle
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha})`;
+        ctx.fillRect(x + 2, headY + 1, noteWidth - 4, headHeight - 2);
 
-        // Head radial glow — pulsing radius
-        const radGrad = ctx.createRadialGradient(
-            headCenterX, headCenterY, 0,
-            headCenterX, headCenterY, noteWidth * (0.4 + 0.15 * fastPulse)
-        );
-        radGrad.addColorStop(0, brightCore);
-        radGrad.addColorStop(0.5, baseColor);
-        radGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = radGrad;
-        ctx.fillRect(x - noteWidth * 0.1, headY - 2, noteWidth * 1.2, headHeight + 4);
+        // Head highlight strip
+        ctx.fillStyle = `hsla(${hue}, 30%, ${Math.min(lum + 25, 75)}%, ${alpha * 0.5})`;
+        ctx.fillRect(x + 3, headY + 1, noteWidth - 6, Math.max(3, headHeight * 0.35));
 
-        // Head solid gem
-        ctx.fillStyle = baseColor;
-        this._roundRect(ctx, x + 2, headY + 1, noteWidth - 4, headHeight - 2, headR);
-        ctx.fill();
-
-        // Head highlight
-        const innerGrad = ctx.createLinearGradient(x, headY, x, headY + headHeight * 0.5);
-        innerGrad.addColorStop(0, whiteCore);
-        innerGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = innerGrad;
-        this._roundRect(ctx, x + 4, headY + 2, noteWidth - 8, headHeight * 0.4, headR - 1);
-        ctx.fill();
-
-        ctx.shadowBlur = 0;
-        
         // Label on head
         if (headHeight >= 12) {
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            // Dark outline for readability
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
             ctx.lineWidth = 3;
             ctx.lineJoin = 'round';
             ctx.strokeText(note.note, pos.x, headY + headHeight / 2);
             ctx.fillStyle = '#fff';
             ctx.fillText(note.note, pos.x, headY + headHeight / 2);
+        }
+    }
+
+    /** Draw text labels on the 2D canvas for WebGL-rendered notes */
+    _drawNoteLabels(ctx, speed, canvasH) {
+        if (this.noteStyle === 'classic') return; // classic bars don't have text labels
+
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.fillStyle = '#fff';
+
+        for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+            const note = this.fallingNotes[i];
+            const pos = this.keyPositions[note.note];
+            if (!pos) continue;
+            const dur = note.duration || 0.15;
+            const noteH = Math.max(12, dur * this.noteSpeed * speed);
+            const topEdge = note.y - noteH;
+            if (topEdge >= canvasH || note.y <= -50) continue;
+
+            const noteGap = 4;
+            const noteHeight = Math.max(12, dur * this.noteSpeed * speed - noteGap);
+
+            // Label on beam head
+            const headHeight = Math.min(14, noteHeight);
+            const headY = note.y - headHeight;
+            if (headHeight >= 12) {
+                ctx.strokeText(note.note, pos.x, headY + headHeight / 2);
+                ctx.fillText(note.note, pos.x, headY + headHeight / 2);
+            }
         }
     }
 
@@ -3372,19 +3627,16 @@ class PianoHero {
         const wctx = this._waveCtx;
         wctx.clearRect(0, 0, w, h);
 
-        const t = Date.now() / 1000;
+        const t = performance.now() / 1000;
 
-        // Smooth flowing ribbon waves (like the reference image)
+        // Smooth flowing ribbon waves (reduced for performance)
         const ribbons = [
-            { yBase: 0.20, thickness: 0.18, freq: 0.6, amp: 0.12, speed: 0.4, hue: 170, sat: 50, alpha: 0.25 },
-            { yBase: 0.40, thickness: 0.22, freq: 0.45, amp: 0.15, speed: -0.3, hue: 190, sat: 45, alpha: 0.20 },
-            { yBase: 0.60, thickness: 0.20, freq: 0.7, amp: 0.10, speed: 0.55, hue: 210, sat: 55, alpha: 0.22 },
-            { yBase: 0.80, thickness: 0.16, freq: 0.5, amp: 0.13, speed: -0.45, hue: 160, sat: 40, alpha: 0.18 },
-            { yBase: 0.35, thickness: 0.25, freq: 0.35, amp: 0.18, speed: 0.25, hue: 200, sat: 50, alpha: 0.15 },
-            { yBase: 0.70, thickness: 0.14, freq: 0.8, amp: 0.08, speed: 0.65, hue: 180, sat: 60, alpha: 0.20 },
+            { yBase: 0.25, thickness: 0.20, freq: 0.5, amp: 0.13, speed: 0.4, hue: 170, sat: 50, alpha: 0.25 },
+            { yBase: 0.55, thickness: 0.22, freq: 0.6, amp: 0.12, speed: -0.35, hue: 200, sat: 50, alpha: 0.22 },
+            { yBase: 0.80, thickness: 0.18, freq: 0.45, amp: 0.10, speed: 0.5, hue: 180, sat: 55, alpha: 0.20 },
         ];
 
-        const segments = 8; // bezier control points across width
+        const segments = 5; // bezier control points across width
 
         for (const ribbon of ribbons) {
             // Compute top and bottom edges of ribbon using smooth sine curves
@@ -3435,14 +3687,6 @@ class PianoHero {
             grad.addColorStop(1, `hsla(${ribbon.hue}, ${ribbon.sat}%, 75%, ${ribbon.alpha * 0.3})`);
             wctx.fillStyle = grad;
             wctx.fill();
-
-            // Soft inner glow along center line
-            const glowGrad = wctx.createLinearGradient(0, midY - ribbon.thickness * h * 0.15, 0, midY + ribbon.thickness * h * 0.15);
-            glowGrad.addColorStop(0, 'transparent');
-            glowGrad.addColorStop(0.5, `hsla(${ribbon.hue}, 30%, 95%, ${ribbon.alpha * 0.5})`);
-            glowGrad.addColorStop(1, 'transparent');
-            wctx.fillStyle = glowGrad;
-            wctx.fill();
         }
     }
 
@@ -3453,10 +3697,10 @@ class PianoHero {
 
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier);
+        const noteGap = 4;
+        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
-        const r = Math.min(5, noteWidth / 2, noteHeight / 2);
 
         const isHeld = note.hit && this.heldFallingNotes.get(note.note) === note;
         const hand = note.hand || 0;
@@ -3476,117 +3720,18 @@ class PianoHero {
             sat = 70; lum = 50; alpha = 0.9;
         }
 
-        // Per-note deterministic seed for variety (stable across frames)
-        if (note._glassSeed == null) {
-            const raw = ((note.note?.charCodeAt(0) || 0) * 7 + (note.startTime || 0) * 13 + (note.note?.length || 0) * 31) >>> 0;
-            note._glassSeed = (raw % 1000) / 1000; // 0..1
-        }
-        const seed = note._glassSeed;
-        // Derive per-note properties from seed
-        const variant = (seed * 5) | 0;        // 0-4: five visual variants
-        const glossIntensity = 0.3 + seed * 0.3; // 0.3 - 0.6
-        const edgeSide = seed > 0.4;             // left or right highlight
-        const tintShift = ((seed - 0.5) * 16) | 0; // -8 to +8 hue shift
-        const adjHue = hue + tintShift;
-
-        ctx.save();
-
-        // Clip to rounded rect for all layers
-        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
-        ctx.clip();
-
-        // 1) Base fill — translucent glass body with per-note tint
-        const bodyGrad = ctx.createLinearGradient(x, y, x, y + noteHeight);
-        if (variant === 0 || variant === 1) {
-            // Standard vertical gradient
-            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${sat}%, ${lum + 8}%, ${alpha * 0.75})`);
-            bodyGrad.addColorStop(0.45, `hsla(${adjHue}, ${sat}%, ${lum}%, ${alpha * 0.6})`);
-            bodyGrad.addColorStop(0.55, `hsla(${adjHue}, ${sat}%, ${lum - 5}%, ${alpha * 0.65})`);
-            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 3}%, ${alpha * 0.7})`);
-        } else if (variant === 2) {
-            // Deeper, more saturated glass
-            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${Math.min(sat + 15, 100)}%, ${lum + 5}%, ${alpha * 0.8})`);
-            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${sat}%, ${lum - 8}%, ${alpha * 0.55})`);
-            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat + 5}%, ${lum}%, ${alpha * 0.7})`);
-        } else if (variant === 3) {
-            // Frosted — lighter, more washed out
-            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${Math.max(sat - 20, 20)}%, ${lum + 15}%, ${alpha * 0.7})`);
-            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${Math.max(sat - 10, 30)}%, ${lum + 5}%, ${alpha * 0.55})`);
-            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 10}%, ${alpha * 0.65})`);
-        } else {
-            // Inverted gradient (darker top, lighter bottom)
-            bodyGrad.addColorStop(0, `hsla(${adjHue}, ${sat}%, ${lum - 5}%, ${alpha * 0.65})`);
-            bodyGrad.addColorStop(0.5, `hsla(${adjHue}, ${sat}%, ${lum}%, ${alpha * 0.6})`);
-            bodyGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 10}%, ${alpha * 0.75})`);
-        }
-        ctx.fillStyle = bodyGrad;
+        // Body fill — single solid color, no gradient
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${lum}%, ${alpha * 0.7})`;
         ctx.fillRect(x, y, noteWidth, noteHeight);
 
-        // 2) Glossy reflection — varies position and intensity
-        const glossH = Math.min(noteHeight * (0.25 + seed * 0.2), 20);
-        const glossY = variant === 4 ? y + noteHeight - glossH : y; // bottom gloss for variant 4
-        const glossGrad = ctx.createLinearGradient(x, glossY, x, glossY + glossH);
-        glossGrad.addColorStop(0, `hsla(${adjHue}, 20%, 95%, ${alpha * glossIntensity})`);
-        glossGrad.addColorStop(0.5, `hsla(${adjHue}, 30%, 80%, ${alpha * glossIntensity * 0.5})`);
-        glossGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = glossGrad;
-        ctx.fillRect(x, glossY, noteWidth, glossH);
+        // Glossy top strip
+        ctx.fillStyle = `hsla(${hue}, 20%, 90%, ${alpha * 0.25})`;
+        ctx.fillRect(x, y, noteWidth, Math.min(noteHeight * 0.25, 12));
 
-        // 3) Water wave overlay — sample from shared wave canvas, tinted per-note
-        if (this._waveCanvas) {
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.globalAlpha = alpha * (0.7 + seed * 0.3);
-            ctx.drawImage(this._waveCanvas, x, y, noteWidth, noteHeight, x, y, noteWidth, noteHeight);
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = 1;
-        }
-
-        // 5) Edge specular highlight — left or right side per note
-        const edgeW = Math.max(2, noteWidth * 0.12);
-        if (edgeSide) {
-            // Right edge
-            const edgeGrad = ctx.createLinearGradient(x + noteWidth - edgeW, 0, x + noteWidth, 0);
-            edgeGrad.addColorStop(0, 'transparent');
-            edgeGrad.addColorStop(1, `hsla(${adjHue}, 20%, 90%, ${alpha * 0.3})`);
-            ctx.fillStyle = edgeGrad;
-            ctx.fillRect(x + noteWidth - edgeW, y, edgeW, noteHeight);
-        } else {
-            // Left edge
-            const edgeGrad = ctx.createLinearGradient(x, 0, x + edgeW, 0);
-            edgeGrad.addColorStop(0, `hsla(${adjHue}, 20%, 90%, ${alpha * 0.35})`);
-            edgeGrad.addColorStop(1, 'transparent');
-            ctx.fillStyle = edgeGrad;
-            ctx.fillRect(x, y, edgeW, noteHeight);
-        }
-
-        // 6) Inner edge glow — dual-edge for some variants
-        if (variant === 2 || variant === 4) {
-            const dualW = Math.max(1.5, noteWidth * 0.08);
-            const otherSide = edgeSide ? x : x + noteWidth - dualW;
-            const dualGrad = edgeSide
-                ? ctx.createLinearGradient(x, 0, x + dualW, 0)
-                : ctx.createLinearGradient(x + noteWidth - dualW, 0, x + noteWidth, 0);
-            dualGrad.addColorStop(0, edgeSide ? `hsla(${adjHue}, 30%, 85%, ${alpha * 0.15})` : 'transparent');
-            dualGrad.addColorStop(1, edgeSide ? 'transparent' : `hsla(${adjHue}, 30%, 85%, ${alpha * 0.15})`);
-            ctx.fillStyle = dualGrad;
-            ctx.fillRect(otherSide, y, dualW, noteHeight);
-        }
-
-        // 7) Bottom inner glow
-        const botH = Math.min(noteHeight * 0.15, 8);
-        const botGrad = ctx.createLinearGradient(x, y + noteHeight - botH, x, y + noteHeight);
-        botGrad.addColorStop(0, 'transparent');
-        botGrad.addColorStop(1, `hsla(${adjHue}, ${sat}%, ${lum + 15}%, ${alpha * 0.2})`);
-        ctx.fillStyle = botGrad;
-        ctx.fillRect(x, y + noteHeight - botH, noteWidth, botH);
-
-        ctx.restore();
-
-        // 8) Glass border
-        ctx.strokeStyle = `hsla(${adjHue}, ${sat}%, ${Math.min(lum + 25, 80)}%, ${alpha * 0.5})`;
+        // Border
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${Math.min(lum + 25, 80)}%, ${alpha * 0.5})`;
         ctx.lineWidth = 1;
-        this._roundRect(ctx, x, y, noteWidth, noteHeight, r);
-        ctx.stroke();
+        ctx.strokeRect(x + 0.5, y + 0.5, noteWidth - 1, noteHeight - 1);
     }
 
     _roundRect(ctx, x, y, w, h, r) {
@@ -3739,9 +3884,105 @@ class PianoHero {
         ctx.restore();
     }
 
+    /** Emit a one-time burst of sparkle particles when a note is hit */
+    _emitHitBurst(noteName, hand) {
+        if (!this.sparkleEnabled || this.sparkleIntensity <= 0) return;
+        const pos = this.keyPositions[noteName];
+        if (!pos) return;
+        if (!this._particlePool) this._particlePool = [];
+        const pool = this._particlePool;
+        const isBlackKey = pos.isBlack;
+        const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : 5) * this.sparkleIntensity));
+        for (let i = 0; i < burstCount; i++) {
+            if (this.particleStyle === 'splash') {
+                const isWhite = Math.random() < 0.3;
+                let color;
+                if (isWhite) {
+                    color = `hsla(200, 100%, ${90 + Math.random() * 10}%, 0.95)`;
+                } else if (hand === 0) {
+                    const hue = isBlackKey ? 160 + Math.random() * 40 : 140 + Math.random() * 40;
+                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
+                } else {
+                    const hue = isBlackKey ? 210 + Math.random() * 40 : 190 + Math.random() * 40;
+                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
+                }
+                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2;
+                const speed = (3.0 + Math.random() * 4.0) * this.sparkleHeight;
+                const spikeLen = (18 + Math.random() * 28) * this.sparkleHeight;
+                const p = pool.pop() || {};
+                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.5;
+                p.y = this.hitZoneY - 12 - Math.random() * 3;
+                p.vx = Math.cos(angle) * speed;
+                p.vy = Math.sin(angle) * speed;
+                p.life = 1.0;
+                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
+                p.size = 1.8 + Math.random() * 2.2;
+                p.spikeLength = spikeLen;
+                p.spikeAngle = angle;
+                p.color = color;
+                p.type = 'splash';
+                this.particles.push(p);
+            } else {
+                const isWhite = Math.random() < 0.35;
+                let color;
+                if (isWhite) {
+                    color = `hsl(0, 0%, ${85 + Math.random() * 15}%)`;
+                } else if (hand === 0) {
+                    const baseHue = isBlackKey ? 150 + Math.random() * 30 : 120 + Math.random() * 30;
+                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
+                } else {
+                    const baseHue = isBlackKey ? 230 + Math.random() * 30 : 200 + Math.random() * 30;
+                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
+                }
+                const p = pool.pop() || {};
+                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.8;
+                p.y = this.hitZoneY - 12 - Math.random() * 10;
+                p.vx = (Math.random() - 0.5) * 2.0;
+                p.vy = -(Math.random() * 5 + 3.0) * this.sparkleHeight;
+                p.life = 1.0;
+                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
+                p.size = 2.0 + Math.random() * 2.5;
+                p.length = (10 + Math.random() * 16) * this.sparkleHeight;
+                p.color = color;
+                p.type = 'sparkle';
+                this.particles.push(p);
+            }
+        }
+    }
+
     _emitHeldNoteParticles() {
-        if (!this.isPlaying || this.isPaused || this.sparkleIntensity <= 0) return;
+        if (!this.isPlaying || this.isPaused || this.sparkleIntensity <= 0 || !this.sparkleEnabled) return;
+        // Reusable pool to avoid GC pressure
+        if (!this._particlePool) this._particlePool = [];
+        const pool = this._particlePool;
+
         for (const [noteName, fallingNote] of this.heldFallingNotes) {
+            // Only sparkle while the note body still overlaps the hit zone
+            const dur = fallingNote.duration || 0.15;
+            const noteH = Math.max(12, dur * this.noteSpeed * (this.speedMultiplier || 1));
+            const noteTop = fallingNote.y - noteH;
+            if (noteTop > this.hitZoneY) {
+                // Note scrolled past — skip sparkle but don't delete held state
+                // (cleanup happens in update() when note leaves the screen)
+                continue;
+            }
+
+            // In manual mode, only sparkle while the key is physically held down
+            if (!this.isAutoPlay) {
+                const boundKey = this.noteToKey[noteName];
+                if (boundKey) {
+                    if (!this.heldKeys.has(boundKey)) continue;
+                } else {
+                    if (!this._keyElementCache) this._keyElementCache = {};
+                    let el = this._keyElementCache[noteName];
+                    if (el === undefined) {
+                        el = document.querySelector(`.key[data-note="${noteName}"]`);
+                        this._keyElementCache[noteName] = el || null;
+                    }
+                    if (!el || !el.classList.contains('active')) continue;
+                }
+            }
+
             const pos = this.keyPositions[noteName];
             if (!pos) continue;
             const hand = fallingNote.hand || 0;
@@ -3750,8 +3991,7 @@ class PianoHero {
             if (this.particleStyle === 'splash') {
                 // Splash: sharp spiky bursts radiating outward from hit zone
                 const baseCount = Math.random() < 0.4 ? 5 : 4;
-                const count = Math.round(baseCount * this.sparkleIntensity);
-                if (count <= 0) continue;
+                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
                 for (let i = 0; i < count; i++) {
                     const isWhite = Math.random() < 0.3;
                     let color;
@@ -3768,25 +4008,24 @@ class PianoHero {
                     const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.0;
                     const speed = (2.0 + Math.random() * 3.5) * this.sparkleHeight;
                     const spikeLen = (15 + Math.random() * 25) * this.sparkleHeight;
-                    this.particles.push({
-                        x: pos.x + (Math.random() - 0.5) * pos.width * 0.4,
-                        y: this.hitZoneY - Math.random() * 2,
-                        vx: Math.cos(angle) * speed,
-                        vy: Math.sin(angle) * speed,
-                        life: 1.0,
-                        decay: (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3),
-                        size: 1.5 + Math.random() * 2.0,
-                        spikeLength: spikeLen,
-                        spikeAngle: angle,
-                        color: color,
-                        type: 'splash',
-                    });
+                    const p = pool.pop() || {};
+                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.4;
+                    p.y = this.hitZoneY - 12 - Math.random() * 2;
+                    p.vx = Math.cos(angle) * speed;
+                    p.vy = Math.sin(angle) * speed;
+                    p.life = 1.0;
+                    p.decay = (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3);
+                    p.size = 1.5 + Math.random() * 2.0;
+                    p.spikeLength = spikeLen;
+                    p.spikeAngle = angle;
+                    p.color = color;
+                    p.type = 'splash';
+                    this.particles.push(p);
                 }
             } else {
                 // Sparkle (default): beam/streak particles
                 const baseCount = Math.random() < 0.5 ? 3 : 2;
-                const count = Math.round(baseCount * this.sparkleIntensity);
-                if (count <= 0) continue;
+                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
                 for (let i = 0; i < count; i++) {
                     const isWhite = Math.random() < 0.35;
                     let color;
@@ -3799,31 +4038,35 @@ class PianoHero {
                         const baseHue = isBlackKey ? 230 + Math.random() * 30 : 200 + Math.random() * 30;
                         color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
                     }
-                    this.particles.push({
-                        x: pos.x + (Math.random() - 0.5) * pos.width * 0.7,
-                        y: this.hitZoneY - Math.random() * 8,
-                        vx: (Math.random() - 0.5) * 1.5,
-                        vy: -(Math.random() * 4 + 2.5) * this.sparkleHeight,
-                        life: 1.0,
-                        decay: (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3),
-                        size: 1.5 + Math.random() * 2.5,
-                        length: (8 + Math.random() * 14) * this.sparkleHeight,
-                        color: color,
-                        type: 'sparkle',
-                    });
+                    const p = pool.pop() || {};
+                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.7;
+                    p.y = this.hitZoneY - 12 - Math.random() * 8;
+                    p.vx = (Math.random() - 0.5) * 1.5;
+                    p.vy = -(Math.random() * 4 + 2.5) * this.sparkleHeight;
+                    p.life = 1.0;
+                    p.decay = (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3);
+                    p.size = 1.5 + Math.random() * 2.5;
+                    p.length = (8 + Math.random() * 14) * this.sparkleHeight;
+                    p.color = color;
+                    p.type = 'sparkle';
+                    this.particles.push(p);
                 }
             }
         }
     }
 
     _updateAndDrawParticles(ctx) {
+        const pool = this._particlePool || (this._particlePool = []);
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
             p.x += p.vx;
             p.y += p.vy;
             p.life -= p.decay;
             if (p.life <= 0) {
-                this.particles.splice(i, 1);
+                const last = this.particles.length - 1;
+                if (i !== last) this.particles[i] = this.particles[last];
+                this.particles.pop();
+                if (pool.length < 500) pool.push(p); // recycle
                 continue;
             }
 
@@ -3905,7 +4148,7 @@ class PianoHero {
         if (this.laneStyle === 'synthesia') return; // clean look, no timeline grid
         const ctx = this.ctx;
         const speed = this.speedMultiplier;
-        const currentTime = (Date.now() - this.startTime) / 1000;
+        const currentTime = (this._frameTime - this.startTime) / 1000;
         const pxPerSec = this.noteSpeed * speed;
 
         // Determine tick interval: 1s, 5s, or 10s depending on zoom
@@ -3925,6 +4168,9 @@ class PianoHero {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
 
+        // Cache measureText results — labels repeat every loop
+        if (!this._timelineLabelWidths) this._timelineLabelWidths = {};
+
         for (let t = firstTick; t <= lastTick; t += tickSec) {
             const scaledT = t / speed;
             const yy = this.hitZoneY - (scaledT - currentTime) * pxPerSec;
@@ -3938,12 +4184,17 @@ class PianoHero {
             ctx.lineTo(this.canvas.width, yy);
             ctx.stroke();
 
-            // Time label
+            // Time label with cached width
             const mins = Math.floor(t / 60);
             const secs = Math.floor(t % 60);
             const label = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : `${secs}s`;
+            let lw = this._timelineLabelWidths[label];
+            if (lw === undefined) {
+                lw = ctx.measureText(label).width;
+                this._timelineLabelWidths[label] = lw;
+            }
             ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.fillRect(2, yy - 8, ctx.measureText(label).width + 6, 16);
+            ctx.fillRect(2, yy - 8, lw + 6, 16);
             ctx.fillStyle = 'rgba(255,255,255,0.9)';
             ctx.fillText(label, 5, yy);
         }

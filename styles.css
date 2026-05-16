@@ -6,33 +6,54 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: #0a0a0a;
+    background: linear-gradient(135deg, #0b0a1a 0%, #1a0e3e 30%, #2d1b69 60%, #4a1942 100%);
+    background-attachment: fixed;
     color: #e0e0e0;
-    min-height: 100vh;
-    overflow-x: hidden;
+    height: 100vh;
+    overflow: hidden;
 }
 
 .container {
     position: relative;
     max-width: 100%;
     margin: 0 auto;
-    padding: 6px 10px;
+    padding: 6px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
 }
 
 header.top-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: #1a1a1a;
+    background: rgba(10, 8, 24, 0.92);
+    backdrop-filter: blur(10px);
     padding: 4px 16px;
-    margin: -6px -10px 2px -10px;
-    border-bottom: 1px solid #2a2a2a;
+    margin: -6px 0 0 0;
+    border: none;
     position: relative;
     z-index: 100;
 }
 
 .header-spacer {
     flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+}
+
+.header-status-message {
+    font-size: 12px;
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.header-status-message:empty {
+    display: none;
 }
 
 .header-logo {
@@ -49,7 +70,7 @@ header.top-header {
 .header-divider {
     width: 1px;
     height: 24px;
-    background: #444;
+    background: #3a2d6e;
     flex-shrink: 0;
 }
 
@@ -64,7 +85,7 @@ header.top-header {
     align-items: center;
     width: 40px;
     height: 40px;
-    background: #3a3a3a;
+    background: #2a1f5e;
     border: none;
     cursor: pointer;
     padding: 0;
@@ -74,7 +95,7 @@ header.top-header {
 }
 
 .header-browser-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(124, 77, 255, 0.25);
 }
 
 .header-browser-btn .menu-icon {
@@ -93,10 +114,10 @@ header.top-header {
     margin-top: 6px;
     width: 480px;
     max-height: 400px;
-    background: #1a1a1a;
-    border: 1px solid #333;
+    background: #12102a;
+    border: 1px solid #3a2d6e;
     border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    box-shadow: 0 8px 32px rgba(10, 5, 30, 0.8);
     z-index: 200;
     display: flex;
     flex-direction: row;
@@ -115,8 +136,8 @@ header.top-header {
     margin: 0;
     width: 100px;
     flex-shrink: 0;
-    background: #141414;
-    border-right: 1px solid #333;
+    background: #0c0a20;
+    border-right: 1px solid #3a2d6e;
 }
 
 .song-browser-dropdown .tab-btn {
@@ -138,13 +159,13 @@ header.top-header {
 }
 
 .song-browser-dropdown .tab-btn.active {
-    background: #1a1a1a;
+    background: #12102a;
     color: #fff;
-    border-left-color: #4a9eff;
+    border-left-color: #7c4dff;
 }
 
 .song-browser-dropdown .tab-btn:not(.active):hover {
-    background: #1e1e1e;
+    background: #1a1540;
     color: #ccc;
 }
 
@@ -189,22 +210,22 @@ header.top-header {
     display: flex;
     gap: 6px;
     padding: 10px;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid #2a1f5e;
 }
 
 .song-browser-dropdown .bitmidi-search-section input {
     flex: 1;
     padding: 8px 10px;
-    border: 1px solid #333;
+    border: 1px solid #3a2d6e;
     border-radius: 6px;
-    background: #111;
+    background: #0c0a20;
     color: #e0e0e0;
     font-size: 13px;
 }
 
 .song-browser-dropdown .bitmidi-search-section button {
     padding: 8px 14px;
-    background: #6c3bbf;
+    background: #7c4dff;
     color: white;
     border: none;
     border-radius: 6px;
@@ -215,7 +236,7 @@ header.top-header {
 }
 
 .song-browser-dropdown .bitmidi-search-section button:hover {
-    background: #7c4bd0;
+    background: #9c6fff;
 }
 
 .song-browser-dropdown .bitmidi-results {
@@ -234,6 +255,7 @@ header.top-header {
     min-width: 0;
     max-width: 260px;
     flex-shrink: 1;
+    cursor: pointer;
 }
 
 /* Player controls in header */
@@ -353,10 +375,10 @@ header.top-header {
     right: 0;
     margin-top: 6px;
     width: 240px;
-    background: #1a1a1a;
-    border: 1px solid #333;
+    background: #12102a;
+    border: 1px solid #3a2d6e;
     border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    box-shadow: 0 8px 32px rgba(10, 5, 30, 0.8);
     z-index: 200;
     overflow: hidden;
 }
@@ -367,7 +389,7 @@ header.top-header {
 
 .mode-dropdown-group {
     padding: 6px 0;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid #2a1f5e;
 }
 
 .mode-dropdown-group:last-child {
@@ -398,11 +420,11 @@ header.top-header {
 }
 
 .mode-option:hover {
-    background: #252525;
+    background: #1a1540;
 }
 
 .mode-option.active {
-    color: #4a9eff;
+    color: #b388ff;
     font-weight: bold;
 }
 
@@ -410,7 +432,7 @@ header.top-header {
     content: "●";
     position: absolute;
     left: 10px;
-    color: #4a9eff;
+    color: #b388ff;
     font-size: 8px;
 }
 
@@ -474,12 +496,12 @@ header.top-header {
 }
 
 .controls {
-    background: #141414;
-    border: 1px solid #2a2a2a;
+    background: #0e0b22;
+    border: 1px solid #2a1f5e;
     border-radius: 10px;
     padding: 10px 14px;
     margin-bottom: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 16px rgba(10, 5, 30, 0.4);
 }
 
 .top-bar .status-section {
@@ -522,9 +544,9 @@ header.top-header {
 .tab-btn {
     flex: 1;
     padding: 6px 12px;
-    background: #1a1a1a;
+    background: #0e0b22;
     color: rgba(255, 255, 255, 0.6);
-    border: 2px solid #333;
+    border: 2px solid #3a2d6e;
     border-radius: 6px;
     font-size: 13px;
     font-weight: bold;
@@ -534,13 +556,13 @@ header.top-header {
 }
 
 .tab-btn.active {
-    background: #4a9eff;
+    background: #7c4dff;
     color: #fff;
-    border-color: #4a9eff;
+    border-color: #7c4dff;
 }
 
 .tab-btn:not(.active):hover {
-    background: #252525;
+    background: #1a1540;
     color: #fff;
 }
 
@@ -561,7 +583,7 @@ header.top-header {
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid #2a1f5e;
     transition: background 0.15s;
 }
 
@@ -570,7 +592,7 @@ header.top-header {
 }
 
 .midi-list-item:hover {
-    background: #252525;
+    background: #1a1540;
 }
 
 .midi-list-name {
@@ -585,7 +607,7 @@ header.top-header {
 }
 
 .midi-list-name:hover {
-    color: #4a9eff;
+    color: #b388ff;
 }
 
 .midi-list-btn {
@@ -601,7 +623,7 @@ header.top-header {
 }
 
 .midi-list-btn:hover {
-    background: #333;
+    background: #2a1f5e;
     color: #fff;
 }
 
@@ -613,10 +635,10 @@ header.top-header {
 #youtubeUrl {
     flex: 1;
     padding: 12px;
-    border: 1px solid #333;
+    border: 1px solid #3a2d6e;
     border-radius: 8px;
     font-size: 16px;
-    background: #1a1a1a;
+    background: #0e0b22;
     color: #e0e0e0;
 }
 
@@ -632,14 +654,14 @@ button {
 }
 
 #loadBtn {
-    background: #4a9eff;
+    background: #7c4dff;
     color: white;
 }
 
 #loadBtn:hover {
-    background: #3a8eef;
+    background: #9c6fff;
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 5px 15px rgba(124, 77, 255, 0.4);
 }
 
 .settings-section {
@@ -658,8 +680,8 @@ button {
 #backendSelect {
     padding: 8px 15px;
     border-radius: 8px;
-    border: 1px solid #333;
-    background: #1a1a1a;
+    border: 1px solid #3a2d6e;
+    background: #0e0b22;
     color: #e0e0e0;
     font-size: 14px;
     cursor: pointer;
@@ -667,12 +689,12 @@ button {
 }
 
 #backendSelect:hover {
-    border-color: #555;
-    background: #222;
+    border-color: #7c4dff;
+    background: #12102a;
 }
 
 #backendSelect option {
-    background: #1a1a1a;
+    background: #0e0b22;
     color: #e0e0e0;
 }
 
@@ -693,7 +715,7 @@ button {
 .progress-bar {
     width: 100%;
     height: 20px;
-    background: #1a1a1a;
+    background: #0e0b22;
     border-radius: 10px;
     overflow: hidden;
     display: none;
@@ -705,7 +727,7 @@ button {
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    background: linear-gradient(90deg, #7c4dff, #b388ff);
     width: 0%;
     transition: width 0.3s ease;
     border-radius: 10px;
@@ -719,7 +741,7 @@ button {
 }
 
 .game-controls button {
-    background: #4CAF50;
+    background: #7c4dff;
     color: white;
 }
 
@@ -730,7 +752,7 @@ button {
 }
 
 .game-controls button:not(:disabled):hover {
-    background: #45a049;
+    background: #9c6fff;
     transform: translateY(-2px);
 }
 
@@ -752,14 +774,14 @@ button {
     width: 44px;
     min-width: 44px;
     height: 24px;
-    background: #2196F3;
+    background: #3a2d6e;
     border-radius: 12px;
     transition: background 0.3s;
     flex-shrink: 0;
 }
 
 .mode-toggle input:checked ~ .toggle-track {
-    background: #4CAF50;
+    background: #7c4dff;
 }
 
 .toggle-knob {
@@ -794,14 +816,14 @@ button {
     height: 18px;
     min-width: 34px;
     min-height: 18px;
-    background: #555;
+    background: #3a2d6e;
     border-radius: 9px;
     transition: background 0.3s;
     flex-shrink: 0;
 }
 
 .toggle-small input:checked ~ .toggle-track-small {
-    background: #4CAF50;
+    background: #7c4dff;
 }
 
 .toggle-knob-small {
@@ -864,40 +886,39 @@ button {
     background: rgba(255,255,255,0.1);
 }
 
-.score-section {
+.header-score-section {
     display: flex;
-    justify-content: center;
-    gap: 10px;
-    font-size: 13px;
-    font-weight: bold;
-}
-
-.stat-item {
-    padding: 4px 10px;
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-}
-
-/* Stats bar below settings */
-.stats-bar {
-    background: #141414;
-    border: 1px solid #2a2a2a;
-    border-radius: 10px;
-    padding: 8px 12px;
-    margin-bottom: 6px;
-    display: flex;
-    flex-direction: column;
+    align-items: center;
     gap: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-right: 4px;
+}
+
+.header-score-section .stat-item {
+    padding: 3px 8px;
+    background: rgba(14, 11, 34, 0.7);
+    border: 1px solid #2a1f5e;
+    border-radius: 5px;
+    white-space: nowrap;
+}
+
+/* Stats bar (timeline only) */
+.stats-bar {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
 }
 
 /* Song progress timeline */
 .song-timeline {
     position: relative;
     height: 18px;
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 9px;
+    background: #060412;
+    border: none;
+    border-radius: 0;
     cursor: pointer;
     overflow: hidden;
     user-select: none;
@@ -908,11 +929,12 @@ button {
     top: 0;
     left: 0;
     height: 100%;
-    background: linear-gradient(90deg, #4a9eff, #6ab8ff);
-    border-radius: 9px;
+    background: linear-gradient(90deg, #2a1f5e, #3d2d7a);
+    border-radius: 0;
     width: 0%;
-    transition: width 0.1s linear;
     pointer-events: none;
+    will-change: width;
+    contain: layout style;
 }
 
 .song-timeline-thumb {
@@ -927,6 +949,8 @@ button {
     box-shadow: 0 0 4px rgba(0,0,0,0.5);
     pointer-events: none;
     z-index: 2;
+    will-change: left;
+    contain: layout style;
 }
 
 .song-time-label {
@@ -938,18 +962,23 @@ button {
     color: #888;
     pointer-events: none;
     z-index: 3;
+    contain: layout style;
 }
 
 #gameArea {
     position: relative;
-    background: #0e0e0e;
-    border: 1px solid #222;
-    border-radius: 10px;
-    margin-bottom: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    background: rgba(14, 11, 34, 0.25);
+    border: none;
+    border-radius: 0;
+    margin-bottom: 0;
+    box-shadow: none;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none; /* Firefox */
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 #gameArea::-webkit-scrollbar {
@@ -958,13 +987,31 @@ button {
 
 #gameCanvas {
     position: relative;
-    background: #111;
-    height: 500px;
+    background: rgba(14, 11, 34, 0.1);
+    flex: 1;
+    min-height: 0;
     /* width set dynamically by JS */
 }
 
+#glCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+}
+
 #notesCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
     display: block;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    pointer-events: none;
 }
 
 #piano {
@@ -989,10 +1036,10 @@ button {
     position: relative;
     border: 2px solid #000;
     cursor: pointer;
-    transition: background 0.05s ease, transform 0.05s ease;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: none;
+    contain: layout style;
 }
 
 .key.white {
@@ -1009,7 +1056,7 @@ button {
 }
 
 .key.white:active, .key.white.active {
-    background: linear-gradient(to bottom, #4CAF50 0%, #45a049 100%);
+    background: linear-gradient(to bottom, #7c4dff 0%, #6a3de8 100%);
     color: white;
     transform: translateY(2px);
     box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.3);
@@ -1030,7 +1077,7 @@ button {
 }
 
 .key.black:active, .key.black.active {
-    background: linear-gradient(to bottom, #4CAF50 0%, #45a049 100%);
+    background: linear-gradient(to bottom, #7c4dff 0%, #6a3de8 100%);
     transform: translateY(2px);
     box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.5);
 }
@@ -1085,11 +1132,11 @@ button {
 }
 
 .instructions {
-    background: #141414;
-    border: 1px solid #2a2a2a;
+    background: #0e0b22;
+    border: 1px solid #2a1f5e;
     border-radius: 15px;
     padding: 20px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 16px rgba(10, 5, 30, 0.4);
 }
 
 .instructions h3 {
@@ -1117,10 +1164,10 @@ button {
 /* Animations for hitting notes */
 @keyframes hitSuccess {
     0% {
-        box-shadow: 0 0 0 #4CAF50;
+        box-shadow: 0 0 0 #7c4dff;
     }
     50% {
-        box-shadow: 0 0 20px #4CAF50;
+        box-shadow: 0 0 20px #7c4dff;
     }
     100% {
         box-shadow: none;
@@ -1129,6 +1176,7 @@ button {
 
 .hit-success {
     animation: hitSuccess 0.3s ease;
+    contain: layout style;
 }
 
 @keyframes hitMiss {
@@ -1155,6 +1203,7 @@ button {
     animation: hitMiss 0.35s ease !important;
     background: linear-gradient(to bottom, #f44336 0%, #d32f2f 100%) !important;
     color: #fff !important;
+    contain: layout style;
 }
 
 /* Timing feedback text */
@@ -1170,6 +1219,7 @@ button {
     text-shadow: 0 0 6px currentColor, 0 2px 4px rgba(0,0,0,0.6);
     animation: timingFloat 0.8s ease-out forwards;
     white-space: nowrap;
+    contain: layout style;
 }
 
 .timing-perfect { color: #FFD700; }
@@ -1280,10 +1330,12 @@ button {
     left: 0;
     right: 0;
     z-index: 99;
-    background: #141414;
-    border: 1px solid #2a2a2a;
+    background: rgba(10, 8, 24, 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: none;
     border-radius: 0 0 10px 10px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 8px 24px rgba(10, 5, 30, 0.6);
     overflow: hidden;
 }
 
@@ -1291,7 +1343,7 @@ button {
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
-    padding: 14px 16px;
+    padding: 20px 16px 14px 16px;
     transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
     max-height: 70vh;
     opacity: 1;
@@ -1312,7 +1364,7 @@ button {
 }
 
 .settings-panel + .settings-panel {
-    border-left: 1px solid #2a2a2a;
+    border-left: 1px solid #2a1f5e;
     padding-left: 16px;
 }
 
@@ -1320,7 +1372,7 @@ button {
     .settings-panel + .settings-panel {
         border-left: none;
         padding-left: 0;
-        border-top: 1px solid #2a2a2a;
+        border-top: 1px solid #2a1f5e;
         padding-top: 12px;
     }
 }
@@ -1333,7 +1385,7 @@ button {
     text-transform: uppercase;
     letter-spacing: 1.5px;
     padding-bottom: 8px;
-    border-bottom: 2px solid #555;
+    border-bottom: 2px solid #7c4dff;
 }
 
 .settings-panel-body {
@@ -1522,7 +1574,7 @@ button {
 }
 
 .setting-row select option {
-    background: #2d3748;
+    background: #12102a;
     color: white;
 }
 
@@ -1530,6 +1582,30 @@ button {
     font-size: 13px;
     opacity: 0.8;
     min-width: 20px;
+}
+
+.setting-btn-group {
+    display: flex;
+    gap: 6px;
+}
+
+.setting-btn-small {
+    padding: 3px 10px;
+    font-size: 12px;
+    border: 1px solid #3a2d6e;
+    border-radius: 4px;
+    background: #1a1540;
+    color: #e0e0e0;
+    cursor: pointer;
+}
+
+.setting-btn-small:hover:not(:disabled) {
+    background: #2a1f5e;
+}
+
+.setting-btn-small:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 .setting-info {
@@ -1615,7 +1691,7 @@ button {
     padding: 5px 14px;
     border: none;
     border-radius: 6px;
-    background: #4CAF50;
+    background: #7c4dff;
     color: #fff;
     font-size: 12px;
     font-weight: bold;
@@ -1758,7 +1834,7 @@ button {
 .keymap-note-name {
     font-size: 2.4em;
     font-weight: bold;
-    color: #4a9eff;
+    color: #b388ff;
     letter-spacing: 3px;
     margin-bottom: 16px;
 }
@@ -1783,7 +1859,7 @@ button {
     min-width: 44px;
     padding: 6px 14px;
     background: #2a2a3e;
-    border: 2px solid #4a9eff;
+    border: 2px solid #7c4dff;
     border-radius: 8px;
     font-family: monospace;
     font-size: 17px;
@@ -1793,9 +1869,9 @@ button {
 }
 
 .keymap-new-badge {
-    background: rgba(76, 175, 80, 0.2);
-    border-color: #4CAF50;
-    color: #81c784;
+    background: rgba(124, 77, 255, 0.2);
+    border-color: #7c4dff;
+    color: #b388ff;
 }
 
 .keymap-new-badge.conflict {
@@ -1843,7 +1919,7 @@ button {
 
 .keymap-btn-confirm {
     padding: 8px 20px;
-    background: #4CAF50;
+    background: #7c4dff;
     color: #fff;
     border: none;
     border-radius: 8px;
