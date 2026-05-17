@@ -65,6 +65,14 @@ class PianoHero {
         this._laneCanvas = null; // offscreen canvas for lanes + hit zone
         this._laneCacheDirty = true;
         this._boundRender = (ts) => this._renderFrame(ts);
+        this._fixedStepSec = 1 / 60;
+        this._maxCatchupSteps = 5;
+        this._logicAccumulatorSec = 0;
+        this._logicClockSec = 0;
+        this._logicLastTargetSec = 0;
+        this._hasLogicClock = false;
+        this.noteLeadInSec = 3;
+        this._preRollSec = 0;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
         this.glCanvas = document.getElementById('glCanvas');
@@ -1727,6 +1735,8 @@ class PianoHero {
                 } else {
                     this.startTime = performance.now() - newCurrentTime * 1000;
                 }
+                this._hasLogicClock = false;
+                this._logicAccumulatorSec = 0;
             }
 
             this.speedMultiplier = newSpeed;
@@ -2553,8 +2563,8 @@ class PianoHero {
         // Otherwise start from the beginning with a lead-in.
         const preSeeked = this.fallingNotes.length > 0 && this.startTime;
         if (!preSeeked) {
-            const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
-            this.startTime = performance.now() + leadInSec * 1000;
+            this._preRollSec = this.noteLeadInSec;
+            this.startTime = performance.now();
 
             this.fallingNotes = this.notes.map(note => ({
                 ...note,
@@ -2567,7 +2577,10 @@ class PianoHero {
             const refTime = this.pauseTime || performance.now();
             const gameClockSec = (refTime - this.startTime) / 1000;
             this.startTime = performance.now() - gameClockSec * 1000;
+            this._preRollSec = 0;
         }
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
 
         this._updateControlButtons();
 
@@ -2850,7 +2863,7 @@ class PianoHero {
 
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
+            closestNote.holdStart = this._getGameClockSec();
             this.combo++;
             this.hitNotes++;
             const accuracy = 1 - (closestDistance / this.hitTolerance);
@@ -2954,6 +2967,7 @@ class PianoHero {
 
         if (this.isPaused) {
             this.pauseTime = performance.now();
+            this._logicAccumulatorSec = 0;
             if (this.isAutoPlay) {
                 this.autoPlayTimeouts.forEach(t => clearTimeout(t));
                 this.autoPlayTimeouts = [];
@@ -2967,6 +2981,8 @@ class PianoHero {
         } else {
             const pauseDuration = performance.now() - this.pauseTime;
             this.startTime += pauseDuration;
+            this._hasLogicClock = false;
+            this._logicAccumulatorSec = 0;
             if (this.isAutoPlay) {
                 this._scheduleAutoPlayNotes();
                 this.statusMessage.textContent = 'Auto Play in progress...';
@@ -3023,9 +3039,13 @@ class PianoHero {
         });
     }
 
+    _getGameClockSec(referenceTime = performance.now()) {
+        return ((referenceTime - this.startTime) / 1000) - this._preRollSec;
+    }
+
     _scheduleAutoPlayNotes() {
-        // Use real game clock (negative during lead-in) so sounds sync with visual notes
-        const currentTime = (performance.now() - this.startTime) / 1000;
+        // Use the same negative lead-in clock as rendering so sounds sync with note travel.
+        const currentTime = this._getGameClockSec();
 
         // Schedule automatic key presses for remaining notes
         const speed = this.speedMultiplier;
@@ -3046,7 +3066,7 @@ class PianoHero {
                 // Directly mark the note as hit (bypasses timing-sensitive position check)
                 if (!note.hit && !note.missed) {
                     note.hit = true;
-                    note.holdStart = (performance.now() - this.startTime) / 1000;
+                    note.holdStart = this._getGameClockSec();
                     this.combo++;
                     this.hitNotes++;
                     this.score += Math.floor(100 * (1 + this.combo * 0.1));
@@ -3088,6 +3108,8 @@ class PianoHero {
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
         this.heldFallingNotes.clear();
         this.heldKeys.clear();
         this.particles = [];
@@ -3531,7 +3553,7 @@ class PianoHero {
         
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
+            closestNote.holdStart = this._getGameClockSec();
             this.combo++;
             this.hitNotes++;
             
@@ -3666,6 +3688,8 @@ class PianoHero {
         } else {
             this.startTime = performance.now() - gameClockSec * 1000;
         }
+        this._hasLogicClock = false;
+        this._logicAccumulatorSec = 0;
 
         // Cancel auto-play timeouts and clear active sounds
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
@@ -3714,10 +3738,10 @@ class PianoHero {
             const timeUntilHit = scaledNoteTime - gameClockSec;
             note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
         }
-        this.draw();
+        this._renderFrame(this.startTime + (gameClockSec * 1000), false);
     }
     
-    update() {
+    update(currentTimeOverride) {
         if (!this.isPlaying || this.isPaused) return;
 
         // ── Practice mode: freeze time until correct note is played ──
@@ -3725,7 +3749,9 @@ class PianoHero {
             return this.updatePracticeMode();
         }
         
-        const currentTime = (this._frameTime - this.startTime) / 1000;
+        const currentTime = typeof currentTimeOverride === 'number'
+            ? currentTimeOverride
+            : this._getGameClockSec(this._frameTime);
         const speed = this.speedMultiplier;
 
         // Update song progress timeline
@@ -3901,9 +3927,48 @@ class PianoHero {
         return true;
     }
     
-    _renderFrame(ts) {
+    _renderFrame(ts, scheduleNext = true) {
         this._frameTime = ts || performance.now();
-        this.update();
+        if (this.isPlaying && !this.isPaused) {
+            const targetTimeSec = this._getGameClockSec(this._frameTime);
+            if (!this._hasLogicClock) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                this._hasLogicClock = true;
+            }
+            let deltaToTarget = targetTimeSec - this._logicLastTargetSec;
+            this._logicLastTargetSec = targetTimeSec;
+            if (deltaToTarget < 0) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                deltaToTarget = 0;
+            }
+            const maxBacklog = this._fixedStepSec * this._maxCatchupSteps;
+            this._logicAccumulatorSec = Math.min(this._logicAccumulatorSec + deltaToTarget, maxBacklog);
+
+            let steps = 0;
+            while (this._logicAccumulatorSec >= this._fixedStepSec && steps < this._maxCatchupSteps) {
+                this._logicClockSec += this._fixedStepSec;
+                this.update(this._logicClockSec);
+                this._logicAccumulatorSec -= this._fixedStepSec;
+                steps++;
+            }
+
+            if (steps === this._maxCatchupSteps) {
+                this._logicClockSec = targetTimeSec;
+                this._logicLastTargetSec = targetTimeSec;
+                this._logicAccumulatorSec = 0;
+                this.update(this._logicClockSec);
+            } else if (steps === 0) {
+                this.update(this._logicClockSec);
+            }
+        } else {
+            this._logicAccumulatorSec = 0;
+            this._hasLogicClock = false;
+            this.update();
+        }
         
         const w = this.canvas.width, h = this.canvas.height;
         const ctx = this.ctx;
@@ -4002,7 +4067,7 @@ class PianoHero {
         this._emitHeldNoteParticles();
         this._updateAndDrawParticles(ctx);
         
-        requestAnimationFrame(this._boundRender);
+        if (scheduleNext) requestAnimationFrame(this._boundRender);
     }
     
     _rebuildLaneCache() {
@@ -4782,7 +4847,7 @@ class PianoHero {
         if (this.laneStyle === 'synthesia') return; // clean look, no timeline grid
         const ctx = this.ctx;
         const speed = this.speedMultiplier;
-        const currentTime = (this._frameTime - this.startTime) / 1000;
+        const currentTime = this._getGameClockSec(this._frameTime);
         const pxPerSec = this.noteSpeed * speed;
 
         // Determine tick interval: 1s, 5s, or 10s depending on zoom
