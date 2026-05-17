@@ -19,6 +19,10 @@ A Guitar Hero-style game for piano with Synthesia-inspired UI and real YouTube t
 - **Piano Sounds**: Web Audio API synthesis for realistic note sounds
 - **Scoring System**: Points based on timing accuracy with combo multipliers
 - **Real-time Feedback**: Visual feedback for successful and missed notes
+- **Performance Pipeline**:
+  - Web Worker preprocessing (`performance-worker.js`) for BPM, simple-mode merge, and duration caches
+  - WebAssembly note math fast-path (`note-math.wasm`) for repeated note-height calculations
+  - Runtime diagnostics indicator for Worker/WASM activation and precompute timing
 
 ## Quick Start
 
@@ -145,6 +149,26 @@ You can also click the piano keys with your mouse!
 - **Web Audio API**: Sample-based instrument playback using [MIDI.js Soundfonts](https://github.com/gleitz/midi-js-soundfonts)
 - **DOM-based Positioning**: Calculates lane positions from actual piano key elements for perfect alignment
 - **Vanilla JavaScript**: No framework dependencies
+
+## Performance Optimizations (Part 3 pass)
+
+- **Worker offload**: Song preprocessing is delegated to `performance-worker.js` to reduce main-thread preload work.
+- **WASM math**: Hot-path note-height math uses `note-math.wasm` when available, with automatic JS fallback.
+- **Mode/duration caching**: Precomputed simple-mode notes and song durations are cached and reused on mode switches.
+- **GPU renderer path**: Existing Pixi-based note rendering remains active for draw performance.
+
+### Verify optimization activation
+
+1. Open **Settings → Game** and check the live perf line:
+   - `Perf: Worker ready | WASM ready | Precompute worker <ms>`
+2. Load a dense song and confirm precompute mode/time updates from `--` to `worker`, `mixed`, or `fallback`.
+3. In DevTools Network, confirm successful loads for:
+   - `performance-worker.js?v=1`
+   - `note-math.wasm?v=1`
+4. In DevTools Console, verify precompute timing logs:
+   - `[PianoHero] precompute mode=... notes=... time=...ms`
+
+If Worker or WASM cannot initialize, status reflects fallback (`error`, `unsupported`, `fetch-failed`) while gameplay remains functional.
 
 ## API Endpoints
 

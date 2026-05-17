@@ -127,6 +127,26 @@ Serves the app, handles MIDI file listing, YouTube audio extraction, and MIDI co
 ### MIDI Caching
 Converted MIDI data is cached in `midi_cache/` for instant replay on subsequent loads.
 
+### Performance Optimizations
+- **Worker preprocessing** (`performance-worker.js`) computes:
+  - BPM estimate
+  - simple-mode merged notes
+  - normal/simple song durations
+- **WebAssembly note math** (`note-math.wasm`) accelerates repeated note height calculations in render/update hot paths.
+- **Mode/duration cache reuse** avoids redundant recomputation when switching between normal and simple modes.
+- **Runtime diagnostics** show Worker/WASM activation and precompute mode/timing directly in the UI.
+
+### Optimization Activation Verification
+1. Load a song and open **Settings → Game**.
+2. Check the perf diagnostic line:
+   - `Perf: Worker ready | WASM ready | Precompute worker <ms>`
+3. Confirm fallback status values when unavailable:
+   - Worker: `error` / `unsupported`
+   - WASM: `error` / `fetch-failed` / `unsupported`
+4. Verify console timing output for each preprocess run:
+   - `[PianoHero] precompute mode=... notes=... time=...ms`
+5. (Optional) Verify network requests in DevTools for `performance-worker.js?v=1` and `note-math.wasm?v=1`.
+
 ### Docker Support
 Dockerfile included for self-contained deployment with all dependencies (ffmpeg, yt-dlp).
 
