@@ -47,6 +47,13 @@ class PianoHero {
         this.autoPlayTimeouts = [];
         this.previewTimeouts = [];
         this.previewSlug = null; // slug of currently previewing song
+        this.onlineSeqState = {
+            query: '',
+            start: 0,
+            hasMore: false,
+            activeFilter: 'recently_shared',
+            cookie: localStorage.getItem('onlineseq_cf_cookie') || '',
+        };
         
         // Game settings
         this.noteSpeed = 200; // pixels per second
@@ -72,12 +79,27 @@ class PianoHero {
         this.speedMultiplier = 1.0;
         this.songBPM = null; // detected from loaded notes
 
-        // Game mode: 'normal', 'simple', 'coplay', 'practice'
+        // Game mode: 'normal', 'simple', 'coplay', 'practice', 'micpractice'
         this.gameMode = 'normal';
         this.originalNotes = []; // unmodified notes from loader
         this.practiceWaiting = false; // true when waiting for player input
         this.practiceExpectedNotes = new Set(); // notes that must be pressed (chord support)
         this.practiceHitNotes = new Set(); // notes already pressed in current chord
+        this.practiceExpectedCounts = new Map(); // note name -> required hits for this chord
+        this.practiceHitCounts = new Map(); // note name -> completed hits for this chord
+        this.practiceChordTime = null;
+        this.pitchfinderModule = null;
+        this.pitchfinderPromise = null;
+        this.pitchDetector = null;
+        this.micStream = null;
+        this.micSourceNode = null;
+        this.micAnalyser = null;
+        this.micBuffer = null;
+        this.micDetectionFrame = null;
+        this.micStartPromise = null;
+        this.micDetectedNote = null;
+        this.micCandidateNote = null;
+        this.micCandidateSince = 0;
 
         // Hold-note tracking
         this.heldKeys = new Set();                // keyboard keys currently held down
@@ -225,6 +247,7 @@ class PianoHero {
         this.loadMidiFileList();
         this.initTabs();
         this.initBitMidi();
+        this.initOnlineSequencer();
         this.initSoundPanel();
         this.initGameSettings();
         this._loadSettings();
@@ -295,11 +318,15 @@ class PianoHero {
                 if (this.originalNotes.length > 0) this.applyGameMode();
                 // Close dropdown
                 document.getElementById('modeDropdown').classList.add('hidden');
+                if (!isAuto && mode === 'micpractice' && !this.isPlaying && !this.isPaused) {
+                    this.statusMessage.textContent = 'Mic Practice armed: press Play and allow microphone access.';
+                }
                 // If playing, apply the auto/manual switch
                 if (this.isPlaying && !this.isPaused) {
                     if (isAuto) this.startAutoPlay();
                     else this._switchToManual();
                 }
+                this._syncMicPracticeState();
                 this._updateControlButtons();
             });
         });
@@ -343,6 +370,269 @@ class PianoHero {
     // Convert a semitone index back to a note name
     semitoneToNote(s) {
         return this.NOTE_NAMES[s % 12] + Math.floor(s / 12);
+    }
+
+    _isManualPracticeMode() {
+        return !this.isAutoPlay && (this.gameMode === 'practice' || this.gameMode === 'micpractice');
+    }
+
+    _isMicPracticeMode() {
+        return !this.isAutoPlay && this.gameMode === 'micpractice';
+    }
+
+    _getModeDisplayName() {
+        if (this.gameMode === 'micpractice') return 'Mic Practice';
+        if (this.gameMode === 'practice') return 'Practice mode';
+        if (this.gameMode === 'coplay') return 'Co-Play';
+        if (this.gameMode === 'simple') return 'Simple mode';
+        return this.isAutoPlay ? 'Auto Play' : 'Game';
+    }
+
+    _getMicPracticeErrorMessage(err) {
+        if (!err) return 'Mic Practice unavailable: Unable to access the microphone.';
+        if (err.name === 'NotAllowedError' || /permission denied/i.test(err.message || '')) {
+            return 'Mic blocked: allow microphone access for this site, then press Play again.';
+        }
+        if (err.name === 'NotFoundError') {
+            return 'Mic unavailable: no microphone was found on this device.';
+        }
+        return `Mic Practice unavailable: ${err.message || 'Unable to access the microphone.'}`;
+    }
+
+    _frequencyToNoteName(frequency) {
+        if (!Number.isFinite(frequency) || frequency <= 0) return null;
+        const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
+        return this._midiToNoteName(midi);
+    }
+
+    _incrementCount(map, key) {
+        map.set(key, (map.get(key) || 0) + 1);
+    }
+
+    _getHitCount(noteName) {
+        return this.practiceHitCounts.get(noteName) || 0;
+    }
+
+    _getExpectedCount(noteName) {
+        return this.practiceExpectedCounts.get(noteName) || 0;
+    }
+
+    _hasRemainingPracticeHits(noteName) {
+        return this._getHitCount(noteName) < this._getExpectedCount(noteName);
+    }
+
+    _clearPracticeState() {
+        this.practiceWaiting = false;
+        this.practiceExpectedNotes = new Set();
+        this.practiceHitNotes = new Set();
+        this.practiceExpectedCounts = new Map();
+        this.practiceHitCounts = new Map();
+        this.practiceChordTime = null;
+    }
+
+    _getActivePracticeNotes() {
+        const activeNotes = new Set();
+        for (const key of this.heldKeys) {
+            const note = this.keyToNote[key];
+            if (note) activeNotes.add(note);
+        }
+        document.querySelectorAll('.key.active').forEach((el) => {
+            const note = el.dataset.note;
+            if (note) activeNotes.add(note);
+        });
+        return activeNotes;
+    }
+
+    _completePracticeChord() {
+        if (this.practiceChordTime == null || this.practiceExpectedNotes.size === 0) return false;
+
+        const targets = this.fallingNotes.filter(
+            n => !n.hit && !n.missed && this.practiceExpectedNotes.has(n.note) && Math.abs(n.time - this.practiceChordTime) < 0.03
+        );
+        if (targets.length === 0) return false;
+
+        for (const target of targets) {
+            target.hit = true;
+            this.combo++;
+            this.hitNotes++;
+            this.score += Math.floor(100 * (1 + this.combo * 0.1));
+            this.updateScore();
+            this.showHitFeedback(target.note, true, 1);
+            this._emitHitBurst(target.note, target.hand || 0);
+        }
+
+        if (this._practiceHighlighted) {
+            for (const noteName of this._practiceHighlighted) {
+                const el = this._keyElementCache && this._keyElementCache[noteName];
+                if (el) el.classList.remove('practice-target');
+            }
+            this._practiceHighlighted = null;
+        }
+
+        this._clearPracticeState();
+        return true;
+    }
+
+    _tryResolvePracticeChord() {
+        if (this.gameMode !== 'practice' || !this.practiceWaiting || this.practiceExpectedNotes.size === 0) {
+            return false;
+        }
+
+        const activeNotes = this._getActivePracticeNotes();
+        for (const noteName of this.practiceExpectedNotes) {
+            if (!activeNotes.has(noteName)) return false;
+        }
+
+        return this._completePracticeChord();
+    }
+
+    _totalCount(map) {
+        let total = 0;
+        for (const value of map.values()) total += value;
+        return total;
+    }
+
+    _countMapsEqual(a, b) {
+        if (a.size !== b.size) return false;
+        for (const [key, value] of a) {
+            if (b.get(key) !== value) return false;
+        }
+        return true;
+    }
+
+    async _ensurePitchDetector() {
+        if (this.pitchDetector) return this.pitchDetector;
+        if (!this.pitchfinderPromise) {
+            this.pitchfinderPromise = import('https://cdn.jsdelivr.net/npm/pitchfinder@2.3.2/+esm');
+        }
+        this.pitchfinderModule = await this.pitchfinderPromise;
+        this.pitchDetector = this.pitchfinderModule.YIN({
+            sampleRate: this.audioContext.sampleRate,
+            threshold: 0.12,
+            probabilityThreshold: 0.9,
+        });
+        return this.pitchDetector;
+    }
+
+    async _startMicPracticeDetection() {
+        if (this.micDetectionFrame || this.micStartPromise) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Microphone input is not supported in this browser.');
+        }
+
+        this.statusMessage.textContent = 'Mic Practice: requesting microphone access...';
+
+        this.micStartPromise = (async () => {
+            if (!this.audioContext) {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                this.setupAudioGraph();
+                if (this.soundfontRawData && !this.soundfontLoaded) {
+                    this._decodeSoundfontSamples(this.soundfontRawData);
+                }
+            }
+            if (this.audioContext.state === 'suspended') {
+                await this.audioContext.resume();
+            }
+
+            await this._ensurePitchDetector();
+
+            this.micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                }
+            });
+
+            this.micSourceNode = this.audioContext.createMediaStreamSource(this.micStream);
+            this.micAnalyser = this.audioContext.createAnalyser();
+            this.micAnalyser.fftSize = 4096;
+            this.micBuffer = new Float32Array(this.micAnalyser.fftSize);
+            this.micSourceNode.connect(this.micAnalyser);
+            this.micDetectedNote = null;
+            this.micCandidateNote = null;
+            this.micCandidateSince = 0;
+            this.statusMessage.textContent = 'Mic Practice: microphone ready. Play the highlighted notes.';
+            this._runMicPracticeDetection();
+        })();
+
+        try {
+            await this.micStartPromise;
+        } finally {
+            this.micStartPromise = null;
+        }
+    }
+
+    _stopMicPracticeDetection() {
+        if (this.micDetectionFrame) {
+            cancelAnimationFrame(this.micDetectionFrame);
+            this.micDetectionFrame = null;
+        }
+        if (this.micSourceNode) {
+            try { this.micSourceNode.disconnect(); } catch (e) {}
+            this.micSourceNode = null;
+        }
+        if (this.micAnalyser) {
+            try { this.micAnalyser.disconnect(); } catch (e) {}
+            this.micAnalyser = null;
+        }
+        if (this.micStream) {
+            this.micStream.getTracks().forEach(track => track.stop());
+            this.micStream = null;
+        }
+        this.micBuffer = null;
+        this.micDetectedNote = null;
+        this.micCandidateNote = null;
+        this.micCandidateSince = 0;
+    }
+
+    _runMicPracticeDetection() {
+        if (!this._isMicPracticeMode() || !this.isPlaying || this.isPaused || !this.micAnalyser || !this.micBuffer || !this.pitchDetector) {
+            this.micDetectionFrame = null;
+            return;
+        }
+
+        this.micAnalyser.getFloatTimeDomainData(this.micBuffer);
+
+        let energy = 0;
+        for (let i = 0; i < this.micBuffer.length; i++) {
+            const sample = this.micBuffer[i];
+            energy += sample * sample;
+        }
+        const rms = Math.sqrt(energy / this.micBuffer.length);
+        const frequency = rms > 0.015 ? this.pitchDetector(this.micBuffer) : null;
+        const detectedNote = this._frequencyToNoteName(frequency);
+        const now = performance.now();
+
+        this.micDetectedNote = detectedNote;
+
+        if (this.practiceWaiting && detectedNote && this.practiceExpectedNotes.has(detectedNote) && this._hasRemainingPracticeHits(detectedNote)) {
+            if (this.micCandidateNote !== detectedNote) {
+                this.micCandidateNote = detectedNote;
+                this.micCandidateSince = now;
+            } else if (now - this.micCandidateSince >= 90) {
+                this._practiceHitNote(detectedNote);
+                this.micCandidateNote = null;
+                this.micCandidateSince = 0;
+            }
+        } else if (this.micCandidateNote && this.micCandidateNote !== detectedNote) {
+            this.micCandidateNote = null;
+            this.micCandidateSince = 0;
+        }
+
+        this.micDetectionFrame = requestAnimationFrame(() => this._runMicPracticeDetection());
+    }
+
+    _syncMicPracticeState() {
+        if (this._isMicPracticeMode() && this.isPlaying && !this.isPaused) {
+            this._startMicPracticeDetection().catch((err) => {
+                console.error('[PianoHero] Mic practice failed to start', err);
+                this.reset();
+                this.statusMessage.textContent = this._getMicPracticeErrorMessage(err);
+            });
+            return;
+        }
+        this._stopMicPracticeDetection();
     }
 
     // Build a chromatic scale from lowNote to highNote inclusive
@@ -636,6 +926,13 @@ class PianoHero {
                 dropdown.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
                 btn.classList.add('active');
                 document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+
+                if (btn.dataset.tab === 'onlineseq') {
+                    const resultBox = document.getElementById('onlineseqResults');
+                    if (resultBox && !resultBox.childElementCount) {
+                        this.searchOnlineSequencer({ resetStart: true });
+                    }
+                }
             });
         });
     }
@@ -762,6 +1059,329 @@ class PianoHero {
         queryInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.searchBitMidi();
         });
+    }
+
+    initOnlineSequencer() {
+        const searchBtn = document.getElementById('onlineseqSearchBtn');
+        const queryInput = document.getElementById('onlineseqQuery');
+        const cookieStatus = document.getElementById('onlineseqCookieStatus');
+
+        if (cookieStatus) cookieStatus.textContent = 'Waiting for you to click the bookmark on an Online Sequencer page\u2026';
+
+        const openSearch = () => {
+            const q = (queryInput && queryInput.value.trim()) || '';
+            const url = q
+                ? `https://onlinesequencer.net/sequences?search=${encodeURIComponent(q)}`
+                : 'https://onlinesequencer.net/sequences';
+            window.open(url, '_blank', 'noopener,noreferrer');
+        };
+        if (searchBtn) searchBtn.addEventListener('click', openSearch);
+        if (queryInput) queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') openSearch(); });
+
+        this._startUploadPoll();
+        this._installBookmarklet();
+    }
+
+    _installBookmarklet() {
+        const link = document.getElementById('onlineseqBookmarklet');
+        if (!link) return;
+        // Bookmarklet source. Runs in user's browser on onlinesequencer.net.
+        // The site generates the MIDI client-side via window.exportMidi(), then
+        // triggers a browser download. We monkey-patch URL.createObjectURL and
+        // anchor.click so we capture the Blob before the download fires, then
+        // POST it to http://localhost:5000/api/onlineseq/upload_midi.
+        const src = function () {
+            var m = location.pathname.match(/^\/(\d+)/);
+            if (!m) { alert('Open an Online Sequencer sequence page first (URL like onlinesequencer.net/123456).'); return; }
+            var id = m[1];
+            var title = (document.title || '').replace(/\s*[\-\u2013|]\s*Online Sequencer.*$/i, '').trim() || ('Sequence ' + id);
+            function toast(msg, bg) {
+                var b = document.createElement('div');
+                b.style.cssText = 'position:fixed;top:20px;right:20px;background:' + bg + ';color:white;padding:10px 16px;border-radius:6px;font:bold 13px sans-serif;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,.5);max-width:420px;white-space:pre-wrap';
+                b.textContent = msg;
+                document.body.appendChild(b);
+                setTimeout(function () { b.remove(); }, 7000);
+            }
+            function send(blob) {
+                if (!blob || blob.size < 14) { toast('\u2717 Captured blob was empty or too small (' + (blob ? blob.size : 0) + ' bytes)', '#dc2626'); return; }
+                blob.slice(0, 4).arrayBuffer().then(function (buf) {
+                    var b = new Uint8Array(buf);
+                    if (!(b[0] === 0x4D && b[1] === 0x54 && b[2] === 0x68 && b[3] === 0x64)) {
+                        toast('\u2717 Captured blob is not a MIDI file (first bytes: ' + b[0].toString(16) + ' ' + b[1].toString(16) + ' ' + b[2].toString(16) + ' ' + b[3].toString(16) + ')', '#dc2626');
+                        return;
+                    }
+                    var fd = new FormData();
+                    fd.append('midi', blob, id + '.mid');
+                    fd.append('sequenceId', id);
+                    fd.append('name', title);
+                    fetch('http://localhost:5000/api/onlineseq/upload_midi', { method: 'POST', body: fd })
+                        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+                        .then(function (x) {
+                            if (x.ok && x.d.ok) toast('\u2713 Sent to Piano Hero: ' + x.d.savedAs, '#22c55e');
+                            else toast('\u2717 Piano Hero rejected: ' + (x.d.error || JSON.stringify(x.d)), '#dc2626');
+                        })
+                        .catch(function (e) { toast('\u2717 Could not reach Piano Hero (is the server running?): ' + e.message, '#dc2626'); });
+                });
+            }
+            // Try direct function call first
+            var fn = window.exportMidi || (window.app && window.app.exportMidi);
+            if (typeof fn !== 'function') {
+                toast('\u2717 exportMidi() not found on this page. Make sure the sequence is fully loaded (click anywhere on it first).', '#dc2626');
+                return;
+            }
+            // Monkey-patch capture. Hook three places because we don't know
+            // exactly how the site delivers the blob:
+            //   1) Blob constructor — fires whenever site builds the binary
+            //   2) URL.createObjectURL — fires if site converts blob -> url
+            //   3) anchor.click — fires if site triggers a download <a>
+            var captured = false;
+            function tryCapture(blob, source) {
+                if (captured || !(blob instanceof Blob) || blob.size < 14) return;
+                blob.slice(0, 4).arrayBuffer().then(function (buf) {
+                    var b = new Uint8Array(buf);
+                    if (b[0] === 0x4D && b[1] === 0x54 && b[2] === 0x68 && b[3] === 0x64) {
+                        captured = true;
+                        console.log('[PianoHero] captured MIDI blob via', source, 'size=', blob.size);
+                        send(blob);
+                    }
+                }).catch(function () { /* ignore */ });
+            }
+            var OrigBlob = window.Blob;
+            var PatchedBlob = function (parts, opts) {
+                var b = new OrigBlob(parts || [], opts || {});
+                tryCapture(b, 'Blob()');
+                return b;
+            };
+            PatchedBlob.prototype = OrigBlob.prototype;
+            window.Blob = PatchedBlob;
+            var origCreate = URL.createObjectURL;
+            URL.createObjectURL = function (obj) {
+                tryCapture(obj, 'createObjectURL');
+                return origCreate.call(URL, obj);
+            };
+            var origClick = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () {
+                if (!captured && this.href && this.href.indexOf('data:') === 0) {
+                    fetch(this.href).then(function (r) { return r.blob(); }).then(function (b) { tryCapture(b, 'anchor data-url'); }).catch(function () { });
+                }
+                return origClick.call(this);
+            };
+            toast('Calling exportMidi()\u2026', '#0ea5e9');
+            try { fn(); } catch (e) {
+                window.Blob = OrigBlob;
+                URL.createObjectURL = origCreate;
+                HTMLAnchorElement.prototype.click = origClick;
+                toast('\u2717 exportMidi() threw: ' + e.message, '#dc2626');
+                return;
+            }
+            // Restore patches after a delay (whether or not we captured)
+            setTimeout(function () {
+                window.Blob = OrigBlob;
+                URL.createObjectURL = origCreate;
+                HTMLAnchorElement.prototype.click = origClick;
+                if (!captured) toast('\u2717 exportMidi() ran but no MIDI Blob was captured.\nCheck DevTools console — was a Blob created at all?', '#dc2626');
+            }, 4000);
+        };
+        // Serialize: IIFE wrapper + javascript: scheme. URL-encode so that '#'
+        // characters (CSS color literals) and other URL-special chars don't
+        // get truncated by the browser when stored as a bookmark.
+        const body = '(' + src.toString() + ')();';
+        link.href = 'javascript:' + encodeURI(body).replace(/#/g, '%23');
+        // Prevent navigation when user accidentally clicks it inside Piano Hero
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            alert('Drag this link to your browser bookmarks bar, then click it from any Online Sequencer sequence page.');
+        });
+    }
+
+    _startUploadPoll() {
+        if (this._uploadPollId) return;
+        this._uploadPollId = setInterval(async () => {
+            try {
+                const resp = await fetch('/api/onlineseq/last_upload');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data && data.success && data.notes) {
+                    this._applyUploadedSong(data);
+                }
+            } catch (_) { /* ignore */ }
+        }, 2000);
+    }
+
+    _applyUploadedSong(data) {
+        try {
+            this.stopPreview && this.stopPreview();
+        } catch (_) {}
+        const dropdown = document.getElementById('songBrowserDropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+
+        const displayName = (data.savedAs || `Sequence ${data.sequenceId}`).replace(/\.mid$/i, '');
+        const songNameEl = document.getElementById('midiListHeaderText');
+        if (songNameEl) { songNameEl.textContent = displayName; songNameEl.title = displayName; }
+
+        this.originalNotes = data.notes;
+        this.songBPM = this.estimateBPM(data.notes);
+        this.updateBPMDisplay();
+        this.applyGameMode();
+
+        this.statusMessage.textContent = `Loaded "${displayName}" from bookmarklet \u2014 ${data.noteCount} notes. Press Play!`;
+        const cookieStatus = document.getElementById('onlineseqCookieStatus');
+        const spinner = document.getElementById('onlineseqStatusSpinner');
+        if (cookieStatus) cookieStatus.textContent = `\u2713 Loaded "${displayName}" \u2014 click your bookmark again for the next song.`;
+        if (spinner) spinner.textContent = '\u2713';
+        // Revert to waiting state after a few seconds
+        setTimeout(() => {
+            if (cookieStatus) cookieStatus.textContent = 'Waiting for you to click the bookmark on an Online Sequencer page\u2026';
+            if (spinner) spinner.textContent = '\u23F2';
+        }, 5000);
+        this._updateControlButtons && this._updateControlButtons();
+        this.refreshMidiFileList && this.refreshMidiFileList();
+    }
+
+    _buildOnlineSeqBrowseUrl() {
+        const queryInput = document.getElementById('onlineseqQuery');
+        const query = queryInput ? queryInput.value.trim() : this.onlineSeqState.query;
+        const params = new URLSearchParams();
+
+        if (query) params.set('search', query);
+        if (this.onlineSeqState.start > 0) params.set('start', String(this.onlineSeqState.start));
+
+        const filterParams = this._onlineSeqFilterToParams(this.onlineSeqState.activeFilter);
+        Object.entries(filterParams).forEach(([k, v]) => params.set(k, v));
+
+        const qs = params.toString();
+        return `https://onlinesequencer.net/sequences${qs ? `?${qs}` : ''}`;
+    }
+
+    _onlineSeqFilterToParams(filterKey) {
+        const map = {
+            recently_shared: { sort: 'recently' },
+            oldest: { sort: 'oldest' },
+            popular: { sort: 'popular' },
+            most_notes: { sort: 'notes' },
+            longest: { sort: 'longest' },
+            today: { time: 'today' },
+            this_week: { time: 'week' },
+            this_month: { time: 'month' },
+            all_time: { time: 'all' },
+            featured: { featured: '1' },
+            registered_only: { registered: '1' },
+        };
+        return map[filterKey] || {};
+    }
+
+    _updateOnlineSeqPager() {
+        const prevBtn = document.getElementById('onlineseqPrevBtn');
+        const nextBtn = document.getElementById('onlineseqNextBtn');
+        const pageInfo = document.getElementById('onlineseqPageInfo');
+        if (!prevBtn || !nextBtn || !pageInfo) return;
+
+        prevBtn.disabled = this.onlineSeqState.start <= 0;
+        nextBtn.disabled = !this.onlineSeqState.hasMore;
+        pageInfo.textContent = `Start: ${this.onlineSeqState.start}`;
+    }
+
+    async searchOnlineSequencer({ resetStart = false, deltaStart = 0 } = {}) {
+        const queryInput = document.getElementById('onlineseqQuery');
+        const container = document.getElementById('onlineseqResults');
+        if (!queryInput || !container) return;
+
+        const query = queryInput.value.trim();
+        this.onlineSeqState.query = query;
+
+        if (resetStart) this.onlineSeqState.start = 0;
+        if (deltaStart !== 0) this.onlineSeqState.start = Math.max(0, this.onlineSeqState.start + deltaStart);
+
+        const params = new URLSearchParams({ start: String(this.onlineSeqState.start) });
+        if (query) params.set('q', query);
+        if (this.onlineSeqState.cookie) params.set('cookie', this.onlineSeqState.cookie);
+
+        const filterParams = this._onlineSeqFilterToParams(this.onlineSeqState.activeFilter);
+        Object.entries(filterParams).forEach(([k, v]) => params.set(k, v));
+
+        container.innerHTML = '<p class="bitmidi-loading">Searching Online Sequencer…</p>';
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/onlineseq/search?${params.toString()}`);
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || 'Search failed');
+
+            const results = Array.isArray(data.results) ? data.results : [];
+            this.onlineSeqState.start = Number.isInteger(data.start) ? data.start : this.onlineSeqState.start;
+            this.onlineSeqState.hasMore = Boolean(data.hasMore);
+            this._updateOnlineSeqPager();
+
+            if (!results.length) {
+                container.innerHTML = '<p class="bitmidi-empty">No results found.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            results.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'bitmidi-item onlineseq-item';
+                const noteLabel = item.notesLabel ? `<span class="onlineseq-notes">${this.escapeHtml(item.notesLabel)}</span>` : '';
+                row.innerHTML = `
+                    <span class="bitmidi-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)} ${noteLabel}</span>
+                    <a class="onlineseq-open-btn" href="https://onlinesequencer.net/${encodeURIComponent(item.sequenceId)}" target="_blank" rel="noopener noreferrer" title="Open on Online Sequencer">Open</a>
+                    <button class="bitmidi-load-btn">Load</button>
+                `;
+
+                row.querySelector('.bitmidi-load-btn').addEventListener('click', () => {
+                    this.loadOnlineSequencer(item.sequenceId, item.name);
+                });
+                container.appendChild(row);
+            });
+        } catch (err) {
+            container.innerHTML = `<p class="bitmidi-empty">Error: ${this.escapeHtml(err.message)}</p>`;
+            this.onlineSeqState.hasMore = false;
+            this._updateOnlineSeqPager();
+        }
+    }
+
+    async loadOnlineSequencer(sequenceId, name) {
+        this.stopPreview();
+        document.getElementById('songBrowserDropdown').classList.add('hidden');
+
+        const songNameEl = document.getElementById('midiListHeaderText');
+        songNameEl.textContent = name;
+        songNameEl.title = name;
+
+        this.statusMessage.textContent = `Loading "${name}" from Online Sequencer…`;
+        this.progressBar.classList.add('visible');
+        this.updateProgress(20);
+
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/api/onlineseq/load`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sequenceId, name, cookie: this.onlineSeqState.cookie || undefined })
+            });
+
+            this.updateProgress(70);
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.error || 'Failed to load sequence');
+            }
+
+            const data = await resp.json();
+            this.originalNotes = data.notes;
+            this.songBPM = this.estimateBPM(data.notes);
+            this.updateBPMDisplay();
+            this.applyGameMode();
+            this.updateProgress(100);
+
+            const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
+            this.statusMessage.textContent = `Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`;
+            this._updateControlButtons();
+            this.refreshMidiFileList();
+        } catch (err) {
+            console.error('Online Sequencer load error:', err);
+            this.statusMessage.textContent = 'Error: ' + err.message;
+        } finally {
+            setTimeout(() => this.progressBar.classList.remove('visible'), 1000);
+        }
     }
 
     async searchBitMidi() {
@@ -1952,14 +2572,10 @@ class PianoHero {
         this._updateControlButtons();
 
         // Practice mode setup
-        this.practiceWaiting = false;
-        this.practiceExpectedNotes = new Set();
-        this.practiceHitNotes = new Set();
+        this._clearPracticeState();
         this.practicePauseOffset = 0;
 
-        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'coplay' ? 'Co-Play' :
-                          this.gameMode === 'simple' ? 'Simple mode' : 'Game';
+        const modeLabel = this._getModeDisplayName();
         this.statusMessage.textContent = `${modeLabel} in progress...`;
         
         this.totalNotes = this.fallingNotes.length;
@@ -1969,6 +2585,8 @@ class PianoHero {
             this.isAutoPlay = true;
             this._scheduleAutoPlayNotes();
         }
+
+        this._syncMicPracticeState();
     }
 
     _switchToManual() {
@@ -1998,10 +2616,9 @@ class PianoHero {
         }
 
         this._updateControlButtons();
-        const modeLabel = this.gameMode === 'practice' ? 'Practice mode' :
-                          this.gameMode === 'coplay' ? 'Co-Play' :
-                          this.gameMode === 'simple' ? 'Simple mode' : 'Manual play';
+        const modeLabel = this.gameMode === 'normal' ? 'Manual play' : this._getModeDisplayName();
         this.statusMessage.textContent = `${modeLabel} — continuing from current position!`;
+        this._syncMicPracticeState();
     }
 
     /** Apply or remove coplay-manual CSS class on all piano keys and update lane selectors */
@@ -2268,9 +2885,7 @@ class PianoHero {
             this.heldFallingNotes.clear();
 
             // Clear practice mode state
-            this.practiceWaiting = false;
-            this.practiceExpectedNotes = new Set();
-            this.practiceHitNotes = new Set();
+            this._clearPracticeState();
             document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
 
             // Unpause if paused
@@ -2282,6 +2897,7 @@ class PianoHero {
         }
 
         this.isAutoPlay = true;
+        this._syncMicPracticeState();
         this._updateControlButtons();
 
         const isCoPlay = this.gameMode === 'coplay';
@@ -2313,6 +2929,7 @@ class PianoHero {
         } else {
             this._switchToManual();
         }
+        this._syncMicPracticeState();
         this._updateControlButtons();
         this._saveSettings();
     }
@@ -2354,9 +2971,10 @@ class PianoHero {
                 this._scheduleAutoPlayNotes();
                 this.statusMessage.textContent = 'Auto Play in progress...';
             } else {
-                this.statusMessage.textContent = 'Game in progress...';
+                this.statusMessage.textContent = `${this._getModeDisplayName()} in progress...`;
             }
         }
+        this._syncMicPracticeState();
         this._updateControlButtons();
     }
 
@@ -2394,7 +3012,7 @@ class PianoHero {
 
         modeLabel.textContent = this.isAutoPlay ? 'AutoPlay' : 'Manual';
 
-        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice' };
+        const modeNames = { normal: 'Normal', simple: 'Simple', coplay: 'Co-play', practice: 'Practice', micpractice: 'Mic Practice' };
         modeSubLabel.textContent = modeNames[this.gameMode] || 'Normal';
 
         // Update active state in dropdown
@@ -2466,6 +3084,7 @@ class PianoHero {
         this.isPlaying = false;
         this.isPaused = false;
         this.isAutoPlay = this.modeToggleSwitch.checked;
+        this._stopMicPracticeDetection();
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
@@ -2482,9 +3101,7 @@ class PianoHero {
         this.hitNotes = 0;
         this.missedNotes = 0;
         this.totalNotes = 0;
-        this.practiceWaiting = false;
-        this.practiceExpectedNotes = new Set();
-        this.practiceHitNotes = new Set();
+        this._clearPracticeState();
         document.querySelectorAll('.key.practice-target').forEach(k => k.classList.remove('practice-target'));
         document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
         this.updateScore();
@@ -2547,9 +3164,9 @@ class PianoHero {
                 this.playNoteSound(note);
                 if (this.isPlaying && !this.isPaused) {
                     if (this.gameMode === 'practice' && this.practiceWaiting) {
-                        if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
-                            this._practiceHitNote(note);
-                        }
+                        this._tryResolvePracticeChord();
+                    } else if (this.gameMode === 'micpractice' && this.practiceWaiting) {
+                        return;
                     } else {
                         this._checkHitByNote(note);
                     }
@@ -2887,10 +3504,12 @@ class PianoHero {
 
         // ── Practice mode: check if it's one of the expected notes ──
         if (this.gameMode === 'practice' && this.practiceWaiting) {
-            if (this.practiceExpectedNotes.has(note) && !this.practiceHitNotes.has(note)) {
-                this._practiceHitNote(note);
-            }
+            this._tryResolvePracticeChord();
             return; // In practice mode, only expected notes count
+        }
+
+        if (this.gameMode === 'micpractice' && this.practiceWaiting) {
+            return;
         }
         
         // Find the closest note in the hit zone for this key
@@ -3102,7 +3721,7 @@ class PianoHero {
         if (!this.isPlaying || this.isPaused) return;
 
         // ── Practice mode: freeze time until correct note is played ──
-        if (this.gameMode === 'practice' && !this.isAutoPlay) {
+        if (this._isManualPracticeMode()) {
             return this.updatePracticeMode();
         }
         
@@ -3172,8 +3791,9 @@ class PianoHero {
                 }
                 this._practiceHighlighted = null;
             }
+            const modeName = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
             this.statusMessage.textContent = 
-                `Practice complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
+                `${modeName} complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this._updateControlButtons();
             return;
         }
@@ -3195,19 +3815,29 @@ class PianoHero {
 
         // Build the set of expected notes for this chord
         const expectedSet = new Set(chordNotes.map(n => n.note));
+        const expectedCounts = new Map();
+        for (const chordNote of chordNotes) {
+            this._incrementCount(expectedCounts, chordNote.note);
+        }
 
         // Only reset tracking if the chord changed
-        if (!this.practiceWaiting || !this._setsEqual(expectedSet, this.practiceExpectedNotes)) {
+        if (!this.practiceWaiting || !this._countMapsEqual(expectedCounts, this.practiceExpectedCounts)) {
             this.practiceExpectedNotes = expectedSet;
+            this.practiceExpectedCounts = expectedCounts;
             this.practiceHitNotes = new Set();
+            this.practiceHitCounts = new Map();
+            this.practiceChordTime = virtualTime;
         }
 
         this.practiceWaiting = true;
 
+        if (this._tryResolvePracticeChord()) {
+            return;
+        }
+
         // Highlight expected keys on the piano (diff-based to avoid per-frame DOM thrashing)
         const newTargets = new Set();
         for (const noteName of this.practiceExpectedNotes) {
-            if (this.practiceHitNotes.has(noteName)) continue;
             newTargets.add(noteName);
         }
         // Remove highlight from keys no longer targeted
@@ -3228,8 +3858,11 @@ class PianoHero {
         }
         this._practiceHighlighted = newTargets;
 
-        const remaining = [...this.practiceExpectedNotes].filter(n => !this.practiceHitNotes.has(n));
-        this.statusMessage.textContent = `Practice: play ${remaining.join(' + ')}`;
+        const remaining = [...this.practiceExpectedNotes];
+        const prefix = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
+        const detected = this.gameMode === 'micpractice' && this.micDetectedNote ? ` | mic: ${this.micDetectedNote}` : '';
+        const instruction = remaining.length > 0 ? remaining.join(' + ') : 'hold the highlighted chord';
+        this.statusMessage.textContent = `${prefix}: play ${instruction}${detected}`;
     }
 
     _setsEqual(a, b) {
@@ -3252,17 +3885,18 @@ class PianoHero {
         this.score += Math.floor(100 * (1 + this.combo * 0.1));
         this.updateScore();
         this.showHitFeedback(noteName, true, 1);
-        this.practiceHitNotes.add(noteName);
+        this._incrementCount(this.practiceHitCounts, noteName);
+        if (!this._hasRemainingPracticeHits(noteName)) {
+            this.practiceHitNotes.add(noteName);
+        }
 
         // Remove highlight from this key
         const keyEl = this._keyElementCache && this._keyElementCache[noteName];
         if (keyEl) keyEl.classList.remove('practice-target');
 
         // If all chord notes are hit, advance
-        if (this.practiceHitNotes.size >= this.practiceExpectedNotes.size) {
-            this.practiceWaiting = false;
-            this.practiceExpectedNotes = new Set();
-            this.practiceHitNotes = new Set();
+        if (this._totalCount(this.practiceHitCounts) >= this._totalCount(this.practiceExpectedCounts)) {
+            this._clearPracticeState();
         }
         return true;
     }
@@ -3526,7 +4160,7 @@ class PianoHero {
         } else if (note.hit) {
             hue = hand === 0 ? (isBlackKey ? 160 : 130) : (isBlackKey ? 240 : 210);
             sat = 60; lum = 40; alpha = 0.35;
-        } else if (this.gameMode === 'practice' && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
+        } else if (this._isManualPracticeMode() && this.practiceWaiting && this.practiceExpectedNotes.has(note.note) && !note.hit) {
             hue = 50; sat = 100; lum = 55; alpha = 1.0;
         } else if (isCoPlayManual) {
             hue = 30; sat = 100; lum = 55; alpha = 1.0;

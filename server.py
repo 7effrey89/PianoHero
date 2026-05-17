@@ -8,6 +8,7 @@ import os
 import re
 import json
 import hashlib
+from html import unescape
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -20,6 +21,19 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
+
+# Allow private-network preflight from https://onlinesequencer.net to http://localhost
+@app.after_request
+def _add_private_network_header(resp):
+    if request.headers.get('Access-Control-Request-Private-Network'):
+        resp.headers['Access-Control-Allow-Private-Network'] = 'true'
+    return resp
+
+# In-memory cookie store — updated by the bookmarklet, used as fallback for all OnlineSeq requests
+_onlineseq_cookie_store: dict[str, str | None] = {'cookie': None}
+
+# Last MIDI uploaded by the in-browser bookmarklet (consumed by the frontend poller)
+_onlineseq_last_upload: dict | None = None
 
 # Paths & configuration
 BASE_DIR = Path(__file__).parent
@@ -288,6 +302,374 @@ def delete_midi_file():
 
     file_path.unlink()
     return jsonify({'success': True})
+
+
+# ── Online Sequencer integration ────────────────────────────────────
+
+def _fetch_onlineseq_page(path, params=None, cookie=None, user_agent=None):
+    """Fetch an Online Sequencer page and return HTML text.
+
+    Pass the browser's real User-Agent and the full cookie string from
+    document.cookie so Cloudflare sees a matching session.
+    """
+    ua = user_agent or (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    )
+    headers = {
+        'User-Agent': ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://onlinesequencer.net/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+    }
+    if cookie:
+        # Accept either full cookie string or bare cf_clearance value
+        c = cookie.strip()
+        if not ('=' in c and ';' in c) and not c.startswith('cf_clearance='):
+            c = 'cf_clearance=' + c
+        headers['Cookie'] = c
+
+    resp = http_requests.get(
+        f'https://onlinesequencer.net{path}',
+        params=params or {},
+        headers=headers,
+        timeout=15,
+    )
+
+    # Cloudflare challenge page
+    if resp.status_code == 403 or 'Just a moment...' in resp.text:
+        if cookie:
+            raise RuntimeError(
+                'Cloudflare still blocked \u2014 the cookie may have expired or the User-Agent mismatched. '
+                'Re-open Online Sequencer in your browser, then in the Console run: copy(document.cookie) '
+                'and paste the result into the Cookie field, then click Save.'
+            )
+        raise RuntimeError(
+            'Online Sequencer requires a browser session cookie to bypass Cloudflare. '
+            'Click \u201cOpen Site\u201d, wait for the page to load, then open DevTools Console (F12) '
+            'and run: copy(document.cookie) \u2014 this copies all cookies. '
+            'Paste into the Cookie field above and click Save.'
+        )
+
+    resp.raise_for_status()
+    return resp.text
+
+
+def _strip_html_tags(text):
+    return re.sub(r'<[^>]*>', '', text or '')
+
+
+def _parse_onlineseq_results(html_text):
+    """Extract sequence cards from Online Sequencer search HTML."""
+    results = []
+    seen = set()
+
+    # Sequence result links are numeric paths like /1234567
+    for match in re.finditer(
+        r'<a[^>]*href="/(?P<id>\d+)"[^>]*>(?P<label>.*?)</a>',
+        html_text,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        sequence_id = match.group('id')
+        if sequence_id in seen:
+            continue
+
+        tag_html = match.group(0)
+        window = html_text[max(0, match.start() - 300): match.end() + 1200]
+
+        # Avoid nav/utility links by preferring cards that contain NOTE count context
+        if not re.search(r'\bNOTES?\b', window, re.IGNORECASE):
+            continue
+
+        title_match = re.search(r'title="([^"]+)"', tag_html, re.IGNORECASE)
+        if title_match:
+            name = title_match.group(1)
+        else:
+            name = _strip_html_tags(match.group('label'))
+
+        name = unescape(name or '').strip()
+        if not name:
+            name = f'Sequence {sequence_id}'
+
+        notes_match = re.search(r'([0-9][0-9,]*)\s*NOTES?', window, re.IGNORECASE)
+        notes_label = f"{notes_match.group(1)} notes" if notes_match else ''
+
+        results.append({
+            'sequenceId': sequence_id,
+            'name': name,
+            'notesLabel': notes_label,
+        })
+        seen.add(sequence_id)
+
+    # Fallback: if card extraction fails, at least return unique numeric sequence links
+    if not results:
+        for m in re.finditer(r'href="/(\d+)"', html_text, re.IGNORECASE):
+            sequence_id = m.group(1)
+            if sequence_id in seen:
+                continue
+            results.append({
+                'sequenceId': sequence_id,
+                'name': f'Sequence {sequence_id}',
+                'notesLabel': '',
+            })
+            seen.add(sequence_id)
+            if len(results) >= 20:
+                break
+
+    return results
+
+
+def _resolve_onlineseq_midi_url(sequence_id, cookie=None, user_agent=None):
+    """Resolve an Online Sequencer page to a downloadable MIDI URL."""
+    page_html = _fetch_onlineseq_page(f'/{sequence_id}', cookie=cookie, user_agent=user_agent)
+
+    patterns = [
+        r'href="([^"]+\.mid(?:\?[^"]*)?)"',
+        r'data-midi-url="([^"]+)"',
+        r'"midi(?:_url|Url)"\s*:\s*"([^"]+)"',
+        r'content="([^"]+\.mid(?:\?[^"]*)?)"',
+    ]
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, page_html, re.IGNORECASE):
+            url = unescape(match.group(1))
+            if not url:
+                continue
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif url.startswith('/'):
+                url = 'https://onlinesequencer.net' + url
+            elif not url.startswith('http'):
+                url = 'https://onlinesequencer.net/' + url.lstrip('/')
+
+            if '.mid' in url.lower():
+                return url
+
+    # Common direct pattern fallback
+    return f'https://onlinesequencer.net/{sequence_id}.mid'
+
+
+@app.route('/api/onlineseq/search', methods=['GET'])
+def onlineseq_search():
+    """Search Online Sequencer by query and list controls (sort/time/start)."""
+    query = request.args.get('q', '').strip()
+    start = request.args.get('start', '0').strip()
+    sort = request.args.get('sort', '').strip().lower()
+    time_filter = request.args.get('time', '').strip().lower()
+    featured = request.args.get('featured', '').strip().lower()
+    registered = request.args.get('registered', '').strip().lower()
+    cookie = request.args.get('cookie', '').strip()
+    # Fall back to bookmarklet-injected cookie if none sent in params
+    cookie = cookie or _onlineseq_cookie_store.get('cookie') or ''
+    # Use the browser's real User-Agent so Cloudflare accepts the cf_clearance cookie
+    client_ua = request.headers.get('User-Agent', '')
+
+    try:
+        start_int = max(0, int(start or '0'))
+    except ValueError:
+        start_int = 0
+
+    params = {}
+    if query:
+        params['search'] = query
+    if start_int > 0:
+        params['start'] = str(start_int)
+    if sort in {'recently', 'oldest', 'popular', 'notes', 'longest'}:
+        params['sort'] = sort
+    if time_filter in {'today', 'week', 'month', 'all'}:
+        params['time'] = time_filter
+    if featured in {'1', 'true', 'yes', 'on'}:
+        params['featured'] = '1'
+    if registered in {'1', 'true', 'yes', 'on'}:
+        params['registered'] = '1'
+
+    try:
+        html_text = _fetch_onlineseq_page('/sequences', params=params, cookie=cookie or None, user_agent=client_ua or None)
+        results = _parse_onlineseq_results(html_text)
+        next_start = start_int + 1
+        has_more = bool(re.search(rf'(?:\?|&|&amp;)start={next_start}(?:[&#"\s]|$)', html_text))
+        if not has_more and len(results) >= 7:
+            # Site pages commonly return batches of 7; this keeps Next usable when link parsing misses.
+            has_more = True
+
+        return jsonify({
+            'results': results,
+            'start': start_int,
+            'hasMore': has_more,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+
+
+@app.route('/api/onlineseq/load', methods=['POST'])
+def onlineseq_load():
+    """Download and load a sequence from Online Sequencer by sequence id."""
+    data = request.json or {}
+    sequence_id = str(data.get('sequenceId', '')).strip()
+    name = str(data.get('name', '')).strip()
+    cookie = str(data.get('cookie', '')).strip() or None
+    # Fall back to bookmarklet-injected cookie
+    cookie = cookie or _onlineseq_cookie_store.get('cookie') or None
+    # Use the browser's real User-Agent so Cloudflare accepts the cf_clearance cookie
+    client_ua = request.headers.get('User-Agent', '') or None
+
+    if not sequence_id.isdigit():
+        return jsonify({'error': 'Invalid sequenceId'}), 400
+
+    cache_key = hashlib.sha256(sequence_id.encode()).hexdigest()[:16]
+    cache_file = MIDI_CACHE_DIR / f"onlineseq_{cache_key}.json"
+
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            cached = json.load(f)
+        midi_dir = BASE_DIR / 'midi'
+        saved_name = cached.get('savedAs', '')
+        if saved_name and (midi_dir / saved_name).is_file():
+            return jsonify(cached)
+        cache_file.unlink()
+
+    try:
+        midi_url = _resolve_onlineseq_midi_url(sequence_id, cookie=cookie, user_agent=client_ua)
+        midi_headers = {
+            'User-Agent': client_ua or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': f'https://onlinesequencer.net/{sequence_id}',
+        }
+        if cookie:
+            midi_headers['Cookie'] = cookie
+        midi_resp = http_requests.get(
+            midi_url,
+            headers=midi_headers,
+            timeout=20,
+        )
+        midi_resp.raise_for_status()
+    except Exception as e:
+        return jsonify({'error': f'Unable to download MIDI: {e}'}), 502
+
+    midi_dir = BASE_DIR / 'midi'
+    midi_dir.mkdir(exist_ok=True)
+    if name:
+        safe_name = re.sub(r'[<>:"/\\|?*]', '', name)
+    else:
+        safe_name = f'Online Sequencer {sequence_id}'
+    if not safe_name.lower().endswith('.mid'):
+        safe_name += '.mid'
+
+    midi_path = midi_dir / safe_name
+    counter = 1
+    while midi_path.exists():
+        stem = safe_name.rsplit('.', 1)[0]
+        midi_path = midi_dir / f"{stem} ({counter}).mid"
+        counter += 1
+
+    midi_path.write_bytes(midi_resp.content)
+    notes = convert_midi_to_notes(str(midi_path))
+    if not notes:
+        try:
+            midi_path.unlink()
+        except OSError:
+            pass
+        return jsonify({'error': 'Could not parse any notes from downloaded MIDI'}), 422
+
+    result = {
+        'success': True,
+        'notes': notes,
+        'sequenceId': sequence_id,
+        'noteCount': len(notes),
+        'savedAs': midi_path.name,
+    }
+    with open(cache_file, 'w') as f:
+        json.dump(result, f)
+
+    return jsonify(result)
+
+
+@app.route('/api/onlineseq/cookie', methods=['GET'])
+def onlineseq_get_cookie():
+    """Return the cookie last pushed by the bookmarklet (frontend polls this)."""
+    return jsonify({'cookie': _onlineseq_cookie_store.get('cookie')})
+
+
+@app.route('/api/onlineseq/cookie', methods=['POST'])
+def onlineseq_set_cookie():
+    """Accept cookies sent by the bookmarklet running on onlinesequencer.net."""
+    data = request.json or {}
+    raw = str(data.get('cookie', '')).strip()
+    if not raw:
+        return jsonify({'error': 'No cookie provided'}), 400
+    _onlineseq_cookie_store['cookie'] = raw
+    return jsonify({'ok': True})
+
+
+@app.route('/api/onlineseq/upload_midi', methods=['POST', 'OPTIONS'])
+def onlineseq_upload_midi():
+    """Accept a MIDI file uploaded by the in-browser bookmarklet running on
+    onlinesequencer.net. The browser fetches the .mid (cf_clearance sent
+    automatically on same-origin), then POSTs the binary blob here."""
+    global _onlineseq_last_upload
+
+    if request.method == 'OPTIONS':
+        return ('', 204)
+
+    file = request.files.get('midi')
+    if file is None:
+        return jsonify({'error': 'No midi file in upload'}), 400
+
+    sequence_id = (request.form.get('sequenceId') or '').strip()
+    raw_name = (request.form.get('name') or '').strip()
+
+    if not sequence_id.isdigit():
+        sequence_id = re.sub(r'\D', '', sequence_id) or 'unknown'
+
+    safe_name = re.sub(r'[<>:"/\\|?*]', '', raw_name) if raw_name else f'Online Sequencer {sequence_id}'
+    if not safe_name.lower().endswith('.mid'):
+        safe_name += '.mid'
+
+    midi_dir = BASE_DIR / 'midi'
+    midi_dir.mkdir(exist_ok=True)
+    midi_path = midi_dir / safe_name
+    counter = 1
+    while midi_path.exists():
+        stem = safe_name.rsplit('.', 1)[0]
+        midi_path = midi_dir / f"{stem} ({counter}).mid"
+        counter += 1
+
+    data = file.read()
+    if not data or len(data) < 4 or not data.startswith(b'MThd'):
+        return jsonify({'error': 'Upload is not a valid MIDI file (missing MThd header)'}), 400
+    midi_path.write_bytes(data)
+
+    notes = convert_midi_to_notes(str(midi_path))
+    if not notes:
+        try:
+            midi_path.unlink()
+        except OSError:
+            pass
+        return jsonify({'error': 'Could not parse any notes from uploaded MIDI'}), 422
+
+    result = {
+        'success': True,
+        'notes': notes,
+        'sequenceId': sequence_id,
+        'noteCount': len(notes),
+        'savedAs': midi_path.name,
+    }
+    _onlineseq_last_upload = result
+    return jsonify({'ok': True, 'savedAs': midi_path.name, 'noteCount': len(notes)})
+
+
+@app.route('/api/onlineseq/last_upload', methods=['GET'])
+def onlineseq_last_upload():
+    """Return (and clear) the most recent bookmarklet-uploaded MIDI.
+    The frontend polls this and auto-loads the result."""
+    global _onlineseq_last_upload
+    consume = request.args.get('consume', '1') != '0'
+    payload = _onlineseq_last_upload
+    if consume and payload is not None:
+        _onlineseq_last_upload = None
+    return jsonify(payload or {})
 
 
 # ── BitMidi integration ──────────────────────────────────────────────

@@ -28,6 +28,7 @@
                     <div class="source-tabs">
                         <button class="tab-btn active" data-tab="midi">📁 Local</button>
                         <button class="tab-btn" data-tab="bitmidi">🌐 Bitmidi</button>
+                        <button class="tab-btn" data-tab="onlineseq">🎹 OnlineSeq</button>
                     </div>
                     <div class="browser-content">
                         <div class="tab-content" id="tab-midi">
@@ -39,6 +40,53 @@
                                 <button id="bitmidiSearchBtn">Search</button>
                             </div>
                             <div id="bitmidiResults" class="bitmidi-results"></div>
+                        </div>
+                        <div class="tab-content hidden" id="tab-onlineseq">
+                            <div class="onlineseq-simple">
+                                <!-- Step 1: one-time prerequisite -->
+                                <div class="onlineseq-step onlineseq-prereq">
+                                    <div class="onlineseq-step-title"><span class="onlineseq-step-num">1</span> One-time setup</div>
+                                    <p class="onlineseq-step-desc">
+                                        Make sure your <b>bookmarks bar is visible</b> (Ctrl+Shift+B in Edge/Chrome),
+                                        then <b>drag</b> the button below onto it:
+                                    </p>
+                                    <div class="onlineseq-drag-wrap">
+                                        <a id="onlineseqBookmarklet" class="onlineseq-drag-pill" draggable="true" href="#" title="Drag me to your bookmarks bar">
+                                            <span class="onlineseq-drag-label">&#11015;&#xFE0F; Send to Piano Hero</span>
+                                            <span class="onlineseq-drag-hint">&larr; drag me up to your bookmarks bar</span>
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2: search -->
+                                <div class="onlineseq-step">
+                                    <div class="onlineseq-step-title"><span class="onlineseq-step-num">2</span> Find a song</div>
+                                    <div class="onlineseq-find-split">
+                                        <div class="onlineseq-find-half">
+                                            <p class="onlineseq-step-desc">Search Online Sequencer:</p>
+                                            <div class="onlineseq-search-row">
+                                                <input type="text" id="onlineseqQuery" placeholder="e.g. Mario, Let It Go, Numb…" />
+                                                <button id="onlineseqSearchBtn" class="onlineseq-search-btn">Search &rarr;</button>
+                                            </div>
+                                        </div>
+                                        <div class="onlineseq-find-divider"></div>
+                                        <div class="onlineseq-find-half">
+                                            <p class="onlineseq-step-desc">Or browse all sequences:</p>
+                                            <a id="onlineseqBrowseBtn" class="onlineseq-search-btn onlineseq-browse-btn" href="https://onlinesequencer.net/sequences" target="_blank" rel="noopener noreferrer">Browse Online Sequencer &rarr;</a>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 3: click bookmark -->
+                                <div class="onlineseq-step">
+                                    <div class="onlineseq-step-title"><span class="onlineseq-step-num">3</span> Send to Piano Hero</div>
+                                    <p class="onlineseq-step-desc">Open any sequence you like, then click your <b>🎹 Send to Piano Hero</b> bookmark. The MIDI will load here automatically.</p>
+                                    <div class="onlineseq-status-box" id="onlineseqStatusBox">
+                                        <span class="onlineseq-status-spinner" id="onlineseqStatusSpinner">&#9202;</span>
+                                        <span id="onlineseqCookieStatus">Waiting for you to click the bookmark on an Online Sequencer page&hellip;</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -74,6 +122,7 @@
                         <button class="mode-option" data-auto="false" data-mode="normal">Normal</button>
                         <button class="mode-option" data-auto="false" data-mode="simple">Simple (merged notes)</button>
                         <button class="mode-option" data-auto="false" data-mode="practice">Practice (wait for input)</button>
+                        <button class="mode-option" data-auto="false" data-mode="micpractice">Mic Practice (wait for pitch)</button>
                     </div>
                     <div class="mode-dropdown-group">
                         <div class="mode-dropdown-heading">Auto Play</div>
@@ -374,7 +423,7 @@
 
     <script src="https://pixijs.download/v8.18.1/pixi.min.js"></script>
     <script src="pixi-renderer.js?v=1"></script>
-    <script src="app.js?v=34"></script>
+    <script src="app.js?v=35"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

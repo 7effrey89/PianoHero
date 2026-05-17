@@ -112,8 +112,8 @@ header.top-header {
     top: 100%;
     left: 0;
     margin-top: 6px;
-    width: 480px;
-    max-height: 400px;
+    width: min(960px, 95vw);
+    max-height: min(88vh, 760px);
     background: #12102a;
     border: 1px solid #3a2d6e;
     border-radius: 8px;
@@ -181,7 +181,7 @@ header.top-header {
 .song-browser-dropdown .tab-content {
     flex: 1;
     overflow-y: auto;
-    max-height: 400px;
+    max-height: min(88vh, 760px);
 }
 
 .song-browser-dropdown .tab-content.hidden {
@@ -1754,6 +1754,412 @@ button {
     text-align: center;
     color: rgba(255,255,255,0.6);
     font-size: 14px;
+}
+
+.onlineseq-layout {
+    display: flex;
+    min-height: 520px;
+}
+
+.onlineseq-sidebar {
+    width: 230px;
+    flex-shrink: 0;
+    border-right: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    flex-direction: column;
+    padding: 8px 0;
+}
+
+.onlineseq-filter {
+    border: none;
+    background: transparent;
+    color: #9bb0d2;
+    text-align: left;
+    font-size: 13px;
+    padding: 10px 12px;
+    text-transform: none;
+    font-weight: 600;
+}
+
+.onlineseq-filter:hover {
+    background: rgba(124, 77, 255, 0.12);
+    color: #d8e5ff;
+}
+
+.onlineseq-filter.active {
+    background: rgba(124, 77, 255, 0.18);
+    color: #ffffff;
+}
+
+.onlineseq-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.onlineseq-search-section {
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 0;
+}
+
+.onlineseq-cookie-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+}
+
+.onlineseq-cookie-label {
+    color: #98a8c6;
+    font-size: 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.onlineseq-cookie-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #e0e8f0;
+    font-size: 12px;
+    padding: 4px 8px;
+    outline: none;
+}
+
+.onlineseq-cookie-input:focus {
+    border-color: #7c8eff;
+}
+
+.onlineseq-cookie-status {
+    font-size: 11px;
+    flex-shrink: 0;
+    color: #5adb84;
+}
+
+.onlineseq-bypass-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.onlineseq-bypass-hint {
+    color: #98a8c6;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+.onlineseq-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.onlineseq-setup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    flex-wrap: wrap;
+}
+
+.onlineseq-grab-btn {
+    background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+    color: #fff !important;
+    font-weight: 600;
+    border: none;
+}
+
+.onlineseq-grab-btn:hover {
+    background: linear-gradient(135deg, #15803d, #16a34a) !important;
+}
+
+.onlineseq-grab-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.onlineseq-bypass-hint {
+    color: #98a8c6;
+    font-size: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.onlineseq-cookie-status {
+    font-size: 11px;
+    flex-shrink: 0;
+    color: #5adb84;
+    white-space: nowrap;
+}
+
+.onlineseq-open-btn:hover {
+    background: rgba(124, 77, 255, 0.2);
+    color: #fff;
+}
+
+/* ===== Simplified Online Sequencer tab ===== */
+.onlineseq-simple {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 16px 18px;
+    max-width: 720px;
+}
+
+.onlineseq-step {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+
+.onlineseq-prereq {
+    border-color: rgba(124, 77, 255, 0.35);
+    background: linear-gradient(180deg, rgba(124, 77, 255, 0.08), rgba(124, 77, 255, 0.02));
+}
+
+.onlineseq-step-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #e8ecf5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.onlineseq-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #7c4dff;
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.onlineseq-step-desc {
+    color: #b8c2d6;
+    font-size: 13px;
+    margin: 4px 0 12px 0;
+    line-height: 1.5;
+}
+
+.onlineseq-step-desc b {
+    color: #fff;
+}
+
+/* Draggable bookmark pill — must scream "drag me" */
+.onlineseq-drag-wrap {
+    display: flex;
+    justify-content: flex-start;
+    padding: 10px 0;
+}
+
+.onlineseq-drag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px 12px 12px;
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    color: white;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 15px;
+    border-radius: 999px;
+    border: 2px dashed rgba(255, 255, 255, 0.7);
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    cursor: grab;
+    user-select: none;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    position: relative;
+}
+
+.onlineseq-drag-pill:hover {
+    transform: translateY(-1px) scale(1.02);
+    box-shadow: 0 6px 18px rgba(34, 197, 94, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.onlineseq-drag-pill:active {
+    cursor: grabbing;
+    transform: scale(0.98);
+}
+
+.onlineseq-drag-handle {
+    font-size: 18px;
+    opacity: 0.85;
+    letter-spacing: -4px;
+    line-height: 1;
+}
+
+.onlineseq-drag-label {
+    white-space: nowrap;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+}
+
+.onlineseq-drag-label::first-letter {
+    font-size: 22px;
+    font-weight: 900;
+    margin-right: 2px;
+    vertical-align: -2px;
+}
+
+.onlineseq-drag-hint {
+    margin-left: 10px;
+    padding-left: 12px;
+    border-left: 1px solid rgba(255, 255, 255, 0.4);
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+/* Step 2: search */
+.onlineseq-search-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.onlineseq-search-row input {
+    flex: 1;
+    padding: 9px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
+    font-size: 14px;
+}
+
+.onlineseq-search-row input:focus {
+    outline: none;
+    border-color: #7c4dff;
+}
+
+.onlineseq-search-btn {
+    padding: 9px 16px;
+    background: #7c4dff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s ease;
+}
+
+.onlineseq-search-btn:hover {
+    background: #6a3aff;
+}
+
+/* Step 2 vertical split */
+.onlineseq-find-split {
+    display: flex;
+    align-items: stretch;
+    gap: 16px;
+}
+
+.onlineseq-find-half {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.onlineseq-find-half .onlineseq-step-desc {
+    margin-top: 0;
+}
+
+.onlineseq-find-half .onlineseq-search-btn,
+.onlineseq-find-half .onlineseq-browse-btn {
+    margin-top: auto;
+}
+
+.onlineseq-find-divider {
+    width: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.onlineseq-browse-btn {
+    display: inline-block;
+    text-align: center;
+    text-decoration: none;
+    line-height: normal;
+}
+
+@media (max-width: 560px) {
+    .onlineseq-find-split { flex-direction: column; }
+    .onlineseq-find-divider { width: auto; height: 1px; }
+}
+
+/* Step 3: status */
+.onlineseq-status-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.3);
+    border-radius: 8px;
+    color: #b8d8f0;
+    font-size: 13px;
+}
+
+.onlineseq-status-spinner {
+    font-size: 16px;
+    animation: onlineseq-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes onlineseq-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+@media (max-width: 760px) {
+    .song-browser-dropdown {
+        width: min(98vw, 720px);
+    }
+
+    .onlineseq-layout {
+        flex-direction: column;
+    }
+
+    .onlineseq-sidebar {
+        width: 100%;
+        max-height: 180px;
+        overflow-y: auto;
+        border-right: none;
+        border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .onlineseq-bypass-hint {
+        display: none;
+    }
 }
 
 /* ── Co-Play Lane Selector buttons (positioned at top of each key) ── */
