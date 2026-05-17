@@ -320,6 +320,16 @@
                 <div class="settings-panel">
                     <h4>UI Effects</h4>
                     <div class="settings-panel-body" id="uiEffectsBody">
+                    <div class="setting-row" title="Quickly adjust scenic effects for smoother playback or richer visuals">
+                        <label for="graphicsPresetSelect">Graphics</label>
+                        <select id="graphicsPresetSelect">
+                            <option value="ultra">Ultra-Performance (Pixi only)</option>
+                            <option value="low">Performance</option>
+                            <option value="medium">Balanced</option>
+                            <option value="high" selected>Quality</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
                     <div class="setting-row">
                         <label for="timingFeedbackToggle">Hit Feedback</label>
                         <label class="toggle-small">
@@ -339,6 +349,7 @@
                         <select id="particleStyleSelect">
                             <option value="sparkle">Sparkle (beams)</option>
                             <option value="splash">Splash (droplets)</option>
+                            <option value="ivory">Ivory (rising dots)</option>
                         </select>
                     </div>
                     <div class="setting-row" id="sparkleSliderRow">
@@ -368,6 +379,13 @@
                             <option value="beam">Light Beam</option>
                             <option value="classic">Classic Bars</option>
                         </select>
+                    </div>
+                    <div class="setting-row" title="Overlay the note letter on each falling note (works for both Light Beam and Classic Bars)">
+                        <label for="showNoteNamesToggle">Show Note Names</label>
+                        <label class="toggle-small">
+                            <input type="checkbox" id="showNoteNamesToggle">
+                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
+                        </label>
                     </div>
                     <div class="setting-row" title="Number of animated wave reflections inside classic note bars (0 = off)">
                         <label for="waveToggle">Wave Ribbons</label>
@@ -427,8 +445,8 @@
     </div>
 
     <script src="https://pixijs.download/v8.18.1/pixi.min.js"></script>
-    <script src="pixi-renderer.js?v=1"></script>
-    <script src="app.js?v=37"></script>
+    <script src="pixi-renderer.js?v=5"></script>
+    <script src="app.js?v=46"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

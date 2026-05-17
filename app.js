@@ -129,12 +129,14 @@ class PianoHero {
 
         // Sparkle particles for held notes
         this.particles = [];
-        this.particleStyle = 'sparkle'; // 'sparkle' or 'splash'
+        this.particleStyle = 'sparkle'; // 'sparkle', 'splash', or 'ivory'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
         this.sparkleEnabled = true;
         this.sparkleHeight = 1.0; // 0.1 to 2.0
         this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
         this.noteStyle = 'classic'; // beam, classic
+        this.showNoteNames = false; // overlay note letter labels (works for beam + classic)
+        this.ultraPerformance = false; // route everything through Pixi, skip 2D overlay
         this.waveEnabled = true;
         this.waveCount = 6;
 
@@ -157,6 +159,14 @@ class PianoHero {
         this.forceFieldEnabled = false;
         this._forceFieldParticles = [];
         this._forceFieldTime = 0;
+        this.graphicsPreset = 'high';
+        this.compactGameArea = false;
+
+        // Visible-note windowing cursors (advance forward only;
+        // reset whenever fallingNotes is rebuilt)
+        this._firstActiveIdx = 0;
+        this._lastVisibleIdx = 0;
+        this._noteWindowMargin = 50; // px buffer above/below viewport
 
         // Co-Play mode: lanes the player chose to play manually
         this.coPlayManualNotes = new Set();       // note names the player toggles as "manual"
@@ -1096,16 +1106,24 @@ class PianoHero {
         // The canvas must match the actual rendered piano width
         const pianoRenderedWidth = piano ? piano.scrollWidth : 0;
         const fullWidth = Math.max(container.parentElement.clientWidth, pianoRenderedWidth);
+        const fullHeight = container.clientHeight;
         container.style.width = fullWidth + 'px';
         this.canvas.width = fullWidth;
-        this.canvas.height = container.clientHeight;
+        this.canvas.height = fullHeight;
         if (this.glRenderer) {
-            this.glRenderer.resize(fullWidth, container.clientHeight);
-        }
-        // Also resize the glCanvas element itself for PixiJS
-        if (this.glCanvas) {
+            // Pixi owns the glCanvas backing buffer (its width/height depend on
+            // the active resolution). Just hand it the CSS size — do NOT also
+            // set glCanvas.width/height directly, or we'll clobber the resolution
+            // multiplier and desync drawing coords from layout.
+            this.glRenderer.resize(fullWidth, fullHeight);
+            // Keep CSS size in sync so the canvas lays out next to the 2D one.
+            if (this.glCanvas) {
+                this.glCanvas.style.width = fullWidth + 'px';
+                this.glCanvas.style.height = fullHeight + 'px';
+            }
+        } else if (this.glCanvas) {
             this.glCanvas.width = fullWidth;
-            this.glCanvas.height = container.clientHeight;
+            this.glCanvas.height = fullHeight;
         }
         this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
@@ -1267,6 +1285,9 @@ class PianoHero {
             await this._precomputeSongData(data.notes);
             this.updateBPMDisplay();
             this.applyGameMode();
+            // Fully reset playback state so the new song starts from t=0 instead of
+            // inheriting fallingNotes / startTime from the previously played song.
+            this.reset();
             this.updateProgress(100);
             this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Press Play!`;
             this._updateControlButtons();
@@ -1449,6 +1470,7 @@ class PianoHero {
         await this._precomputeSongData(data.notes);
         this.updateBPMDisplay();
         this.applyGameMode();
+        this.reset();
 
         this.statusMessage.textContent = `Loaded "${displayName}" from bookmarklet \u2014 ${data.noteCount} notes. Press Play!`;
         const cookieStatus = document.getElementById('onlineseqCookieStatus');
@@ -1596,6 +1618,7 @@ class PianoHero {
             this.songBPM = this.estimateBPM(data.notes);
             this.updateBPMDisplay();
             this.applyGameMode();
+            this.reset();
             this.updateProgress(100);
 
             const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
@@ -1679,6 +1702,7 @@ class PianoHero {
             this.songBPM = this.estimateBPM(data.notes);
             this.updateBPMDisplay();
             this.applyGameMode();
+            this.reset();
             this.updateProgress(100);
             const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
             this.statusMessage.textContent = `Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`;
@@ -1920,6 +1944,19 @@ class PianoHero {
     }
 
     initGameSettings() {
+        const graphicsPresetSelect = document.getElementById('graphicsPresetSelect');
+        if (graphicsPresetSelect) {
+            graphicsPresetSelect.addEventListener('change', () => {
+                const preset = graphicsPresetSelect.value;
+                if (preset === 'custom') {
+                    this._setGraphicsPresetValue('custom');
+                    this._saveSettings();
+                    return;
+                }
+                this._applyGraphicsPreset(preset);
+            });
+        }
+
         // ── Key Scale ──
         const scaleSlider = document.getElementById('keyScaleSlider');
         const scaleInput = document.getElementById('keyScaleInput');
@@ -1978,6 +2015,7 @@ class PianoHero {
         const particleStyleSelect = document.getElementById('particleStyleSelect');
         particleStyleSelect.addEventListener('change', () => {
             this.particleStyle = particleStyleSelect.value;
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
 
@@ -1996,6 +2034,7 @@ class PianoHero {
             this.sparkleEnabled = sparkleToggle.checked;
             if (!this.sparkleEnabled) this.particles = [];
             updateSparkleRows();
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
         updateSparkleRows();
@@ -2007,6 +2046,7 @@ class PianoHero {
         sparkleSlider.addEventListener('input', () => {
             this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
             sparkleValue.textContent = sparkleSlider.value + '%';
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
 
@@ -2016,6 +2056,7 @@ class PianoHero {
         sparkleHeightSlider.addEventListener('input', () => {
             this.sparkleHeight = parseInt(sparkleHeightSlider.value) / 100;
             sparkleHeightValue.textContent = sparkleHeightSlider.value + '%';
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
 
@@ -2034,6 +2075,16 @@ class PianoHero {
             this._saveSettings();
         });
 
+        // ── Show Note Names ──
+        const showNoteNamesToggle = document.getElementById('showNoteNamesToggle');
+        if (showNoteNamesToggle) {
+            showNoteNamesToggle.checked = this.showNoteNames;
+            showNoteNamesToggle.addEventListener('change', () => {
+                this.showNoteNames = showNoteNamesToggle.checked;
+                this._saveSettings();
+            });
+        }
+
         // ── Wave Ribbon Toggle ──
         const waveToggle = document.getElementById('waveToggle');
         this.waveEnabled = waveToggle.checked;
@@ -2043,6 +2094,7 @@ class PianoHero {
         waveToggle.addEventListener('change', () => {
             this.waveEnabled = waveToggle.checked;
             updateWaveRows();
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
         updateWaveRows();
@@ -2053,6 +2105,7 @@ class PianoHero {
         waveCountSlider.addEventListener('input', () => {
             this.waveCount = parseInt(waveCountSlider.value) || 1;
             document.getElementById('waveCountVal').textContent = this.waveCount;
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
 
@@ -2060,14 +2113,19 @@ class PianoHero {
         const neonGlowToggle = document.getElementById('neonGlowToggle');
         neonGlowToggle.addEventListener('change', () => {
             this.neonGlowEnabled = neonGlowToggle.checked;
+            this._applyNeonGlowCSS();
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
+        // Apply initial state for the GL canvas filter
+        this._applyNeonGlowCSS();
 
         // ── Force Field Bar ──
         const forceFieldToggle = document.getElementById('forceFieldToggle');
         forceFieldToggle.addEventListener('change', () => {
             this.forceFieldEnabled = forceFieldToggle.checked;
             this._laneCacheDirty = true;
+            this._markGraphicsPresetCustom();
             this._saveSettings();
         });
 
@@ -2165,6 +2223,9 @@ class PianoHero {
             eqCompression: document.getElementById('eqCompressionToggle').checked,
             sympatheticResonance: document.getElementById('sympatheticResonanceToggle').checked,
             noteStyle: document.getElementById('noteStyleSelect').value,
+            showNoteNames: this.showNoteNames,
+            graphicsPreset: document.getElementById('graphicsPresetSelect').value,
+            compactGameArea: this.compactGameArea,
             waveEnabled: document.getElementById('waveToggle').checked,
             waveCount: document.getElementById('waveCountSlider').value,
             neonGlow: document.getElementById('neonGlowToggle').checked,
@@ -2211,11 +2272,260 @@ class PianoHero {
         document.getElementById('gameCanvas').style.background = `rgba(14, 11, 34, ${o * 0.4})`;
     }
 
+    _getGraphicsPresetConfig(preset) {
+        switch (preset) {
+            case 'ultra':
+                // Ultra-performance: route everything through Pixi, disable Canvas 2D overlay.
+                // No particles, no lane cache draw, no timeline, no labels, no force field.
+                return {
+                    sparkleEnabled: false,
+                    particleStyle: 'sparkle',
+                    sparkle: 0,
+                    sparkleHeight: 70,
+                    waveEnabled: false,
+                    waveCount: 0,
+                    neonGlow: false,
+                    forceField: false,
+                    compactGameArea: true,
+                    ultra: true,
+                };
+            case 'low':
+                // Performance default: turn off every scenic extra so update/render
+                // stay close to what OnlinePianist does on its compact player.
+                return {
+                    sparkleEnabled: false,
+                    particleStyle: 'sparkle',
+                    sparkle: 0,
+                    sparkleHeight: 70,
+                    waveEnabled: false,
+                    waveCount: 1,
+                    neonGlow: false,
+                    forceField: false,
+                    compactGameArea: true,
+                };
+            case 'medium':
+                return {
+                    sparkleEnabled: true,
+                    particleStyle: 'sparkle',
+                    sparkle: 55,
+                    sparkleHeight: 85,
+                    waveEnabled: true,
+                    waveCount: 3,
+                    neonGlow: false,
+                    forceField: false,
+                    compactGameArea: false,
+                };
+            case 'high':
+            default:
+                return {
+                    sparkleEnabled: true,
+                    particleStyle: 'sparkle',
+                    sparkle: 100,
+                    sparkleHeight: 100,
+                    waveEnabled: true,
+                    waveCount: 6,
+                    neonGlow: true,
+                    forceField: true,
+                    compactGameArea: false,
+                };
+        }
+    }
+
+    _setGraphicsPresetValue(preset) {
+        this.graphicsPreset = preset;
+        const select = document.getElementById('graphicsPresetSelect');
+        if (select) select.value = preset;
+    }
+
+    /**
+     * Apply (or remove) a CSS drop-shadow on the WebGL note canvas + 2D overlay so the
+     * neon-glow toggle works regardless of whether Pixi or Canvas 2D is the active renderer.
+     * Cheap, GPU-composited, and only affects non-transparent pixels (i.e. the notes themselves).
+     */
+    _applyNeonGlowCSS() {
+        const glC = document.getElementById('glCanvas');
+        const notesC = document.getElementById('notesCanvas');
+        const filter = this.neonGlowEnabled
+            ? 'drop-shadow(0 0 6px rgba(180, 220, 255, 0.85)) drop-shadow(0 0 14px rgba(120, 180, 255, 0.55))'
+            : '';
+        if (glC) glC.style.filter = filter;
+        if (notesC) notesC.style.filter = filter;
+    }
+
+    _markGraphicsPresetCustom() {
+        if (this._loading || this._applyingGraphicsPreset) return;
+        this._setGraphicsPresetValue('custom');
+    }
+
+    _applyGraphicsPreset(preset, options = {}) {
+        const { skipSave = false } = options;
+        const config = this._getGraphicsPresetConfig(preset);
+        this._applyingGraphicsPreset = true;
+
+        const sparkleToggle = document.getElementById('sparkleToggle');
+        const particleStyleSelect = document.getElementById('particleStyleSelect');
+        const sparkleSlider = document.getElementById('sparkleSlider');
+        const sparkleValue = document.getElementById('sparkleValue');
+        const sparkleHeightSlider = document.getElementById('sparkleHeightSlider');
+        const sparkleHeightValue = document.getElementById('sparkleHeightValue');
+        const particleStyleRow = document.getElementById('particleStyleRow');
+        const sparkleSliderRow = document.getElementById('sparkleSliderRow');
+        const sparkleHeightRow = document.getElementById('sparkleHeightRow');
+        const waveToggle = document.getElementById('waveToggle');
+        const waveCountSlider = document.getElementById('waveCountSlider');
+        const waveCountVal = document.getElementById('waveCountVal');
+        const neonGlowToggle = document.getElementById('neonGlowToggle');
+        const forceFieldToggle = document.getElementById('forceFieldToggle');
+
+        this.sparkleEnabled = config.sparkleEnabled;
+        sparkleToggle.checked = config.sparkleEnabled;
+        if (!config.sparkleEnabled) this.particles = [];
+        [particleStyleRow, sparkleSliderRow, sparkleHeightRow].forEach((el) => {
+            if (el) el.style.display = config.sparkleEnabled ? '' : 'none';
+        });
+
+        this.particleStyle = config.particleStyle;
+        particleStyleSelect.value = config.particleStyle;
+
+        this.sparkleIntensity = config.sparkle / 100;
+        sparkleSlider.value = config.sparkle;
+        sparkleValue.textContent = config.sparkle + '%';
+
+        this.sparkleHeight = config.sparkleHeight / 100;
+        sparkleHeightSlider.value = config.sparkleHeight;
+        sparkleHeightValue.textContent = config.sparkleHeight + '%';
+
+        this.waveEnabled = config.waveEnabled;
+        waveToggle.checked = config.waveEnabled;
+
+        this.waveCount = config.waveCount;
+        waveCountSlider.value = config.waveCount;
+        waveCountVal.textContent = config.waveCount;
+
+        this.neonGlowEnabled = config.neonGlow;
+        neonGlowToggle.checked = config.neonGlow;
+        this._applyNeonGlowCSS();
+
+        this.forceFieldEnabled = config.forceField;
+        forceFieldToggle.checked = config.forceField;
+        this._laneCacheDirty = true;
+
+        this._applyCompactGameArea(config.compactGameArea);
+        this._applyUltraPerformance(!!config.ultra);
+        this._applyPixiQuality(preset);
+
+        this._setGraphicsPresetValue(preset);
+        this._applyingGraphicsPreset = false;
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyCompactGameArea(enabled) {
+        this.compactGameArea = !!enabled;
+        document.body.classList.toggle('compact-game', this.compactGameArea);
+        // The canvas size depends on container height, so re-measure now that
+        // the CSS class changed the layout.
+        if (typeof this.resizeCanvas === 'function') {
+            // Defer to next frame so the layout reflow lands first.
+            requestAnimationFrame(() => this.resizeCanvas());
+        }
+    }
+
+    /**
+     * Map graphics preset → Pixi backing-buffer resolution.
+     *   ultra  → 1   (cheapest fill cost, Pixi-only)
+     *   low    → 1   (cheapest fill cost)
+     *   medium → min(DPR, 1.5)
+     *   high   → min(DPR, 2)   (crisp on retina)
+     * custom keeps whatever was last applied.
+     */
+    _applyPixiQuality(preset) {
+        if (!this.glRenderer || typeof this.glRenderer.setQuality !== 'function') return;
+        const dpr = window.devicePixelRatio || 1;
+        let resolution;
+        switch (preset) {
+            case 'ultra':  resolution = 1; break;
+            case 'low':    resolution = 1; break;
+            case 'high':   resolution = Math.min(dpr, 2); break;
+            case 'medium': resolution = Math.min(dpr, 1.5); break;
+            default: return; // 'custom' — leave as-is
+        }
+        this.glRenderer.setQuality({ resolution });
+    }
+
+    /** Toggle ultra-performance: hide #notesCanvas (2D overlay) and force beam style. */
+    _applyUltraPerformance(enabled) {
+        this.ultraPerformance = !!enabled;
+        if (this.canvas) this.canvas.style.display = enabled ? 'none' : '';
+        if (enabled) {
+            // Classic bars require Canvas 2D — force beam path so Pixi can render notes.
+            const sel = document.getElementById('noteStyleSelect');
+            if (sel && this.noteStyle !== 'beam') {
+                this._prevNoteStyleBeforeUltra = this.noteStyle;
+                this.noteStyle = 'beam';
+                sel.value = 'beam';
+            }
+            this.particles = [];
+        } else if (this._prevNoteStyleBeforeUltra) {
+            const sel = document.getElementById('noteStyleSelect');
+            this.noteStyle = this._prevNoteStyleBeforeUltra;
+            if (sel) sel.value = this.noteStyle;
+            this._prevNoteStyleBeforeUltra = null;
+        }
+    }
+
+    /**
+     * Visible-note windowing helpers.
+     * fallingNotes is kept sorted by `time`; the two cursors mark the slice
+     * `[_firstActiveIdx, _lastVisibleIdx)` that update/render need to touch.
+     * Cursors only advance forward; rebuilds call _resetNoteWindow().
+     */
+    _resetNoteWindow() {
+        if (this.fallingNotes && this.fallingNotes.length > 1) {
+            this.fallingNotes.sort((a, b) => a.time - b.time);
+        }
+        this._firstActiveIdx = 0;
+        this._lastVisibleIdx = 0;
+    }
+
+    _advanceVisibleWindow(referenceTime, speed) {
+        // referenceTime is the game clock in seconds (already in playback time —
+        // not multiplied by speed). Position formula:
+        //   y = hitZoneY - ((note.time / speed) - referenceTime) * noteSpeed * speed
+        // Note enters viewport when y >= -margin →
+        //   note.time <= (referenceTime + (hitZoneY + margin) / (noteSpeed * speed)) * speed
+        const margin = this._noteWindowMargin;
+        const enterCutoffSec = (referenceTime + (this.hitZoneY + margin) / (this.noteSpeed * speed)) * speed;
+        const notes = this.fallingNotes;
+        const len = notes.length;
+        while (this._lastVisibleIdx < len && notes[this._lastVisibleIdx].time <= enterCutoffSec) {
+            this._lastVisibleIdx++;
+        }
+    }
+
+    _retireScrolledNotes(speed) {
+        // Advance _firstActiveIdx past any notes whose drawn region is fully
+        // below the canvas. Cursor advancement also cleans up held-note refs.
+        const canvasBottom = this.canvas.height + 50;
+        while (this._firstActiveIdx < this._lastVisibleIdx) {
+            const note = this.fallingNotes[this._firstActiveIdx];
+            const noteH = this._visibleNoteHeight(note.duration || 0.15, speed);
+            if ((note.y - noteH) <= canvasBottom) break;
+            if (this.heldFallingNotes.get(note.note) === note) {
+                this.heldFallingNotes.delete(note.note);
+            }
+            this._firstActiveIdx++;
+        }
+    }
+
     _loadSettings() {
         let settings;
         try { settings = JSON.parse(localStorage.getItem('pianoHeroSettings')); } catch(e) {}
         if (!settings) return;
         this._loading = true;
+
+        if (settings.graphicsPreset) {
+            this._setGraphicsPresetValue(settings.graphicsPreset);
+        }
 
         // Restore autoPlay FIRST — before any dispatchEvent triggers _saveSettings()
         if (settings.autoPlay != null) {
@@ -2333,6 +2643,11 @@ class PianoHero {
             sel.value = settings.noteStyle;
             this.noteStyle = settings.noteStyle;
         }
+        if (settings.showNoteNames != null) {
+            this.showNoteNames = !!settings.showNoteNames;
+            const cb = document.getElementById('showNoteNamesToggle');
+            if (cb) cb.checked = this.showNoteNames;
+        }
         if (settings.waveEnabled != null) {
             const cb = document.getElementById('waveToggle');
             cb.checked = settings.waveEnabled;
@@ -2349,6 +2664,7 @@ class PianoHero {
             const cb = document.getElementById('neonGlowToggle');
             cb.checked = settings.neonGlow;
             this.neonGlowEnabled = settings.neonGlow;
+            this._applyNeonGlowCSS();
         }
         if (settings.forceField != null) {
             const cb = document.getElementById('forceFieldToggle');
@@ -2363,6 +2679,17 @@ class PianoHero {
             this.bgOverlayOpacity = parseInt(settings.bgOverlayOpacity) / 100;
             this._applyOverlayOpacity();
             this._laneCacheDirty = true;
+        }
+
+        if (settings.graphicsPreset && settings.graphicsPreset !== 'custom') {
+            this._applyGraphicsPreset(settings.graphicsPreset, { skipSave: true });
+        } else if (!settings.graphicsPreset) {
+            this._setGraphicsPresetValue('custom');
+        }
+
+        // Compact-mode override (applied after preset so custom users keep choice)
+        if (settings.compactGameArea != null) {
+            this._applyCompactGameArea(settings.compactGameArea);
         }
 
         // Update header mode label to reflect restored settings
@@ -2448,6 +2775,7 @@ class PianoHero {
                 holdStart: state.holdStart
             };
         });
+        this._resetNoteWindow();
 
         this.totalNotes = this.fallingNotes.length;
 
@@ -2852,6 +3180,7 @@ class PianoHero {
                 hit: false,
                 missed: false
             }));
+            this._resetNoteWindow();
         } else {
             // Shift startTime so the game clock picks up from the pre-seeked position
             const refTime = this.pauseTime || performance.now();
@@ -3325,58 +3654,88 @@ class PianoHero {
     }
 
     _scheduleAutoPlayNotes() {
-        // Use the same negative lead-in clock as rendering so sounds sync with note travel.
-        const currentTime = this._getGameClockSec();
+        // Lookahead scheduler: a single setInterval ticks every 50 ms and
+        // schedules any note whose game-time is within the next 200 ms.
+        // This replaces the previous O(N) fan-out of setTimeout calls and
+        // bounds timer drift / GC pressure independent of song length.
 
-        // Schedule automatic key presses for remaining notes
-        const speed = this.speedMultiplier;
+        // Reset prior scheduler state so this method stays idempotent.
+        this._stopAutoPlayScheduler();
+        for (const note of this.fallingNotes) {
+            if (note._autoScheduled) note._autoScheduled = false;
+        }
+
+        const LOOKAHEAD_SEC = 0.2;
+        const TICK_MS = 50;
         const isCoPlay = this.gameMode === 'coplay';
-        this.fallingNotes.forEach(note => {
-            if (note.hit || note.missed) return; // skip already played notes
 
-            // Co-Play: skip notes on manual lanes — player must hit them
-            if (isCoPlay && this.coPlayManualNotes.has(note.note)) return;
+        const fireNote = (note) => {
+            if (!this.isPlaying || this.isPaused) return;
+            if (note.hit || note.missed) return;
+            if (!note.hit && !note.missed) {
+                note.hit = true;
+                note.holdStart = this._getGameClockSec();
+                this.combo++;
+                this.hitNotes++;
+                this.score += Math.floor(100 * (1 + this.combo * 0.1));
+                this.updateScore();
+                this.showHitFeedback(note.note, true, 1);
+                this.heldFallingNotes.set(note.note, note);
+                this._emitHitBurst(note.note, note.hand || 0);
+            }
+            if (!this._keyElementCache) this._keyElementCache = {};
+            let keyElement = this._keyElementCache[note.note];
+            if (keyElement === undefined) {
+                keyElement = document.querySelector(`.key[data-note="${note.note}"]`);
+                this._keyElementCache[note.note] = keyElement || null;
+            }
+            if (keyElement) keyElement.classList.add('active');
+            const autoVol = isCoPlay ? this.coPlayAutoVolume : undefined;
+            this.playNoteSound(note.note, note.duration, autoVol);
 
-            const delay = Math.max(0, (note.time / speed - currentTime) * 1000);
-            const key = this.noteToKey[note.note];
+            const speed = this.speedMultiplier;
             const holdMs = Math.max(80, ((note.duration || 0.15) / speed) * 1000);
+            const releaseTid = setTimeout(() => {
+                if (keyElement) keyElement.classList.remove('active');
+                this.heldFallingNotes.delete(note.note);
+            }, holdMs);
+            this.autoPlayTimeouts.push(releaseTid);
+        };
 
-            const tid = setTimeout(() => {
-                if (!this.isPlaying || this.isPaused) return;
-
-                // Directly mark the note as hit (bypasses timing-sensitive position check)
-                if (!note.hit && !note.missed) {
-                    note.hit = true;
-                    note.holdStart = this._getGameClockSec();
-                    this.combo++;
-                    this.hitNotes++;
-                    this.score += Math.floor(100 * (1 + this.combo * 0.1));
-                    this.updateScore();
-                    this.showHitFeedback(note.note, true, 1);
-                    this.heldFallingNotes.set(note.note, note);
-                    this._emitHitBurst(note.note, note.hand || 0);
+        const tick = () => {
+            if (!this.isPlaying || this.isPaused) return;
+            const currentTime = this._getGameClockSec();
+            const speed = this.speedMultiplier;
+            const horizon = currentTime + LOOKAHEAD_SEC;
+            // fallingNotes is time-sorted; iterate from cursor and break early.
+            const notes = this.fallingNotes;
+            for (let i = 0; i < notes.length; i++) {
+                const note = notes[i];
+                if (note._autoScheduled || note.hit || note.missed) continue;
+                if (isCoPlay && this.coPlayManualNotes.has(note.note)) continue;
+                const noteTime = note.time / speed;
+                if (noteTime > horizon) break; // future, beyond lookahead
+                note._autoScheduled = true;
+                const delayMs = Math.max(0, (noteTime - currentTime) * 1000);
+                if (delayMs <= 1) {
+                    fireNote(note);
+                } else {
+                    const tid = setTimeout(() => fireNote(note), delayMs);
+                    this.autoPlayTimeouts.push(tid);
                 }
+            }
+        };
 
-                // Play sound + visual (hold for note duration)
-                if (!this._keyElementCache) this._keyElementCache = {};
-                let keyElement = this._keyElementCache[note.note];
-                if (keyElement === undefined) {
-                    keyElement = document.querySelector(`.key[data-note="${note.note}"]`);
-                    this._keyElementCache[note.note] = keyElement || null;
-                }
-                if (keyElement) keyElement.classList.add('active');
-                // In co-play mode, reduce volume for auto-played (non-manual) notes
-                const autoVol = isCoPlay ? this.coPlayAutoVolume : undefined;
-                this.playNoteSound(note.note, note.duration, autoVol);
+        // Run one immediate tick so notes near the playhead don't wait 50ms.
+        tick();
+        this._autoPlaySchedulerId = setInterval(tick, TICK_MS);
+    }
 
-                const releaseTid = setTimeout(() => {
-                    if (keyElement) keyElement.classList.remove('active');
-                    this.heldFallingNotes.delete(note.note);
-                }, holdMs);
-                this.autoPlayTimeouts.push(releaseTid);
-            }, delay);
-            this.autoPlayTimeouts.push(tid);
-        });
+    _stopAutoPlayScheduler() {
+        if (this._autoPlaySchedulerId != null) {
+            clearInterval(this._autoPlaySchedulerId);
+            this._autoPlaySchedulerId = null;
+        }
     }
     
     // togglePause is now handled by togglePlayPause()
@@ -3386,9 +3745,15 @@ class PianoHero {
         this.isPaused = false;
         this.isAutoPlay = this.modeToggleSwitch.checked;
         this._stopMicPracticeDetection();
+        this._stopAutoPlayScheduler();
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         this.fallingNotes = [];
+        // Reset visible-window cursors so the renderer doesn't index past the
+        // now-empty fallingNotes array (which previously killed the rAF chain
+        // with "Cannot read properties of undefined (reading 'note')").
+        this._firstActiveIdx = 0;
+        this._lastVisibleIdx = 0;
         this._hasLogicClock = false;
         this._logicAccumulatorSec = 0;
         this.heldFallingNotes.clear();
@@ -3988,6 +4353,7 @@ class PianoHero {
                 missed: false
             };
         });
+        this._resetNoteWindow();
 
         // Recalculate stats for notes before seek point
         this.hitNotes = this.fallingNotes.filter(n => n.hit).length;
@@ -4010,7 +4376,10 @@ class PianoHero {
     /** Compute note Y positions for a given game clock time and draw one frame */
     _renderAtTime(gameClockSec) {
         const speed = this.speedMultiplier;
-        for (const note of this.fallingNotes) {
+        this._advanceVisibleWindow(gameClockSec, speed);
+        const notes = this.fallingNotes;
+        for (let i = this._firstActiveIdx; i < this._lastVisibleIdx; i++) {
+            const note = notes[i];
             const scaledNoteTime = note.time / speed;
             const timeUntilHit = scaledNoteTime - gameClockSec;
             note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
@@ -4033,43 +4402,38 @@ class PianoHero {
 
         // Update song progress timeline
         this.updateSongTimeline(currentTime * speed);
-        
-        // Update falling notes
-        for (let i = this.fallingNotes.length - 1; i >= 0; i--) {
-            const note = this.fallingNotes[i];
-            
-            // Always update Y position so notes keep scrolling (even after hit/missed)
+
+        // Expand the visible window forward as new notes enter the viewport,
+        // then update positions only for notes inside [_firstActiveIdx, _lastVisibleIdx).
+        this._advanceVisibleWindow(currentTime, speed);
+        const hitZoneY = this.hitZoneY;
+        const noteSpeed = this.noteSpeed;
+        const hitTolerance = this.hitTolerance;
+        const notes = this.fallingNotes;
+        for (let i = this._firstActiveIdx; i < this._lastVisibleIdx; i++) {
+            const note = notes[i];
+
+            // Always update Y so notes keep scrolling (even after hit/missed)
             const scaledNoteTime = note.time / speed;
             const timeUntilHit = scaledNoteTime - currentTime;
-            note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed * speed);
+            note.y = hitZoneY - (timeUntilHit * noteSpeed * speed);
 
             if (!note.hit && !note.missed) {
-                // Check if note was missed
-                if (note.y > this.hitZoneY + this.hitTolerance) {
+                if (note.y > hitZoneY + hitTolerance) {
                     note.missed = true;
                     this.missedNotes++;
                     this.combo = 0;
                     this.updateScore();
                 }
             }
-            
-            // Remove notes that have fully scrolled off the bottom
-            const dur = note.duration || 0.15;
-            const noteHeight = this._visibleNoteHeight(dur, speed);
-            if ((note.y - noteHeight) > this.canvas.height + 50) {
-                // Clean up held-note tracking so particles stop
-                if (this.heldFallingNotes.get(note.note) === note) {
-                    this.heldFallingNotes.delete(note.note);
-                }
-                // Swap-and-pop: O(1) removal
-                const last = this.fallingNotes.length - 1;
-                if (i !== last) this.fallingNotes[i] = this.fallingNotes[last];
-                this.fallingNotes.pop();
-            }
         }
-        
-        // Check if game is over
-        if (this.fallingNotes.length === 0 && this.isPlaying) {
+
+        // Retire any notes whose drawn region has fully scrolled off the bottom.
+        this._retireScrolledNotes(speed);
+
+        // Check if game is over (every note has either scrolled off the bottom
+        // or, for very long notes, all of them are past their hit zone).
+        if (this._firstActiveIdx >= notes.length && this.isPlaying) {
             this.isPlaying = false;
             this.isAutoPlay = this.modeToggleSwitch.checked;
             this.autoPlayTimeouts.forEach(t => clearTimeout(t));
@@ -4115,6 +4479,11 @@ class PianoHero {
             const timeUntilHit = note.time - virtualTime;
             note.y = this.hitZoneY - (timeUntilHit * this.noteSpeed);
         }
+
+        // Keep the render window in sync with the frozen practice clock.
+        // Practice positions use noteSpeed without the speed multiplier, so we
+        // pass speed=1 and reference = virtualTime (already in scaled form).
+        this._advanceVisibleWindow(virtualTime, 1);
 
         // Build the set of expected notes for this chord
         const expectedSet = new Set(chordNotes.map(n => n.note));
@@ -4250,6 +4619,31 @@ class PianoHero {
         const w = this.canvas.width, h = this.canvas.height;
         const ctx = this.ctx;
 
+        // ── Ultra-performance: skip the entire Canvas 2D pipeline ──
+        if (this.ultraPerformance && this.glRenderer && this.glRenderer.available) {
+            const canvasH = h + 50;
+            const speed = this.speedMultiplier;
+            this.glRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
+                noteSpeed: this.noteSpeed,
+                speedMultiplier: speed,
+                noteStyle: 'beam',
+                hitZoneY: this.hitZoneY,
+                canvasH: canvasH,
+                gameMode: this.gameMode,
+                practiceWaiting: this.practiceWaiting,
+                practiceExpectedNotes: this.practiceExpectedNotes,
+                coPlayManualNotes: this.coPlayManualNotes,
+                heldFallingNotes: this.heldFallingNotes,
+                time: this._frameTime / 1000,
+                bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
+                waveCount: 0,
+                renderStartIdx: this._firstActiveIdx,
+                renderEndIdx: this._lastVisibleIdx,
+            });
+            if (scheduleNext) requestAnimationFrame(this._boundRender);
+            return;
+        }
+
         // Clear canvas
         ctx.clearRect(0, 0, w, h);
         
@@ -4284,6 +4678,8 @@ class PianoHero {
                 time: this._frameTime / 1000,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
                 waveCount: this.waveEnabled ? (this.waveCount || 6) : 0,
+                renderStartIdx: this._firstActiveIdx,
+                renderEndIdx: this._lastVisibleIdx,
             });
 
             // No drawImage needed — browser composites the DOM canvases natively
@@ -4304,7 +4700,7 @@ class PianoHero {
                 gctx.clearRect(0, 0, w, h);
                 const origCtx = this.ctx;
                 this.ctx = gctx;
-                for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                for (let i = this._firstActiveIdx; i < this._lastVisibleIdx; i++) {
                     const note = this.fallingNotes[i];
                     const dur = note.duration || 0.15;
                     const noteH = this._visibleNoteHeight(dur, speed);
@@ -4323,7 +4719,7 @@ class PianoHero {
                 ctx.restore();
                 ctx.drawImage(this._glowCanvas, 0, 0);
             } else {
-                for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+                for (let i = this._firstActiveIdx; i < this._lastVisibleIdx; i++) {
                     const note = this.fallingNotes[i];
                     const dur = note.duration || 0.15;
                     const noteH = this._visibleNoteHeight(dur, speed);
@@ -4543,7 +4939,7 @@ class PianoHero {
         ctx.fillRect(x + 3, headY + 1, noteWidth - 6, Math.max(3, headHeight * 0.35));
 
         // Label on head
-        if (headHeight >= 12) {
+        if (this.showNoteNames && headHeight >= 12) {
             ctx.font = 'bold 10px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -4556,9 +4952,9 @@ class PianoHero {
         }
     }
 
-    /** Draw text labels on the 2D canvas for WebGL-rendered notes */
+    /** Draw text labels on the 2D canvas for WebGL-rendered notes (both beam and classic) */
     _drawNoteLabels(ctx, speed, canvasH) {
-        if (this.noteStyle === 'classic') return; // classic bars don't have text labels
+        if (!this.showNoteNames) return;
 
         ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'center';
@@ -4568,7 +4964,9 @@ class PianoHero {
         ctx.lineJoin = 'round';
         ctx.fillStyle = '#fff';
 
-        for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
+        const isClassic = this.noteStyle === 'classic';
+
+        for (let i = this._firstActiveIdx; i < this._lastVisibleIdx; i++) {
             const note = this.fallingNotes[i];
             const pos = this.keyPositions[note.note];
             if (!pos) continue;
@@ -4580,13 +4978,19 @@ class PianoHero {
             const noteGap = 4;
             const noteHeight = this._drawNoteHeight(dur, speed, noteGap);
 
-            // Label on beam head
-            const headHeight = Math.min(14, noteHeight);
-            const headY = note.y - headHeight;
-            if (headHeight >= 12) {
-                ctx.strokeText(note.note, pos.x, headY + headHeight / 2);
-                ctx.fillText(note.note, pos.x, headY + headHeight / 2);
+            let labelY;
+            if (isClassic) {
+                const bodyTop = note.y - noteHeight;
+                const labelH = Math.min(14, noteHeight);
+                if (labelH < 10) continue;
+                labelY = bodyTop + labelH / 2 + 1;
+            } else {
+                const headHeight = Math.min(14, noteHeight);
+                if (headHeight < 12) continue;
+                labelY = note.y - headHeight + headHeight / 2;
             }
+            ctx.strokeText(note.note, pos.x, labelY);
+            ctx.fillText(note.note, pos.x, labelY);
         }
     }
 
@@ -4708,6 +5112,21 @@ class PianoHero {
         ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${Math.min(lum + 25, 80)}%, ${alpha * 0.5})`;
         ctx.lineWidth = 1;
         ctx.strokeRect(x + 0.5, y + 0.5, noteWidth - 1, noteHeight - 1);
+
+        // Optional note-name label near top of bar
+        if (this.showNoteNames && noteHeight >= 10) {
+            const labelH = Math.min(14, noteHeight);
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.lineWidth = 3;
+            ctx.lineJoin = 'round';
+            const ly = y + labelH / 2 + 1;
+            ctx.strokeText(note.note, pos.x, ly);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(note.note, pos.x, ly);
+        }
     }
 
     _roundRect(ctx, x, y, w, h, r) {
@@ -4868,9 +5287,30 @@ class PianoHero {
         if (!this._particlePool) this._particlePool = [];
         const pool = this._particlePool;
         const isBlackKey = pos.isBlack;
-        const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : 5) * this.sparkleIntensity));
+        const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : this.particleStyle === 'ivory' ? 10 : 5) * this.sparkleIntensity));
         for (let i = 0; i < burstCount; i++) {
-            if (this.particleStyle === 'splash') {
+            if (this.particleStyle === 'ivory') {
+                // Rising glowing dot — small, slow drift up, long fade
+                let color;
+                if (hand === 0) {
+                    const hue = isBlackKey ? 160 + Math.random() * 20 : 140 + Math.random() * 20;
+                    color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
+                } else {
+                    const hue = isBlackKey ? 220 + Math.random() * 20 : 200 + Math.random() * 20;
+                    color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
+                }
+                const p = pool.pop() || {};
+                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.9;
+                p.y = this.hitZoneY - 6 - Math.random() * 8;
+                p.vx = (Math.random() - 0.5) * 0.6;
+                p.vy = -(0.8 + Math.random() * 1.4) * this.sparkleHeight;
+                p.life = 1.0;
+                p.decay = (0.008 + Math.random() * 0.008) / Math.max(this.sparkleHeight, 0.3);
+                p.size = 1.5 + Math.random() * 2.5;
+                p.color = color;
+                p.type = 'ivory';
+                this.particles.push(p);
+            } else if (this.particleStyle === 'splash') {
                 const isWhite = Math.random() < 0.3;
                 let color;
                 if (isWhite) {
@@ -4964,7 +5404,32 @@ class PianoHero {
             const hand = fallingNote.hand || 0;
             const isBlackKey = pos.isBlack;
 
-            if (this.particleStyle === 'splash') {
+            if (this.particleStyle === 'ivory') {
+                // Ivory: continuous rising glowing dots while note is held
+                const baseCount = Math.random() < 0.6 ? 2 : 1;
+                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
+                for (let i = 0; i < count; i++) {
+                    let color;
+                    if (hand === 0) {
+                        const hue = isBlackKey ? 160 + Math.random() * 20 : 140 + Math.random() * 20;
+                        color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
+                    } else {
+                        const hue = isBlackKey ? 220 + Math.random() * 20 : 200 + Math.random() * 20;
+                        color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
+                    }
+                    const p = pool.pop() || {};
+                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.9;
+                    p.y = this.hitZoneY - 6 - Math.random() * 6;
+                    p.vx = (Math.random() - 0.5) * 0.4;
+                    p.vy = -(0.7 + Math.random() * 1.2) * this.sparkleHeight;
+                    p.life = 1.0;
+                    p.decay = (0.007 + Math.random() * 0.007) / Math.max(this.sparkleHeight, 0.3);
+                    p.size = 1.5 + Math.random() * 2.2;
+                    p.color = color;
+                    p.type = 'ivory';
+                    this.particles.push(p);
+                }
+            } else if (this.particleStyle === 'splash') {
                 // Splash: sharp spiky bursts radiating outward from hit zone
                 const baseCount = Math.random() < 0.4 ? 5 : 4;
                 const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
@@ -5046,7 +5511,28 @@ class PianoHero {
                 continue;
             }
 
-            if (p.type === 'splash') {
+            if (p.type === 'ivory') {
+                // Ivory rising dot: gentle upward drift, slight horizontal sway, long fade
+                p.vx *= 0.985;
+                // Very mild buoyancy (slows over time)
+                p.vy *= 0.995;
+                const alpha = p.life;
+                const sz = p.size * (0.6 + 0.4 * p.life);
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur = 10 * this.sparkleIntensity;
+                ctx.globalAlpha = alpha * 0.85;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+                ctx.fill();
+                // Bright core
+                ctx.globalAlpha = alpha;
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, sz * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.type === 'splash') {
                 // Splash: sharp spiky spines radiating outward
                 p.vy += 0.06;
                 p.vx *= 0.98;

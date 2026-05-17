@@ -17,13 +17,15 @@ class PixiNoteRenderer {
     async _init(canvas) {
         try {
             this.app = new PIXI.Application();
+            const initialResolution = PixiNoteRenderer._resolveInitialResolution();
+            this._currentResolution = initialResolution;
             await this.app.init({
                 canvas,
                 width: canvas.clientWidth || canvas.width || 800,
                 height: canvas.clientHeight || canvas.height || 600,
                 backgroundAlpha: 0,
                 antialias: true,
-                resolution: 1,
+                resolution: initialResolution,
                 autoDensity: false,
                 preference: 'webgl',
             });
@@ -55,6 +57,12 @@ class PixiNoteRenderer {
                 this.app.renderer.resize(this._pendingResize.w, this._pendingResize.h);
                 this._pendingResize = null;
             }
+            // Apply any quality change requested before init completed
+            if (this._pendingQuality) {
+                const q = this._pendingQuality;
+                this._pendingQuality = null;
+                this.setQuality(q);
+            }
 
             this.available = true;
             console.log('[PixiNoteRenderer] Ready (PixiJS ' + PIXI.VERSION + ')');
@@ -69,6 +77,49 @@ class PixiNoteRenderer {
             this.app.renderer.resize(w, h);
         } else {
             this._pendingResize = { w, h };
+        }
+    }
+
+    /**
+     * Runtime quality knob. `resolution` is clamped 0.75..2. Changing it
+     * here resizes the backing GPU buffer without recreating the context.
+     */
+    setQuality({ resolution } = {}) {
+        if (!this.app || !this.app.renderer) {
+            this._pendingQuality = { resolution };
+            return;
+        }
+        if (typeof resolution === 'number' && isFinite(resolution)) {
+            const target = Math.max(0.75, Math.min(resolution, 2));
+            if (!this._currentResolution || Math.abs(this._currentResolution - target) > 0.01) {
+                this._currentResolution = target;
+                try {
+                    this.app.renderer.resolution = target;
+                    const w = this.canvas.clientWidth || this.canvas.width;
+                    const h = this.canvas.clientHeight || this.canvas.height;
+                    if (w && h) this.app.renderer.resize(w, h);
+                } catch (e) {
+                    console.warn('[PixiNoteRenderer] setQuality failed:', e);
+                }
+            }
+        }
+    }
+
+    static _resolveInitialResolution() {
+        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+        try {
+            const raw = localStorage.getItem('pianoHeroSettings');
+            if (!raw) return Math.min(dpr, 1.5);
+            const s = JSON.parse(raw);
+            switch (s && s.graphicsPreset) {
+                case 'low': return 1;
+                case 'high': return Math.min(dpr, 2);
+                case 'medium':
+                case 'custom':
+                default: return Math.min(dpr, 1.5);
+            }
+        } catch (_) {
+            return Math.min(dpr, 1.5);
         }
     }
 
@@ -104,11 +155,27 @@ class PixiNoteRenderer {
                 coPlayManualNotes, heldFallingNotes } = config;
 
         const isClassic = noteStyle === 'classic';
+        const waveCountCfg = config.waveCount || 0;
+        const wavesActive = isClassic && waveCountCfg > 0;
+
+        // Layer culling — skip traversal of layers that won't draw this frame.
+        ng.renderable = !isClassic;
+        bg.renderable = isClassic || config.bgOverlayOpacity > 0;
+        ov.renderable = isClassic;
+        wg.renderable = wavesActive;
+        wm.renderable = wavesActive;
 
         // Collect visible note rects for classic mode (needed for wave mask)
-        const classicNoteRects = [];
+        const classicNoteRects = wavesActive ? [] : null;
 
-        for (let i = 0; i < fallingNotes.length; i++) {
+        // Visible-note windowing: only iterate notes near the viewport when provided
+        const startIdx = (typeof config.renderStartIdx === 'number') ? config.renderStartIdx : 0;
+        const endIdxRaw = (typeof config.renderEndIdx === 'number') ? config.renderEndIdx : fallingNotes.length;
+        // Clamp endIdx so a stale cursor (e.g. left over from a previous song)
+        // can't index past the end of fallingNotes and throw.
+        const endIdx = Math.min(endIdxRaw, fallingNotes.length);
+
+        for (let i = startIdx; i < endIdx; i++) {
             const note = fallingNotes[i];
             const pos = keyPositions[note.note];
             if (!pos) continue;
@@ -120,7 +187,7 @@ class PixiNoteRenderer {
 
             if (isClassic) {
                 const rect = this._drawNoteClassicBody(bg, ov, note, pos, noteSpeed, speedMultiplier, gameMode, heldFallingNotes);
-                if (rect) classicNoteRects.push(rect);
+                if (rect && classicNoteRects) classicNoteRects.push(rect);
             } else {
                 this._drawNoteBeam(ng, note, pos, noteSpeed, speedMultiplier, gameMode,
                     practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes);
@@ -128,8 +195,7 @@ class PixiNoteRenderer {
         }
 
         // Draw wave ribbons masked to classic note rects
-        const waveCount = config.waveCount || 0;
-        if (isClassic && classicNoteRects.length > 0 && waveCount > 0) {
+        if (wavesActive && classicNoteRects && classicNoteRects.length > 0) {
             // Build mask from all note rects (rounded to match note shape)
             for (const nr of classicNoteRects) {
                 wm.roundRect(nr.x, nr.y, nr.w, nr.h, nr.r || 4);
@@ -137,7 +203,7 @@ class PixiNoteRenderer {
             wm.fill({ color: 0xffffff });
 
             // Draw full-screen wave ribbons (they'll be clipped by the mask)
-            this._drawWaveOverlay(wg, w, h, waveCount);
+            this._drawWaveOverlay(wg, w, h, waveCountCfg);
         }
 
         // Single GPU flush
@@ -329,19 +395,31 @@ class PixiNoteRenderer {
     }
 
     // ─── Utility ─────────────────────────────────────────────────────
+    // HSL→hex with a memo cache. Notes resolve to a small palette per frame,
+    // so caching collapses the work to roughly one compute per unique color.
     _hslToHex(h, s, l) {
-        h = ((h % 360) + 360) % 360;
-        s /= 100;
-        l /= 100;
-        const a = s * Math.min(l, 1 - l);
+        const hi = ((((h | 0) % 360) + 360) % 360) | 0;
+        const si = Math.max(0, Math.min(100, s | 0));
+        const li = Math.max(0, Math.min(100, l | 0));
+        const key = (hi << 16) | (si << 8) | li;
+        const cache = PixiNoteRenderer._HSL_CACHE;
+        const cached = cache.get(key);
+        if (cached !== undefined) return cached;
+        const sf = si / 100;
+        const lf = li / 100;
+        const a = sf * Math.min(lf, 1 - lf);
         const f = (n) => {
-            const k = (n + h / 30) % 12;
-            return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+            const k = (n + hi / 30) % 12;
+            return lf - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
         };
         const r = Math.round(f(0) * 255);
         const gv = Math.round(f(8) * 255);
         const b = Math.round(f(4) * 255);
-        return (r << 16) | (gv << 8) | b;
+        const hex = (r << 16) | (gv << 8) | b;
+        // Hard cap to keep memory bounded; the palette is well under this.
+        if (cache.size >= 4096) cache.clear();
+        cache.set(key, hex);
+        return hex;
     }
 
     destroy() {
@@ -353,6 +431,9 @@ class PixiNoteRenderer {
         this.available = false;
     }
 }
+
+// Shared HSL→hex memo cache (small palette, ~tens of entries per session)
+PixiNoteRenderer._HSL_CACHE = new Map();
 
 // Static ribbon definitions (allocated once, reused every frame)
 PixiNoteRenderer._RIBBONS = [

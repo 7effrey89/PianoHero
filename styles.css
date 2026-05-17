@@ -990,6 +990,15 @@ button {
     /* width set dynamically by JS */
 }
 
+/* Compact mode: shrink the falling-note runway closer to the OnlinePianist
+   player size so update/render touch a tiny vertical band of notes. */
+body.compact-game #gameCanvas {
+    flex: 0 0 auto;
+    max-height: 320px;
+    min-height: 220px;
+    height: 36vh;
+}
+
 #glCanvas {
     position: absolute;
     top: 0;
