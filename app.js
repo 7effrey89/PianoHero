@@ -73,6 +73,12 @@ class PianoHero {
         this._hasLogicClock = false;
         this.noteLeadInSec = 3;
         this._preRollSec = 0;
+        this._perfWorker = null;
+        this._perfWorkerReqId = 0;
+        this._perfWorkerPending = new Map();
+        this._simpleModeCache = null;
+        this._durationCache = null;
+        this._wasmMath = null;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
         this.glCanvas = document.getElementById('glCanvas');
@@ -241,6 +247,111 @@ class PianoHero {
         this._activeTouches = new Map(); // touchId -> last key element
         
         this.init();
+        this._initPerformanceWorker();
+        this._initWasmMath();
+    }
+
+    _initPerformanceWorker() {
+        if (typeof Worker !== 'function') return;
+        try {
+            this._perfWorker = new Worker('performance-worker.js?v=1');
+            this._perfWorker.onmessage = (event) => {
+                const msg = event.data || {};
+                const pending = this._perfWorkerPending.get(msg.id);
+                if (!pending) return;
+                this._perfWorkerPending.delete(msg.id);
+                if (msg.ok) pending.resolve(msg.result);
+                else pending.reject(new Error(msg.error || 'Performance worker failed'));
+            };
+            this._perfWorker.onerror = () => {
+                this._perfWorker = null;
+                this._perfWorkerPending.forEach(({ reject }) => reject(new Error('Performance worker crashed')));
+                this._perfWorkerPending.clear();
+            };
+        } catch (_) {
+            this._perfWorker = null;
+        }
+    }
+
+    _runPerfWorkerTask(task, payload) {
+        if (!this._perfWorker) return Promise.resolve(null);
+        return new Promise((resolve, reject) => {
+            const id = ++this._perfWorkerReqId;
+            this._perfWorkerPending.set(id, { resolve, reject });
+            this._perfWorker.postMessage({ id, task, payload });
+        });
+    }
+
+    async _precomputeSongData(notes) {
+        const safeNotes = Array.isArray(notes) ? notes : [];
+        this._simpleModeCache = null;
+        this._durationCache = null;
+        let bpm = this.estimateBPM(safeNotes);
+        let normalDuration = 0;
+        for (let i = 0; i < safeNotes.length; i++) {
+            const n = safeNotes[i];
+            const end = n.time + (n.duration || 0.15);
+            if (end > normalDuration) normalDuration = end;
+        }
+
+        try {
+            const result = await this._runPerfWorkerTask('precompute', { notes: safeNotes });
+            if (result) {
+                if (typeof result.bpm === 'number') bpm = result.bpm;
+                if (Array.isArray(result.simpleNotes)) this._simpleModeCache = result.simpleNotes;
+                if (result.duration && typeof result.duration === 'object') {
+                    this._durationCache = {
+                        normal: Number.isFinite(result.duration.normal) ? result.duration.normal : normalDuration,
+                        simple: Number.isFinite(result.duration.simple) ? result.duration.simple : normalDuration,
+                    };
+                }
+            }
+        } catch (_) {
+            // Fallback to synchronous path below
+        }
+
+        if (!this._durationCache) {
+            const simpleNotes = this._simpleModeCache || this._simplifyByMerge(safeNotes);
+            this._simpleModeCache = simpleNotes;
+            let simpleDuration = 0;
+            for (let i = 0; i < simpleNotes.length; i++) {
+                const n = simpleNotes[i];
+                const end = n.time + (n.duration || 0.15);
+                if (end > simpleDuration) simpleDuration = end;
+            }
+            this._durationCache = { normal: normalDuration, simple: simpleDuration };
+        }
+
+        this.songBPM = bpm;
+    }
+
+    async _initWasmMath() {
+        if (typeof WebAssembly === 'undefined') return;
+        try {
+            const response = await fetch('note-math.wasm?v=1');
+            if (!response.ok) return;
+            const bytes = await response.arrayBuffer();
+            const { instance } = await WebAssembly.instantiate(bytes);
+            if (instance && instance.exports) this._wasmMath = instance.exports;
+        } catch (_) {
+            this._wasmMath = null;
+        }
+    }
+
+    _visibleNoteHeight(duration, speedMultiplier) {
+        const dur = duration || 0.15;
+        if (this._wasmMath && typeof this._wasmMath.note_visible_height === 'function') {
+            return this._wasmMath.note_visible_height(dur, this.noteSpeed, speedMultiplier);
+        }
+        return Math.max(12, dur * this.noteSpeed * speedMultiplier);
+    }
+
+    _drawNoteHeight(duration, speedMultiplier, noteGap = 4) {
+        const dur = duration || 0.15;
+        if (this._wasmMath && typeof this._wasmMath.note_draw_height === 'function') {
+            return this._wasmMath.note_draw_height(dur, this.noteSpeed, speedMultiplier, noteGap);
+        }
+        return Math.max(12, dur * this.noteSpeed * speedMultiplier - noteGap);
     }
     
     init() {
@@ -1046,7 +1157,7 @@ class PianoHero {
 
             const data = await response.json();
             this.originalNotes = data.notes;
-            this.songBPM = this.estimateBPM(data.notes);
+            await this._precomputeSongData(data.notes);
             this.updateBPMDisplay();
             this.applyGameMode();
             this.updateProgress(100);
@@ -1210,13 +1321,13 @@ class PianoHero {
                 if (!resp.ok) return;
                 const data = await resp.json();
                 if (data && data.success && data.notes) {
-                    this._applyUploadedSong(data);
+                    await this._applyUploadedSong(data);
                 }
             } catch (_) { /* ignore */ }
         }, 2000);
     }
 
-    _applyUploadedSong(data) {
+    async _applyUploadedSong(data) {
         try {
             this.stopPreview && this.stopPreview();
         } catch (_) {}
@@ -1228,7 +1339,7 @@ class PianoHero {
         if (songNameEl) { songNameEl.textContent = displayName; songNameEl.title = displayName; }
 
         this.originalNotes = data.notes;
-        this.songBPM = this.estimateBPM(data.notes);
+        await this._precomputeSongData(data.notes);
         this.updateBPMDisplay();
         this.applyGameMode();
 
@@ -2164,13 +2275,21 @@ class PianoHero {
 
     applyGameMode() {
         if (this.gameMode === 'simple') {
-            this.notes = this._simplifyByMerge(this.originalNotes);
+            if (this._simpleModeCache) {
+                this.notes = this._simpleModeCache.map(n => ({ ...n }));
+            } else {
+                this.notes = this._simplifyByMerge(this.originalNotes);
+            }
         } else {
             // Normal, coplay, practice — use original notes
             this.notes = this.originalNotes.map(n => ({ ...n }));
         }
         // Compute song duration from the latest note end time
-        this.songDuration = this.notes.reduce((max, n) => Math.max(max, n.time + (n.duration || 0.15)), 0);
+        if (this._durationCache) {
+            this.songDuration = this.gameMode === 'simple' ? this._durationCache.simple : this._durationCache.normal;
+        } else {
+            this.songDuration = this.notes.reduce((max, n) => Math.max(max, n.time + (n.duration || 0.15)), 0);
+        }
         this.updateSongTimeline(0);
         this.rebuildKeyboardForNotes(this.notes);
         // Re-apply co-play lane visuals after keyboard rebuild
@@ -3778,7 +3897,7 @@ class PianoHero {
             
             // Remove notes that have fully scrolled off the bottom
             const dur = note.duration || 0.15;
-            const noteHeight = Math.max(12, dur * this.noteSpeed * speed);
+            const noteHeight = this._visibleNoteHeight(dur, speed);
             if ((note.y - noteHeight) > this.canvas.height + 50) {
                 // Clean up held-note tracking so particles stop
                 if (this.heldFallingNotes.get(note.note) === note) {
@@ -4030,7 +4149,7 @@ class PianoHero {
                 for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
                     const note = this.fallingNotes[i];
                     const dur = note.duration || 0.15;
-                    const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                    const noteH = this._visibleNoteHeight(dur, speed);
                     const topEdge = note.y - noteH;
                     if (topEdge < canvasH && note.y > -50) {
                         this.drawNote(note);
@@ -4049,7 +4168,7 @@ class PianoHero {
                 for (let i = 0, len = this.fallingNotes.length; i < len; i++) {
                     const note = this.fallingNotes[i];
                     const dur = note.duration || 0.15;
-                    const noteH = Math.max(12, dur * this.noteSpeed * speed);
+                    const noteH = this._visibleNoteHeight(dur, speed);
                     const topEdge = note.y - noteH;
                     if (topEdge < canvasH && note.y > -50) {
                         this.drawNote(note);
@@ -4207,7 +4326,7 @@ class PianoHero {
         const noteWidth = pos.width * 0.9;
         const dur = note.duration || 0.15;
         const noteGap = 4;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
+        const noteHeight = this._drawNoteHeight(dur, this.speedMultiplier, noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
         
@@ -4296,12 +4415,12 @@ class PianoHero {
             const pos = this.keyPositions[note.note];
             if (!pos) continue;
             const dur = note.duration || 0.15;
-            const noteH = Math.max(12, dur * this.noteSpeed * speed);
+            const noteH = this._visibleNoteHeight(dur, speed);
             const topEdge = note.y - noteH;
             if (topEdge >= canvasH || note.y <= -50) continue;
 
             const noteGap = 4;
-            const noteHeight = Math.max(12, dur * this.noteSpeed * speed - noteGap);
+            const noteHeight = this._drawNoteHeight(dur, speed, noteGap);
 
             // Label on beam head
             const headHeight = Math.min(14, noteHeight);
@@ -4397,7 +4516,7 @@ class PianoHero {
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
         const noteGap = 4;
-        const noteHeight = Math.max(12, dur * this.noteSpeed * this.speedMultiplier - noteGap);
+        const noteHeight = this._drawNoteHeight(dur, this.speedMultiplier, noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
 
@@ -4658,7 +4777,7 @@ class PianoHero {
         for (const [noteName, fallingNote] of this.heldFallingNotes) {
             // Only sparkle while the note body still overlaps the hit zone
             const dur = fallingNote.duration || 0.15;
-            const noteH = Math.max(12, dur * this.noteSpeed * (this.speedMultiplier || 1));
+            const noteH = this._visibleNoteHeight(dur, this.speedMultiplier || 1);
             const noteTop = fallingNote.y - noteH;
             if (noteTop > this.hitZoneY) {
                 // Note scrolled past — skip sparkle but don't delete held state
