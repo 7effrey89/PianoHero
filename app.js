@@ -260,12 +260,16 @@ class PianoHero {
                 const pending = this._perfWorkerPending.get(msg.id);
                 if (!pending) return;
                 this._perfWorkerPending.delete(msg.id);
+                if (pending.timer) clearTimeout(pending.timer);
                 if (msg.ok) pending.resolve(msg.result);
                 else pending.reject(new Error(msg.error || 'Performance worker failed'));
             };
             this._perfWorker.onerror = () => {
                 this._perfWorker = null;
-                this._perfWorkerPending.forEach(({ reject }) => reject(new Error('Performance worker crashed')));
+                this._perfWorkerPending.forEach(({ reject, timer }) => {
+                    if (timer) clearTimeout(timer);
+                    reject(new Error('Performance worker crashed'));
+                });
                 this._perfWorkerPending.clear();
             };
         } catch (_) {
@@ -277,8 +281,20 @@ class PianoHero {
         if (!this._perfWorker) return Promise.resolve(null);
         return new Promise((resolve, reject) => {
             const id = ++this._perfWorkerReqId;
-            this._perfWorkerPending.set(id, { resolve, reject });
-            this._perfWorker.postMessage({ id, task, payload });
+            const pending = { resolve, reject, timer: null };
+            pending.timer = setTimeout(() => {
+                if (!this._perfWorkerPending.has(id)) return;
+                this._perfWorkerPending.delete(id);
+                reject(new Error(`Performance worker timeout for task "${task}"`));
+            }, 5000);
+            this._perfWorkerPending.set(id, pending);
+            try {
+                this._perfWorker.postMessage({ id, task, payload });
+            } catch (err) {
+                if (pending.timer) clearTimeout(pending.timer);
+                this._perfWorkerPending.delete(id);
+                reject(err);
+            }
         });
     }
 
@@ -286,13 +302,9 @@ class PianoHero {
         const safeNotes = Array.isArray(notes) ? notes : [];
         this._simpleModeCache = null;
         this._durationCache = null;
-        let bpm = this.estimateBPM(safeNotes);
-        let normalDuration = 0;
-        for (let i = 0; i < safeNotes.length; i++) {
-            const n = safeNotes[i];
-            const end = n.time + (n.duration || 0.15);
-            if (end > normalDuration) normalDuration = end;
-        }
+        let bpm = null;
+        let workerDurationNormal = null;
+        let workerDurationSimple = null;
 
         try {
             const result = await this._runPerfWorkerTask('precompute', { notes: safeNotes });
@@ -300,9 +312,13 @@ class PianoHero {
                 if (typeof result.bpm === 'number') bpm = result.bpm;
                 if (Array.isArray(result.simpleNotes)) this._simpleModeCache = result.simpleNotes;
                 if (result.duration && typeof result.duration === 'object') {
+                    if (Number.isFinite(result.duration.normal)) workerDurationNormal = result.duration.normal;
+                    if (Number.isFinite(result.duration.simple)) workerDurationSimple = result.duration.simple;
+                }
+                if (workerDurationNormal != null && workerDurationSimple != null) {
                     this._durationCache = {
-                        normal: Number.isFinite(result.duration.normal) ? result.duration.normal : normalDuration,
-                        simple: Number.isFinite(result.duration.simple) ? result.duration.simple : normalDuration,
+                        normal: workerDurationNormal,
+                        simple: workerDurationSimple,
                     };
                 }
             }
@@ -310,7 +326,17 @@ class PianoHero {
             // Fallback to synchronous path below
         }
 
+        if (!Number.isFinite(bpm)) {
+            bpm = this.estimateBPM(safeNotes);
+        }
+
         if (!this._durationCache) {
+            let normalDuration = 0;
+            for (let i = 0; i < safeNotes.length; i++) {
+                const n = safeNotes[i];
+                const end = n.time + (n.duration || 0.15);
+                if (end > normalDuration) normalDuration = end;
+            }
             const simpleNotes = this._simpleModeCache || this._simplifyByMerge(safeNotes);
             this._simpleModeCache = simpleNotes;
             let simpleDuration = 0;
