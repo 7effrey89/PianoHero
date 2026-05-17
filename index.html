@@ -134,7 +134,12 @@
             </div>
 
             <div class="header-spacer">
-                <p id="statusMessage" class="header-status-message"></p>
+                <div class="header-status-stack" id="headerStatusBar">
+                    <p id="statusMessage" class="header-status-message"></p>
+                    <div id="progressBar" class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Score stats -->
@@ -302,6 +307,10 @@
                         <input type="file" id="bgImageInput" accept="image/*" style="display:none">
                     </div>
                     <div class="setting-row">
+                        <label for="currentBackgroundLabel">Current BG</label>
+                        <span id="currentBackgroundLabel" class="current-background-label">None</span>
+                    </div>
+                    <div class="setting-row">
                         <label for="bgOpacitySlider">Overlay Opacity</label>
                         <input type="range" id="bgOpacitySlider" min="0" max="100" value="25" />
                         <span id="bgOpacityVal">25%</span>
@@ -391,14 +400,6 @@
                 </div>
             </div>
         </header>
-
-        <!-- Status bar (below header, minimal) -->
-        <div class="header-status-bar" id="headerStatusBar">
-            <div id="progressBar" class="progress-bar">
-                <div id="progressFill" class="progress-fill"></div>
-            </div>
-            <span id="perfDebugInline" class="perf-debug-inline">Perf: Worker init | WASM init | Precompute --</span>
-        </div>
 
         <!-- Song Timeline -->
         <div class="stats-bar">

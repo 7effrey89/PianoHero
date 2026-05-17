@@ -26,7 +26,6 @@ class PianoHero {
         this.playPauseBtn = document.getElementById('playPauseBtn');
         this.stopBtn = document.getElementById('stopBtn');
         this.perfDebugStatus = document.getElementById('perfDebugStatus');
-        this.perfDebugInline = document.getElementById('perfDebugInline');
         
         // Game state
         this.notes = [];
@@ -83,6 +82,8 @@ class PianoHero {
         this._wasmMath = null;
         this._perfWorkerStatus = 'init';
         this._wasmStatus = 'init';
+        this._perfWorkerInUse = false;
+        this._wasmInUse = false;
         this._perfPrecomputeMode = '--';
         this._perfPrecomputeMs = null;
 
@@ -140,6 +141,7 @@ class PianoHero {
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
         this.hasBgImage = false;
+        this.currentBackgroundName = '';
         this.bgOverlayOpacity = 0.25;
         this._glowCanvas = null;
         this._glowCtx = null;
@@ -216,6 +218,7 @@ class PianoHero {
         this.soundfontBuffers = {};      // { noteName: AudioBuffer }
         this.soundfontLoaded = false;
         this.soundfontLoading = false;
+        this.soundfontDecodePromise = null;
         this.currentInstrument = 'acoustic_grand_piano';
         this.soundfontBaseUrl = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/';
 
@@ -260,12 +263,18 @@ class PianoHero {
 
     _updatePerfDebugStatus() {
         const precomputeMs = Number.isFinite(this._perfPrecomputeMs) ? `${this._perfPrecomputeMs.toFixed(1)}ms` : '--';
-        const text = `Perf: Worker ${this._perfWorkerStatus} | WASM ${this._wasmStatus} | Precompute ${this._perfPrecomputeMode} ${precomputeMs}`;
+        const workerStatus = this._perfWorkerStatus === 'ready' && this._perfWorkerInUse
+            ? 'active'
+            : this._perfWorkerStatus;
+        const wasmStatus = this._wasmStatus === 'ready' && this._wasmInUse
+            ? 'active'
+            : this._wasmStatus;
+        const text = `Perf: Worker ${workerStatus} | WASM ${wasmStatus} | Precompute ${this._perfPrecomputeMode} ${precomputeMs}`;
         if (this.perfDebugStatus) this.perfDebugStatus.textContent = text;
-        if (this.perfDebugInline) this.perfDebugInline.textContent = text;
     }
 
     _setPrecomputePerfDebug(mode, elapsedMs, noteCount) {
+        this._perfWorkerInUse = mode === 'worker' || mode === 'mixed';
         this._perfPrecomputeMode = mode;
         this._perfPrecomputeMs = elapsedMs;
         this._updatePerfDebugStatus();
@@ -426,6 +435,10 @@ class PianoHero {
     _visibleNoteHeight(duration, speedMultiplier) {
         const dur = duration || 0.15;
         if (this._wasmMath && typeof this._wasmMath.note_visible_height === 'function') {
+            if (!this._wasmInUse) {
+                this._wasmInUse = true;
+                this._updatePerfDebugStatus();
+            }
             return this._wasmMath.note_visible_height(dur, this.noteSpeed, speedMultiplier);
         }
         return Math.max(12, dur * this.noteSpeed * speedMultiplier);
@@ -434,6 +447,10 @@ class PianoHero {
     _drawNoteHeight(duration, speedMultiplier, noteGap = 4) {
         const dur = duration || 0.15;
         if (this._wasmMath && typeof this._wasmMath.note_draw_height === 'function') {
+            if (!this._wasmInUse) {
+                this._wasmInUse = true;
+                this._updatePerfDebugStatus();
+            }
             return this._wasmMath.note_draw_height(dur, this.noteSpeed, speedMultiplier, noteGap);
         }
         return Math.max(12, dur * this.noteSpeed * speedMultiplier - noteGap);
@@ -481,6 +498,11 @@ class PianoHero {
             const modeBtn = document.getElementById('modeDropdownBtn');
             if (!modeDropdown.classList.contains('hidden') && !modeDropdown.contains(e.target) && !modeBtn.contains(e.target)) {
                 modeDropdown.classList.add('hidden');
+            }
+            const settingsPanel = document.getElementById('settingsPanelsBody');
+            const settingsBtn = document.getElementById('settingsMenuBtn');
+            if (settingsPanel && settingsBtn && !settingsPanel.classList.contains('collapsed') && !settingsPanel.contains(e.target) && !settingsBtn.contains(e.target)) {
+                settingsPanel.classList.add('collapsed');
             }
         });
 
@@ -1751,7 +1773,8 @@ class PianoHero {
 
     initSoundPanel() {
         // Settings menu button in header (expands/collapses settings panel)
-        document.getElementById('settingsMenuBtn').addEventListener('click', () => {
+        document.getElementById('settingsMenuBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
             document.getElementById('settingsPanelsBody').classList.toggle('collapsed');
         });
 
@@ -2058,7 +2081,7 @@ class PianoHero {
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (e) => {
-                this._setBackgroundImage(e.target.result);
+                this._setBackgroundImage(e.target.result, file.name);
                 bgImageClearBtn.disabled = false;
             };
             reader.readAsDataURL(file);
@@ -2083,9 +2106,12 @@ class PianoHero {
 
         // Restore saved background
         const savedBg = localStorage.getItem('pianoHeroBgImage');
+        const savedBgName = localStorage.getItem('pianoHeroBgImageName');
         if (savedBg) {
-            this._setBackgroundImage(savedBg);
+            this._setBackgroundImage(savedBg, savedBgName || 'Custom image');
             bgImageClearBtn.disabled = false;
+        } else {
+            this._updateBackgroundLabel('None');
         }
 
         // ── Game Mode ──
@@ -2148,14 +2174,22 @@ class PianoHero {
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
     }
 
-    _setBackgroundImage(dataUrl) {
+    _updateBackgroundLabel(name) {
+        const label = document.getElementById('currentBackgroundLabel');
+        if (label) label.textContent = name || 'None';
+    }
+
+    _setBackgroundImage(dataUrl, name = 'Custom image') {
         document.body.style.backgroundImage = `url(${dataUrl})`;
         document.body.style.backgroundSize = 'cover';
         document.body.style.backgroundPosition = 'center';
         this.hasBgImage = true;
+        this.currentBackgroundName = name;
+        this._updateBackgroundLabel(name);
         this._applyOverlayOpacity();
         this._laneCacheDirty = true;
         try { localStorage.setItem('pianoHeroBgImage', dataUrl); } catch(e) {}
+        try { localStorage.setItem('pianoHeroBgImageName', name); } catch(e) {}
     }
 
     _clearBackgroundImage() {
@@ -2163,9 +2197,12 @@ class PianoHero {
         document.body.style.backgroundSize = '';
         document.body.style.backgroundPosition = '';
         this.hasBgImage = false;
+        this.currentBackgroundName = '';
+        this._updateBackgroundLabel('None');
         this._applyOverlayOpacity();
         this._laneCacheDirty = true;
         try { localStorage.removeItem('pianoHeroBgImage'); } catch(e) {}
+        try { localStorage.removeItem('pianoHeroBgImageName'); } catch(e) {}
     }
 
     _applyOverlayOpacity() {
@@ -2526,9 +2563,10 @@ class PianoHero {
     }
 
     async _decodeSoundfontSamples(noteData) {
+        if (this.soundfontDecodePromise) return this.soundfontDecodePromise;
         const entries = Object.entries(noteData);
         const buffers = {};
-        const decodePromises = entries.map(async ([noteName, dataUri]) => {
+        const decodePromise = Promise.all(entries.map(async ([noteName, dataUri]) => {
             const base64 = dataUri.split(',')[1];
             const binaryStr = atob(base64);
             const bytes = new Uint8Array(binaryStr.length);
@@ -2541,11 +2579,43 @@ class PianoHero {
             } catch (e) {
                 // Some notes may fail to decode; skip them
             }
+        })).then(() => {
+            this.soundfontBuffers = buffers;
+            this.soundfontLoaded = true;
+        }).finally(() => {
+            this.soundfontDecodePromise = null;
         });
 
-        await Promise.all(decodePromises);
-        this.soundfontBuffers = buffers;
-        this.soundfontLoaded = true;
+        this.soundfontDecodePromise = decodePromise;
+        await decodePromise;
+    }
+
+    async _ensurePlaybackReady() {
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.setupAudioGraph();
+        }
+
+        if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
+        }
+
+        if (this.useSalamander) {
+            if (!this.salamanderLoaded && Object.keys(this.salamanderBuffers).length === 0 && !this.soundfontLoading) {
+                await this.loadSalamander();
+            }
+            return this.salamanderLoaded || Object.keys(this.salamanderBuffers).length > 0;
+        }
+
+        if (!this.soundfontRawData && Object.keys(this.soundfontBuffers).length === 0 && !this.soundfontLoading) {
+            await this.loadSoundfont(this.currentInstrument);
+        }
+
+        if (this.soundfontRawData && !this.soundfontLoaded) {
+            await this._decodeSoundfontSamples(this.soundfontRawData);
+        }
+
+        return this.soundfontLoaded || Object.keys(this.soundfontBuffers).length > 0;
     }
 
     // --- Salamander Grand Piano loader ---
@@ -2742,7 +2812,7 @@ class PianoHero {
         return notes;
     }
     
-    startGame() {
+    async startGame() {
         if (this.notes.length === 0) {
             alert('Please load a MIDI file first');
             return;
@@ -2751,6 +2821,12 @@ class PianoHero {
         // If already playing/paused, switch from auto-play to manual
         if (this.isPlaying || this.isPaused) {
             this._switchToManual();
+            return;
+        }
+
+        const playbackReady = await this._ensurePlaybackReady();
+        if (!playbackReady) {
+            this.statusMessage.textContent = 'Audio is still loading. Try Play again in a moment.';
             return;
         }
         
@@ -3085,12 +3161,13 @@ class PianoHero {
         }
     }
 
-    startAutoPlay() {
+    async startAutoPlay() {
         // If already playing/paused, switch to auto-play from current position
         const continuing = this.isPlaying || this.isPaused;
 
         if (!continuing) {
-            this.startGame();
+            await this.startGame();
+            if (!this.isPlaying) return;
         } else {
             // Cancel any existing auto-play timeouts
             this.autoPlayTimeouts.forEach(t => clearTimeout(t));
@@ -3778,9 +3855,6 @@ class PianoHero {
     }
     
     showHitFeedback(note, success, accuracy) {
-        // Skip all DOM feedback during autoplay — no one is watching the keys
-        if (this.isAutoPlay) return;
-
         // Cache key element lookups to avoid querySelector per hit
         if (!this._keyElementCache) this._keyElementCache = {};
         let keyElement = this._keyElementCache[note];
@@ -3797,7 +3871,7 @@ class PianoHero {
             }, 350);
         }
 
-        // Show timing feedback text (skip in autoplay already handled above)
+        // Show timing feedback text
         if (this.showTimingFeedback) {
             this._showTimingText(note, success, accuracy);
         }
@@ -3820,17 +3894,16 @@ class PianoHero {
         if (this._activeTimingCount > 8) return;
 
         const grade = this._getTimingGrade(success, accuracy);
-        const gameArea = this.gameArea || document.getElementById('gameArea');
-        if (!gameArea) return;
+        const pianoKeys = document.querySelector('.piano-keys');
+        if (!pianoKeys) return;
 
         const el = this._timingFeedbackPool.pop() || document.createElement('div');
         el.className = 'timing-feedback ' + grade.cls;
         el.textContent = grade.text;
 
-        // Position above the hit zone, centered on the key
+        // Position directly above the struck key in the piano layer.
         el.style.left = (pos.left + pos.width / 2) + 'px';
-
-        el.style.bottom = (120 + 60) + 'px'; // piano height + offset above keys
+        el.style.bottom = 'calc(100% + 20px)';
 
         this._activeTimingCount++;
         el.onanimationend = () => {
@@ -3838,7 +3911,7 @@ class PianoHero {
             this._activeTimingCount = Math.max(0, (this._activeTimingCount || 1) - 1);
             this._timingFeedbackPool.push(el);
         };
-        gameArea.appendChild(el);
+        pianoKeys.appendChild(el);
     }
     
     updateScore() {
