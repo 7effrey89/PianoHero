@@ -486,6 +486,14 @@ header.top-header {
     display: none;
 }
 
+.perf-debug-inline {
+    margin-left: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: rgba(164, 220, 255, 0.9);
+    white-space: nowrap;
+}
+
 @keyframes glow {
     from {
         text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5), 0 0 10px #fff;
@@ -1612,6 +1620,12 @@ button {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.7);
     margin-left: 90px;
+}
+
+#perfDebugStatus {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: rgba(164, 220, 255, 0.9);
 }
 
 .bitmidi-search-section {

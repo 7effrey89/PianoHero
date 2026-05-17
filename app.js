@@ -25,6 +25,8 @@ class PianoHero {
         this.modeToggleSwitch = document.getElementById('modeToggleSwitch');
         this.playPauseBtn = document.getElementById('playPauseBtn');
         this.stopBtn = document.getElementById('stopBtn');
+        this.perfDebugStatus = document.getElementById('perfDebugStatus');
+        this.perfDebugInline = document.getElementById('perfDebugInline');
         
         // Game state
         this.notes = [];
@@ -79,6 +81,10 @@ class PianoHero {
         this._simpleModeCache = null;
         this._durationCache = null;
         this._wasmMath = null;
+        this._perfWorkerStatus = 'init';
+        this._wasmStatus = 'init';
+        this._perfPrecomputeMode = '--';
+        this._perfPrecomputeMs = null;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
         this.glCanvas = document.getElementById('glCanvas');
@@ -246,15 +252,36 @@ class PianoHero {
         this._mouseDown = false;
         this._activeTouches = new Map(); // touchId -> last key element
         
+        this._updatePerfDebugStatus();
         this.init();
         this._initPerformanceWorker();
         this._initWasmMath();
     }
 
+    _updatePerfDebugStatus() {
+        const precomputeMs = Number.isFinite(this._perfPrecomputeMs) ? `${this._perfPrecomputeMs.toFixed(1)}ms` : '--';
+        const text = `Perf: Worker ${this._perfWorkerStatus} | WASM ${this._wasmStatus} | Precompute ${this._perfPrecomputeMode} ${precomputeMs}`;
+        if (this.perfDebugStatus) this.perfDebugStatus.textContent = text;
+        if (this.perfDebugInline) this.perfDebugInline.textContent = text;
+    }
+
+    _setPrecomputePerfDebug(mode, elapsedMs, noteCount) {
+        this._perfPrecomputeMode = mode;
+        this._perfPrecomputeMs = elapsedMs;
+        this._updatePerfDebugStatus();
+        console.info(`[PianoHero] precompute mode=${mode} notes=${noteCount} time=${elapsedMs.toFixed(1)}ms`);
+    }
+
     _initPerformanceWorker() {
-        if (typeof Worker !== 'function') return;
+        if (typeof Worker !== 'function') {
+            this._perfWorkerStatus = 'unsupported';
+            this._updatePerfDebugStatus();
+            return;
+        }
         try {
             this._perfWorker = new Worker('performance-worker.js?v=1');
+            this._perfWorkerStatus = 'ready';
+            this._updatePerfDebugStatus();
             this._perfWorker.onmessage = (event) => {
                 const msg = event.data || {};
                 const pending = this._perfWorkerPending.get(msg.id);
@@ -266,6 +293,8 @@ class PianoHero {
             };
             this._perfWorker.onerror = () => {
                 this._perfWorker = null;
+                this._perfWorkerStatus = 'error';
+                this._updatePerfDebugStatus();
                 this._perfWorkerPending.forEach(({ reject, timer }) => {
                     if (timer) clearTimeout(timer);
                     reject(new Error('Performance worker crashed'));
@@ -274,6 +303,8 @@ class PianoHero {
             };
         } catch (_) {
             this._perfWorker = null;
+            this._perfWorkerStatus = 'error';
+            this._updatePerfDebugStatus();
         }
     }
 
@@ -300,6 +331,9 @@ class PianoHero {
 
     async _precomputeSongData(notes) {
         const safeNotes = Array.isArray(notes) ? notes : [];
+        const precomputeStart = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+        let usedWorker = false;
+        let usedFallback = false;
         this._simpleModeCache = null;
         this._durationCache = null;
         let bpm = null;
@@ -309,6 +343,7 @@ class PianoHero {
         try {
             const result = await this._runPerfWorkerTask('precompute', { notes: safeNotes });
             if (result) {
+                usedWorker = true;
                 if (typeof result.bpm === 'number') bpm = result.bpm;
                 if (Array.isArray(result.simpleNotes)) this._simpleModeCache = result.simpleNotes;
                 if (result.duration && typeof result.duration === 'object') {
@@ -323,14 +358,17 @@ class PianoHero {
                 }
             }
         } catch (_) {
+            usedFallback = true;
             // Fallback to synchronous path below
         }
 
         if (!Number.isFinite(bpm)) {
+            usedFallback = true;
             bpm = this.estimateBPM(safeNotes);
         }
 
         if (!this._durationCache) {
+            usedFallback = true;
             let normalDuration = 0;
             for (let i = 0; i < safeNotes.length; i++) {
                 const n = safeNotes[i];
@@ -349,18 +387,39 @@ class PianoHero {
         }
 
         this.songBPM = bpm;
+        const precomputeEnd = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+        const precomputeMs = precomputeEnd - precomputeStart;
+        const precomputeMode = usedWorker ? (usedFallback ? 'mixed' : 'worker') : 'fallback';
+        this._setPrecomputePerfDebug(precomputeMode, precomputeMs, safeNotes.length);
     }
 
     async _initWasmMath() {
-        if (typeof WebAssembly === 'undefined') return;
+        if (typeof WebAssembly === 'undefined') {
+            this._wasmStatus = 'unsupported';
+            this._updatePerfDebugStatus();
+            return;
+        }
         try {
             const response = await fetch('note-math.wasm?v=1');
-            if (!response.ok) return;
+            if (!response.ok) {
+                this._wasmStatus = 'fetch-failed';
+                this._updatePerfDebugStatus();
+                return;
+            }
             const bytes = await response.arrayBuffer();
             const { instance } = await WebAssembly.instantiate(bytes);
-            if (instance && instance.exports) this._wasmMath = instance.exports;
+            if (instance && instance.exports) {
+                this._wasmMath = instance.exports;
+                this._wasmStatus = 'ready';
+                this._updatePerfDebugStatus();
+                return;
+            }
+            this._wasmStatus = 'invalid';
+            this._updatePerfDebugStatus();
         } catch (_) {
             this._wasmMath = null;
+            this._wasmStatus = 'error';
+            this._updatePerfDebugStatus();
         }
     }
 
