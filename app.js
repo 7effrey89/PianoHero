@@ -64,6 +64,8 @@ class PianoHero {
         this._logicClockSec = 0;
         this._logicLastTargetSec = 0;
         this._hasLogicClock = false;
+        this.noteLeadInSec = 3;
+        this._preRollSec = 0;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
         this.glCanvas = document.getElementById('glCanvas');
@@ -1941,8 +1943,8 @@ class PianoHero {
         // Otherwise start from the beginning with a lead-in.
         const preSeeked = this.fallingNotes.length > 0 && this.startTime;
         if (!preSeeked) {
-            const leadInSec = this.hitZoneY / (this.noteSpeed * this.speedMultiplier);
-            this.startTime = performance.now() + leadInSec * 1000;
+            this._preRollSec = this.noteLeadInSec;
+            this.startTime = performance.now();
 
             this.fallingNotes = this.notes.map(note => ({
                 ...note,
@@ -1955,6 +1957,7 @@ class PianoHero {
             const refTime = this.pauseTime || performance.now();
             const gameClockSec = (refTime - this.startTime) / 1000;
             this.startTime = performance.now() - gameClockSec * 1000;
+            this._preRollSec = 0;
         }
         this._hasLogicClock = false;
         this._logicAccumulatorSec = 0;
@@ -2243,7 +2246,7 @@ class PianoHero {
 
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
+            closestNote.holdStart = this._getGameClockSec();
             this.combo++;
             this.hitNotes++;
             const accuracy = 1 - (closestDistance / this.hitTolerance);
@@ -2418,9 +2421,13 @@ class PianoHero {
         });
     }
 
+    _getGameClockSec(referenceTime = performance.now()) {
+        return ((referenceTime - this.startTime) / 1000) - this._preRollSec;
+    }
+
     _scheduleAutoPlayNotes() {
-        // Use real game clock (negative during lead-in) so sounds sync with visual notes
-        const currentTime = (performance.now() - this.startTime) / 1000;
+        // Use the same negative lead-in clock as rendering so sounds sync with note travel.
+        const currentTime = this._getGameClockSec();
 
         // Schedule automatic key presses for remaining notes
         const speed = this.speedMultiplier;
@@ -2441,7 +2448,7 @@ class PianoHero {
                 // Directly mark the note as hit (bypasses timing-sensitive position check)
                 if (!note.hit && !note.missed) {
                     note.hit = true;
-                    note.holdStart = (performance.now() - this.startTime) / 1000;
+                    note.holdStart = this._getGameClockSec();
                     this.combo++;
                     this.hitNotes++;
                     this.score += Math.floor(100 * (1 + this.combo * 0.1));
@@ -2927,7 +2934,7 @@ class PianoHero {
         
         if (closestNote) {
             closestNote.hit = true;
-            closestNote.holdStart = (performance.now() - this.startTime) / 1000;
+            closestNote.holdStart = this._getGameClockSec();
             this.combo++;
             this.hitNotes++;
             
@@ -3125,7 +3132,7 @@ class PianoHero {
         
         const currentTime = typeof currentTimeOverride === 'number'
             ? currentTimeOverride
-            : (this._frameTime - this.startTime) / 1000;
+            : this._getGameClockSec(this._frameTime);
         const speed = this.speedMultiplier;
 
         // Update song progress timeline
@@ -3289,7 +3296,7 @@ class PianoHero {
     _renderFrame(ts, scheduleNext = true) {
         this._frameTime = ts || performance.now();
         if (this.isPlaying && !this.isPaused) {
-            const targetTimeSec = Math.max(0, (this._frameTime - this.startTime) / 1000);
+            const targetTimeSec = this._getGameClockSec(this._frameTime);
             if (!this._hasLogicClock) {
                 this._logicClockSec = targetTimeSec;
                 this._logicLastTargetSec = targetTimeSec;
@@ -4206,7 +4213,7 @@ class PianoHero {
         if (this.laneStyle === 'synthesia') return; // clean look, no timeline grid
         const ctx = this.ctx;
         const speed = this.speedMultiplier;
-        const currentTime = (this._frameTime - this.startTime) / 1000;
+        const currentTime = this._getGameClockSec(this._frameTime);
         const pxPerSec = this.noteSpeed * speed;
 
         // Determine tick interval: 1s, 5s, or 10s depending on zoom
