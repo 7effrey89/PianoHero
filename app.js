@@ -101,6 +101,15 @@ class PianoHero {
         if (this.glRenderer) console.log('[PianoHero] Using PixiJS note renderer');
         else console.log('[PianoHero] PixiJS not available, using Canvas 2D fallback');
 
+        // FX overlay (mist ribbon + liquid trails)
+        this.fxCanvas = document.getElementById('fxCanvas');
+        this.pianoFx = (this.fxCanvas && window.PianoFX) ? new PianoFX(this.fxCanvas) : null;
+        this._lastFxFrame = null;
+        if (this.pianoFx && this.pianoFx.ready && typeof this.pianoFx.ready.then === 'function') {
+            this.pianoFx.ready.then(() => this._applyFxPalette({ skipSave: true }));
+        }
+        try { window.pianoHero = this; } catch (_) {}
+
         // Key scale / zoom
         this.keyScale = 1.0;
 
@@ -173,6 +182,25 @@ class PianoHero {
         this._forceFieldTime = 0;
         this.graphicsPreset = 'high';
         this.compactGameArea = false;
+        this.fxOnlyMode = false;
+        this.fxVisualizerMode = 'cinematic';
+        this.fxGlowlineHueStart = 210;
+        this.fxGlowlineHueEnd = 320;
+        this.fxGlowlineSat = 60;
+        this.fxGlowlineVal = 100;
+        this.fxSmokeHue = 30;
+        this.fxSmokeSat = 55;
+        this.fxSmokeVal = 100;
+        this._fxPaletteDefaults = {
+            glowlineHueStart: 210,
+            glowlineHueEnd: 320,
+            glowlineSat: 60,
+            glowlineVal: 100,
+            smokeHue: 30,
+            smokeSat: 55,
+            smokeVal: 100,
+        };
+        this._fxOnlyRestore = null;
 
         // Visible-note windowing cursors (advance forward only;
         // reset whenever fallingNotes is rebuilt)
@@ -926,6 +954,11 @@ class PianoHero {
         const container = document.querySelector('.piano-keys');
         container.innerHTML = '';
 
+        this._noteIndexMap = {};
+        for (let i = 0; i < this.allNotes.length; i++) {
+            this._noteIndexMap[this.allNotes[i]] = i;
+        }
+
         // Count white keys for sizing
         let whiteCount = 0;
         for (const note of this.allNotes) {
@@ -1137,9 +1170,28 @@ class PianoHero {
             this.glCanvas.width = fullWidth;
             this.glCanvas.height = fullHeight;
         }
+        if (this.pianoFx && this.fxCanvas) {
+            this.fxCanvas.style.width = fullWidth + 'px';
+            this.fxCanvas.style.height = fullHeight + 'px';
+            this.pianoFx.resize(fullWidth, fullHeight);
+        }
         this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
         this._laneCacheDirty = true;
+    }
+
+    _emitPianoFxForNote(note, velocity = 1) {
+        if (!this.pianoFx || !this.pianoFx.isReady) return;
+        const pos = this.keyPositions && this.keyPositions[note];
+        if (!pos) return;
+        const noteIdx = (this._noteIndexMap && this._noteIndexMap[note] != null)
+            ? this._noteIndexMap[note]
+            : 0;
+        const totalKeys = this.allNotes && this.allNotes.length > 1 ? this.allNotes.length - 1 : 1;
+        const keyIndex = Math.round((noteIdx / totalKeys) * 87);
+        const x = pos.left + pos.width / 2;
+        const y = this.canvas.height - 10;
+        this.pianoFx.onKeyPress(x, y, keyIndex, velocity);
     }
     
     calculateKeyPositions() {
@@ -1979,6 +2031,49 @@ class PianoHero {
             });
         }
 
+        const fxOnlyToggle = document.getElementById('fxOnlyToggle');
+        if (fxOnlyToggle) {
+            fxOnlyToggle.addEventListener('change', () => {
+                this._applyFxOnlyMode(fxOnlyToggle.checked);
+            });
+        }
+
+        const fxVisualizerSelect = document.getElementById('fxVisualizerSelect');
+        if (fxVisualizerSelect) {
+            fxVisualizerSelect.addEventListener('change', () => {
+                this._applyFxVisualizerMode(fxVisualizerSelect.value);
+            });
+        }
+
+        const bindFxSlider = (id, valueId, suffix, setter) => {
+            const slider = document.getElementById(id);
+            const valueEl = document.getElementById(valueId);
+            if (!slider || !valueEl) return;
+            const update = (shouldSave) => {
+                const v = parseInt(slider.value, 10) || 0;
+                valueEl.textContent = v + suffix;
+                setter(v);
+                this._applyFxPalette({ skipSave: !shouldSave });
+            };
+            slider.addEventListener('input', () => update(true));
+            update(false);
+        };
+
+        bindFxSlider('fxGlowHueStart', 'fxGlowHueStartVal', '°', (v) => { this.fxGlowlineHueStart = v; });
+        bindFxSlider('fxGlowHueEnd', 'fxGlowHueEndVal', '°', (v) => { this.fxGlowlineHueEnd = v; });
+        bindFxSlider('fxGlowSat', 'fxGlowSatVal', '%', (v) => { this.fxGlowlineSat = v; });
+        bindFxSlider('fxGlowVal', 'fxGlowValVal', '%', (v) => { this.fxGlowlineVal = v; });
+        bindFxSlider('fxSmokeHue', 'fxSmokeHueVal', '°', (v) => { this.fxSmokeHue = v; });
+        bindFxSlider('fxSmokeSat', 'fxSmokeSatVal', '%', (v) => { this.fxSmokeSat = v; });
+        bindFxSlider('fxSmokeVal', 'fxSmokeValVal', '%', (v) => { this.fxSmokeVal = v; });
+
+        const fxPaletteResetBtn = document.getElementById('fxPaletteResetBtn');
+        if (fxPaletteResetBtn) {
+            fxPaletteResetBtn.addEventListener('click', () => {
+                this._resetFxPaletteToDefaults();
+            });
+        }
+
         // ── Key Scale ──
         const scaleSlider = document.getElementById('keyScaleSlider');
         const scaleInput = document.getElementById('keyScaleInput');
@@ -2355,6 +2450,15 @@ class PianoHero {
             neonGlow: document.getElementById('neonGlowToggle').checked,
             forceField: document.getElementById('forceFieldToggle').checked,
             bgOverlayOpacity: document.getElementById('bgOpacitySlider').value,
+            fxOnlyMode: document.getElementById('fxOnlyToggle').checked,
+            fxVisualizerMode: document.getElementById('fxVisualizerSelect').value,
+            fxGlowlineHueStart: document.getElementById('fxGlowHueStart').value,
+            fxGlowlineHueEnd: document.getElementById('fxGlowHueEnd').value,
+            fxGlowlineSat: document.getElementById('fxGlowSat').value,
+            fxGlowlineVal: document.getElementById('fxGlowVal').value,
+            fxSmokeHue: document.getElementById('fxSmokeHue').value,
+            fxSmokeSat: document.getElementById('fxSmokeSat').value,
+            fxSmokeVal: document.getElementById('fxSmokeVal').value,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
     }
@@ -2394,6 +2498,168 @@ class PianoHero {
         const o = this.bgOverlayOpacity;
         document.getElementById('gameArea').style.background = `rgba(14, 11, 34, ${o})`;
         document.getElementById('gameCanvas').style.background = `rgba(14, 11, 34, ${o * 0.4})`;
+    }
+
+    _applyFxOnlyMode(enabled, { skipSave = false } = {}) {
+        if (enabled && !this._fxOnlyRestore) {
+            this._fxOnlyRestore = {
+                sparkleEnabled: this.sparkleEnabled,
+                particleStyle: this.particleStyle,
+                sparkleIntensity: this.sparkleIntensity,
+                sparkleHeight: this.sparkleHeight,
+                laneStyle: this.laneStyle,
+                waveEnabled: this.waveEnabled,
+                waveCount: this.waveCount,
+                neonGlowEnabled: this.neonGlowEnabled,
+                forceFieldEnabled: this.forceFieldEnabled,
+                showNoteNames: this.showNoteNames,
+                bgOverlayOpacity: this.bgOverlayOpacity,
+                graphicsPreset: this.graphicsPreset,
+            };
+        }
+
+        this.fxOnlyMode = enabled;
+
+        const prevLoading = this._loading;
+        this._loading = true;
+
+        const fxOnlyToggle = document.getElementById('fxOnlyToggle');
+        if (fxOnlyToggle) fxOnlyToggle.checked = enabled;
+
+        const fxVisualizerSelect = document.getElementById('fxVisualizerSelect');
+        const fxVisualizerRow = document.getElementById('fxVisualizerRow');
+        if (fxVisualizerSelect) fxVisualizerSelect.disabled = !enabled;
+        if (fxVisualizerRow) fxVisualizerRow.style.opacity = enabled ? '1' : '0.55';
+
+        if (enabled) {
+            const setToggle = (id, value) => {
+                const cb = document.getElementById(id);
+                if (!cb) return;
+                cb.checked = value;
+                cb.dispatchEvent(new Event('change'));
+            };
+            const setSelect = (id, value) => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.value = value;
+                sel.dispatchEvent(new Event('change'));
+            };
+            const setSlider = (id, value) => {
+                const s = document.getElementById(id);
+                if (!s) return;
+                s.value = value;
+                s.dispatchEvent(new Event('input'));
+            };
+
+            setSelect('graphicsPresetSelect', 'custom');
+            setToggle('sparkleToggle', false);
+            setSelect('particleStyleSelect', 'sparkle');
+            setSlider('sparkleSlider', 0);
+            setSlider('sparkleHeightSlider', 100);
+            setSelect('laneStyleSelect', 'none');
+            setToggle('waveToggle', false);
+            setSlider('waveCountSlider', 1);
+            setToggle('neonGlowToggle', false);
+            setToggle('forceFieldToggle', false);
+            setToggle('showNoteNamesToggle', false);
+            setSlider('bgOpacitySlider', 0);
+
+            if (fxVisualizerSelect) {
+                this._applyFxVisualizerMode(fxVisualizerSelect.value, { skipSave: true });
+            }
+
+            this.particles = [];
+            this._laneCacheDirty = true;
+        } else if (this._fxOnlyRestore) {
+            const restore = this._fxOnlyRestore;
+            this._fxOnlyRestore = null;
+
+            const setToggle = (id, value) => {
+                const cb = document.getElementById(id);
+                if (!cb) return;
+                cb.checked = value;
+                cb.dispatchEvent(new Event('change'));
+            };
+            const setSelect = (id, value) => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.value = value;
+                sel.dispatchEvent(new Event('change'));
+            };
+            const setSlider = (id, value) => {
+                const s = document.getElementById(id);
+                if (!s) return;
+                s.value = value;
+                s.dispatchEvent(new Event('input'));
+            };
+
+            setSelect('graphicsPresetSelect', restore.graphicsPreset || 'custom');
+            setToggle('sparkleToggle', restore.sparkleEnabled);
+            setSelect('particleStyleSelect', restore.particleStyle || 'sparkle');
+            setSlider('sparkleSlider', Math.round((restore.sparkleIntensity || 0) * 100));
+            setSlider('sparkleHeightSlider', Math.round((restore.sparkleHeight || 1) * 100));
+            setSelect('laneStyleSelect', restore.laneStyle || 'synthesia');
+            setToggle('waveToggle', !!restore.waveEnabled);
+            setSlider('waveCountSlider', restore.waveCount || 6);
+            setToggle('neonGlowToggle', !!restore.neonGlowEnabled);
+            setToggle('forceFieldToggle', !!restore.forceFieldEnabled);
+            setToggle('showNoteNamesToggle', !!restore.showNoteNames);
+            setSlider('bgOpacitySlider', Math.round((restore.bgOverlayOpacity || 0.25) * 100));
+
+            if (fxVisualizerSelect) {
+                this._applyFxVisualizerMode(fxVisualizerSelect.value, { skipSave: true });
+            }
+        }
+
+        this._loading = prevLoading;
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxVisualizerMode(mode, { skipSave = false } = {}) {
+        const select = document.getElementById('fxVisualizerSelect');
+        if (select) select.value = mode;
+        this.fxVisualizerMode = mode;
+        if (this.pianoFx && typeof this.pianoFx.setFxMode === 'function') {
+            this.pianoFx.setFxMode(mode);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxPalette({ skipSave = false } = {}) {
+        if (this.pianoFx && typeof this.pianoFx.setFxPalette === 'function') {
+            this.pianoFx.setFxPalette({
+                glowlineHueStart: (this.fxGlowlineHueStart || 0) / 360,
+                glowlineHueEnd: (this.fxGlowlineHueEnd || 0) / 360,
+                glowlineSat: (this.fxGlowlineSat || 0) / 100,
+                glowlineVal: (this.fxGlowlineVal || 0) / 100,
+                ribbonHue: (this.fxSmokeHue || 0) / 360,
+                ribbonSat: (this.fxSmokeSat || 0) / 100,
+                ribbonVal: (this.fxSmokeVal || 0) / 100,
+            });
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _resetFxPaletteToDefaults() {
+        const d = this._fxPaletteDefaults || {};
+        const setSlider = (id, value, suffix, setter) => {
+            const slider = document.getElementById(id);
+            const valueEl = document.getElementById(id + 'Val');
+            if (!slider || !valueEl) return;
+            slider.value = value;
+            valueEl.textContent = value + suffix;
+            setter(value);
+        };
+
+        setSlider('fxGlowHueStart', d.glowlineHueStart || 210, '°', (v) => { this.fxGlowlineHueStart = v; });
+        setSlider('fxGlowHueEnd', d.glowlineHueEnd || 320, '°', (v) => { this.fxGlowlineHueEnd = v; });
+        setSlider('fxGlowSat', d.glowlineSat || 60, '%', (v) => { this.fxGlowlineSat = v; });
+        setSlider('fxGlowVal', d.glowlineVal || 100, '%', (v) => { this.fxGlowlineVal = v; });
+        setSlider('fxSmokeHue', d.smokeHue || 30, '°', (v) => { this.fxSmokeHue = v; });
+        setSlider('fxSmokeSat', d.smokeSat || 55, '%', (v) => { this.fxSmokeSat = v; });
+        setSlider('fxSmokeVal', d.smokeVal || 100, '%', (v) => { this.fxSmokeVal = v; });
+
+        this._applyFxPalette();
     }
 
     _getGraphicsPresetConfig(preset) {
@@ -2804,6 +3070,61 @@ class PianoHero {
             this._applyOverlayOpacity();
             this._laneCacheDirty = true;
         }
+
+        if (settings.fxOnlyMode != null) {
+            const cb = document.getElementById('fxOnlyToggle');
+            if (cb) cb.checked = settings.fxOnlyMode;
+            this._applyFxOnlyMode(!!settings.fxOnlyMode, { skipSave: true });
+        }
+
+        if (settings.fxVisualizerMode) {
+            this._applyFxVisualizerMode(settings.fxVisualizerMode, { skipSave: true });
+        }
+
+        if (settings.fxGlowlineHueStart != null) {
+            const s = document.getElementById('fxGlowHueStart');
+            s.value = settings.fxGlowlineHueStart;
+            document.getElementById('fxGlowHueStartVal').textContent = s.value + '°';
+            this.fxGlowlineHueStart = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxGlowlineHueEnd != null) {
+            const s = document.getElementById('fxGlowHueEnd');
+            s.value = settings.fxGlowlineHueEnd;
+            document.getElementById('fxGlowHueEndVal').textContent = s.value + '°';
+            this.fxGlowlineHueEnd = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxGlowlineSat != null) {
+            const s = document.getElementById('fxGlowSat');
+            s.value = settings.fxGlowlineSat;
+            document.getElementById('fxGlowSatVal').textContent = s.value + '%';
+            this.fxGlowlineSat = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxGlowlineVal != null) {
+            const s = document.getElementById('fxGlowVal');
+            s.value = settings.fxGlowlineVal;
+            document.getElementById('fxGlowValVal').textContent = s.value + '%';
+            this.fxGlowlineVal = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxSmokeHue != null) {
+            const s = document.getElementById('fxSmokeHue');
+            s.value = settings.fxSmokeHue;
+            document.getElementById('fxSmokeHueVal').textContent = s.value + '°';
+            this.fxSmokeHue = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxSmokeSat != null) {
+            const s = document.getElementById('fxSmokeSat');
+            s.value = settings.fxSmokeSat;
+            document.getElementById('fxSmokeSatVal').textContent = s.value + '%';
+            this.fxSmokeSat = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxSmokeVal != null) {
+            const s = document.getElementById('fxSmokeVal');
+            s.value = settings.fxSmokeVal;
+            document.getElementById('fxSmokeValVal').textContent = s.value + '%';
+            this.fxSmokeVal = parseInt(s.value, 10) || 0;
+        }
+
+        this._applyFxPalette({ skipSave: true });
 
         if (settings.graphicsPreset && settings.graphicsPreset !== 'custom') {
             this._applyGraphicsPreset(settings.graphicsPreset, { skipSave: true });
@@ -4022,6 +4343,8 @@ class PianoHero {
 
         // Default velocity: 1.0 for manual, 0.8 for auto-play
         if (velocity == null) velocity = (duration != null) ? 0.8 : 1.0;
+        const fxVelocity = Math.max(0, Math.min(1, velocity));
+        this._emitPianoFxForNote(note, fxVelocity);
 
         // Stop any existing source for the same note to prevent polyphony buildup
         const existing = this.activeNoteSources.get(note);
@@ -4904,12 +5227,14 @@ class PianoHero {
         if (this._laneCacheDirty || !this._laneCanvas) {
             this._rebuildLaneCache();
         }
-        if (this._laneCanvas) {
+        if (this._laneCanvas && !this.fxOnlyMode) {
             ctx.drawImage(this._laneCanvas, 0, 0);
         }
         
         // Draw vertical timeline
-        this._drawTimeline();
+        if (!this.fxOnlyMode) {
+            this._drawTimeline();
+        }
 
         // Draw falling notes (including hit notes — they stay visible until scrolled off)
         const canvasH = h + 50;
@@ -4931,7 +5256,7 @@ class PianoHero {
                 time: this._frameTime / 1000,
                 neonGlow: this.neonGlowEnabled,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
-                waveCount: this.waveEnabled ? (this.waveCount || 6) : 0,
+                waveCount: (this.waveEnabled && !this.fxOnlyMode) ? (this.waveCount || 6) : 0,
                 renderStartIdx: this._firstActiveIdx,
                 renderEndIdx: this._lastVisibleIdx,
             });
@@ -4993,6 +5318,12 @@ class PianoHero {
         // Emit and draw sparkle particles for held notes
         this._emitHeldNoteParticles();
         this._updateAndDrawParticles(ctx);
+
+        if (this.pianoFx) {
+            const delta = (this._frameTime - (this._lastFxFrame || this._frameTime)) / 16.6667;
+            this._lastFxFrame = this._frameTime;
+            this.pianoFx.update(delta || 1);
+        }
         
         if (scheduleNext) requestAnimationFrame(this._boundRender);
     }
