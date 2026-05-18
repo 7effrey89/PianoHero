@@ -145,9 +145,14 @@
             <!-- Score stats -->
             <div class="header-score-section" id="headerScoreSection">
                 <div class="stat-item">Score: <span id="score">0</span></div>
-                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
                 <div class="stat-item">Best Streak: <span id="streak">0</span></div>
                 <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
+                <div class="multiplier-tracker" id="multiplierTracker" aria-label="Score multiplier">
+                    <div class="multiplier-pips" id="multiplierPips"></div>
+                    <div class="multiplier-value">
+                        <span class="multiplier-x">×</span><span id="multiplierValue">1</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Settings gear -->

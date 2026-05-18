@@ -17,8 +17,8 @@ A Guitar Hero-style game for piano with Synthesia-inspired UI and real YouTube t
 - **Falling Notes Gameplay**: Notes cascade in lanes matching piano keys
 - **Piano Keyboard**: Visual piano keyboard with both mouse and keyboard input
 - **Piano Sounds**: Web Audio API synthesis for realistic note sounds
-- **Scoring System**: Points based on timing accuracy with combo multipliers
-- **Real-time Feedback**: Visual feedback for successful and missed notes
+- **Scoring System**: Points based on timing accuracy with a streak-based multiplier
+- **Real-time Feedback**: Visual feedback for successful, missed, and streaked hits
 - **Performance Pipeline**:
   - Web Worker preprocessing (`performance-worker.js`) for BPM, simple-mode merge, and duration caches
   - WebAssembly note math fast-path (`note-math.wasm`) for repeated note-height calculations
@@ -114,8 +114,63 @@ Then open http://localhost:5000/ in your browser
    - Short notes can be tapped normally
 5. **Score Points**:
    - Perfect timing = more points
-   - Build combos for score multipliers
+  - Build streaks to increase your score multiplier
    - Try to hit all notes for maximum accuracy!
+
+## Gameplay Rules
+
+### Hit Timing
+
+- A note counts as a hit when you press the matching key while it is inside the hit window.
+- Timing quality is graded as `Perfect`, `Great`, `Good`, `OK`, or `Miss`.
+- Better timing awards more points because timing accuracy is multiplied into the note score.
+
+### Sustains And Holds
+
+- Short notes can be tapped once.
+- Long notes must be held after the initial hit.
+- Releasing a held note early ends the sound and breaks the note visually, so holds should be played through their full length.
+
+### Streaks, Misses, And Accuracy
+
+- Every successful hit adds to your current streak.
+- Any miss, wrong key press, or note that passes the hit zone unhplayed breaks the streak.
+- Session accuracy is calculated as `hit notes / (hit notes + missed notes)`.
+- `Best Streak` tracks the highest uninterrupted streak reached in the current run.
+
+### Score Multiplier
+
+- The multiplier starts at `x1`.
+- Every `10` consecutive successful hits increases the multiplier by `+1`.
+- The multiplier caps at `x4`.
+- Breaking your streak resets the multiplier back to `x1`.
+- The circular multiplier tracker in the header shows:
+  - the current multiplier in the center
+  - the number of hits banked toward the next tier with 10 progress pips around the ring
+
+Current multiplier thresholds:
+
+- `0-9` consecutive hits: `x1`
+- `10-19` consecutive hits: `x2`
+- `20-29` consecutive hits: `x3`
+- `30+` consecutive hits: `x4`
+
+### Per-Note Scoring
+
+- Each note uses a base score of `100`.
+- Successful note score is calculated as:
+
+```text
+score = floor(100 * timingAccuracy * multiplier)
+```
+
+- `timingAccuracy` is highest for `Perfect` hits and lower for weaker timing grades.
+- Misses award `0` points.
+
+### Timing Feedback Modes
+
+- `Individual`: each hit shows its own timing label near the lane where it was played.
+- `Consolidated`: a single label appears at the top center and counts consecutive same-grade streaks such as `Perfect x5` until that streak is broken.
 
 ## Keyboard Controls
 

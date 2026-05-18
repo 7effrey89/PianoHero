@@ -900,6 +900,76 @@ button {
     white-space: nowrap;
 }
 
+/* Guitar-Hero style score multiplier tracker */
+.multiplier-tracker {
+    position: relative;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 45%, #1a1340 0%, #0a0820 70%, #050310 100%);
+    border: 1px solid #2a1f5e;
+    box-shadow: inset 0 0 6px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 6px;
+    flex-shrink: 0;
+    transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+.multiplier-tracker.tier-2 { border-color: #5a7bff; box-shadow: inset 0 0 6px rgba(0,0,0,0.7), 0 0 8px rgba(90,123,255,0.5); }
+.multiplier-tracker.tier-3 { border-color: #ffb84a; box-shadow: inset 0 0 6px rgba(0,0,0,0.7), 0 0 10px rgba(255,184,74,0.6); }
+.multiplier-tracker.tier-4 { border-color: #ff5be0; box-shadow: inset 0 0 8px rgba(0,0,0,0.7), 0 0 14px rgba(255,91,224,0.75); }
+.multiplier-tracker.tier-up {
+    animation: multiplier-pop 380ms ease-out;
+}
+@keyframes multiplier-pop {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.22); }
+    100% { transform: scale(1); }
+}
+.multiplier-pips {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.multiplier-pip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    margin: -2.5px 0 0 -2.5px;
+    border-radius: 50%;
+    background: #1d1840;
+    box-shadow: inset 0 0 1px rgba(0,0,0,0.6);
+    transition: background 140ms ease, box-shadow 140ms ease;
+}
+.multiplier-pip.lit {
+    background: #6cffb0;
+    box-shadow: 0 0 5px #6cffb0, 0 0 2px #fff inset;
+}
+.multiplier-tracker.tier-2 .multiplier-pip.lit { background: #6cb0ff; box-shadow: 0 0 5px #6cb0ff; }
+.multiplier-tracker.tier-3 .multiplier-pip.lit { background: #ffd06c; box-shadow: 0 0 6px #ffd06c; }
+.multiplier-tracker.tier-4 .multiplier-pip.lit { background: #ff6cd6; box-shadow: 0 0 8px #ff6cd6; }
+.multiplier-value {
+    font-family: 'Orbitron', 'Segoe UI', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    line-height: 1;
+    color: #e8e8ff;
+    text-shadow: 0 0 6px rgba(108,255,176,0.6);
+    letter-spacing: -0.5px;
+}
+.multiplier-tracker.tier-2 .multiplier-value { text-shadow: 0 0 7px rgba(108,176,255,0.8); }
+.multiplier-tracker.tier-3 .multiplier-value { text-shadow: 0 0 8px rgba(255,208,108,0.85); }
+.multiplier-tracker.tier-4 .multiplier-value { text-shadow: 0 0 10px rgba(255,108,214,0.9); color: #fff; }
+.multiplier-x {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-right: 1px;
+    vertical-align: 2px;
+}
+
 /* Stats bar (timeline only) */
 .stats-bar {
     background: none;

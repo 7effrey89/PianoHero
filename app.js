@@ -14,6 +14,9 @@ class PianoHero {
         this.comboElement = document.getElementById('combo');
         this.accuracyElement = document.getElementById('accuracy');
         this.streakElement = document.getElementById('streak');
+        this.multiplierTrackerEl = document.getElementById('multiplierTracker');
+        this.multiplierValueEl = document.getElementById('multiplierValue');
+        this.multiplierPipsEl = document.getElementById('multiplierPips');
         this.songTimeline = document.getElementById('songTimeline');
         this.songTimelineFill = document.getElementById('songTimelineFill');
         this.songTimelineThumb = document.getElementById('songTimelineThumb');
@@ -33,6 +36,11 @@ class PianoHero {
         this.score = 0;
         this.combo = 0;
         this.maxCombo = 0;
+        // Guitar-Hero style score multiplier: x1 base, +1 every MULTIPLIER_STEP
+        // consecutive hits, capped at MULTIPLIER_MAX. Resets to x1 on any miss.
+        this.MULTIPLIER_STEP = 10;
+        this.MULTIPLIER_MAX = 4;
+        this._lastMultiplier = 1;
         this.totalNotes = 0;
         this.hitNotes = 0;
         this.missedNotes = 0;
@@ -695,7 +703,7 @@ class PianoHero {
             target.hit = true;
             this.combo++;
             this.hitNotes++;
-            this.score += Math.floor(100 * (1 + this.combo * 0.1));
+            this.score += Math.floor(100 * this._getMultiplier());
             this.updateScore();
             this.showHitFeedback(target.note, true, 1);
             this._emitHitBurst(target.note, target.hand || 0);
@@ -3491,7 +3499,7 @@ class PianoHero {
             this.combo++;
             this.hitNotes++;
             const accuracy = 1 - (closestDistance / this.hitTolerance);
-            const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
+            const points = Math.floor(100 * accuracy * this._getMultiplier());
             this.score += points;
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
@@ -3692,7 +3700,7 @@ class PianoHero {
                 note.holdStart = this._getGameClockSec();
                 this.combo++;
                 this.hitNotes++;
-                this.score += Math.floor(100 * (1 + this.combo * 0.1));
+                this.score += Math.floor(100 * this._getMultiplier());
                 this.updateScore();
                 this.showHitFeedback(note.note, true, 1);
                 this.heldFallingNotes.set(note.note, note);
@@ -4219,7 +4227,7 @@ class PianoHero {
             this.hitNotes++;
             
             const accuracy = 1 - (closestDistance / this.hitTolerance);
-            const points = Math.floor(100 * accuracy * (1 + this.combo * 0.1));
+            const points = Math.floor(100 * accuracy * this._getMultiplier());
             this.score += points;
             
             this.updateScore();
@@ -4358,15 +4366,82 @@ class PianoHero {
     updateScore() {
         // Only write to DOM when values actually change
         const score = String(this.score);
-        const combo = String(this.combo);
         if (this.combo > this.maxCombo) this.maxCombo = this.combo;
         const streak = String(this.maxCombo);
         const processedNotes = this.hitNotes + this.missedNotes;
         const accuracy = String(processedNotes > 0 ? Math.floor((this.hitNotes / processedNotes) * 100) : 0);
         if (this.scoreElement.textContent !== score) this.scoreElement.textContent = score;
-        if (this.comboElement.textContent !== combo) this.comboElement.textContent = combo;
         if (this.streakElement.textContent !== streak) this.streakElement.textContent = streak;
         if (this.accuracyElement.textContent !== accuracy) this.accuracyElement.textContent = accuracy;
+        this._updateMultiplierUI();
+    }
+
+    /**
+     * Guitar-Hero style multiplier: base x1, +1 every MULTIPLIER_STEP
+     * consecutive hits, capped at MULTIPLIER_MAX. Resets on miss (combo=0 → x1).
+     */
+    _getMultiplier() {
+        const tier = 1 + Math.floor(this.combo / this.MULTIPLIER_STEP);
+        return Math.min(this.MULTIPLIER_MAX, tier);
+    }
+
+    /** Notes accumulated toward the next multiplier tier (0..STEP-1, or STEP when capped). */
+    _getMultiplierProgress() {
+        if (this._getMultiplier() >= this.MULTIPLIER_MAX) return this.MULTIPLIER_STEP;
+        return this.combo % this.MULTIPLIER_STEP;
+    }
+
+    _updateMultiplierUI() {
+        const tracker = this.multiplierTrackerEl;
+        const valueEl = this.multiplierValueEl;
+        const pipsEl = this.multiplierPipsEl;
+        if (!tracker || !valueEl || !pipsEl) return;
+
+        const mult = this._getMultiplier();
+        const progress = this._getMultiplierProgress();
+        const step = this.MULTIPLIER_STEP;
+
+        // Build pip elements once, then just toggle .lit class
+        if (pipsEl.childElementCount !== step) {
+            pipsEl.innerHTML = '';
+            const radius = 19; // px from center, inside the 46px circle
+            for (let i = 0; i < step; i++) {
+                const pip = document.createElement('div');
+                pip.className = 'multiplier-pip';
+                // Distribute around the circle starting at 12 o'clock, clockwise
+                const angle = (-Math.PI / 2) + (i / step) * Math.PI * 2;
+                const x = Math.cos(angle) * radius;
+                const y = Math.sin(angle) * radius;
+                pip.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+                pipsEl.appendChild(pip);
+            }
+        }
+        for (let i = 0; i < step; i++) {
+            const pip = pipsEl.children[i];
+            if (!pip) continue;
+            const lit = i < progress;
+            if (lit) pip.classList.add('lit');
+            else pip.classList.remove('lit');
+        }
+
+        const valueStr = String(mult);
+        if (valueEl.textContent !== valueStr) valueEl.textContent = valueStr;
+
+        // Tier color class
+        const tierClass = `tier-${mult}`;
+        if (!tracker.classList.contains(tierClass)) {
+            tracker.classList.remove('tier-1', 'tier-2', 'tier-3', 'tier-4');
+            tracker.classList.add(tierClass);
+        }
+
+        // Pop animation when tier increases
+        if (mult > this._lastMultiplier) {
+            tracker.classList.remove('tier-up');
+            // Force reflow so the animation restarts
+            void tracker.offsetWidth;
+            tracker.classList.add('tier-up');
+        }
+        this._lastMultiplier = mult;
     }
 
     _formatTime(sec) {
