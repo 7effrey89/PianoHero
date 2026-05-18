@@ -6,6 +6,7 @@ class PixiNoteRenderer {
         this.available = false;
         this.app = null;
         this.noteBgGraphics = null;   // note body fills (bottom layer)
+        this.noteGlow = null;         // neon glow layer (blurred + additive)
         this.waveGraphics = null;     // wave ribbons masked to note rects
         this.waveMask = null;         // mask: union of all classic note rects
         this.noteOverlay = null;      // glossy strips + borders (top layer)
@@ -31,6 +32,15 @@ class PixiNoteRenderer {
             });
 
             // Layer 1: Note body fills (classic mode)
+            this.noteGlow = new PIXI.Graphics();
+            this.noteGlow.blendMode = 'add';
+            if (PIXI.BlurFilter) {
+                const blur = new PIXI.BlurFilter(6);
+                blur.quality = 2;
+                this.noteGlow.filters = [blur];
+            }
+            this.app.stage.addChild(this.noteGlow);
+
             this.noteBgGraphics = new PIXI.Graphics();
             this.app.stage.addChild(this.noteBgGraphics);
 
@@ -130,11 +140,13 @@ class PixiNoteRenderer {
     renderNotes(fallingNotes, keyPositions, config) {
         if (!this.available) return;
 
+        const glow = this.noteGlow;
         const bg = this.noteBgGraphics;
         const wg = this.waveGraphics;
         const wm = this.waveMask;
         const ov = this.noteOverlay;
         const ng = this.notesGraphics;
+        glow.clear();
         bg.clear();
         wg.clear();
         wm.clear();
@@ -151,8 +163,8 @@ class PixiNoteRenderer {
         }
 
         const { noteSpeed, speedMultiplier, noteStyle, canvasH,
-                gameMode, practiceWaiting, practiceExpectedNotes,
-                coPlayManualNotes, heldFallingNotes } = config;
+            gameMode, practiceWaiting, practiceExpectedNotes,
+            coPlayManualNotes, heldFallingNotes, neonGlow } = config;
 
         const isClassic = noteStyle === 'classic';
         const waveCountCfg = config.waveCount || 0;
@@ -160,6 +172,7 @@ class PixiNoteRenderer {
 
         // Layer culling — skip traversal of layers that won't draw this frame.
         ng.renderable = !isClassic;
+        glow.renderable = !!neonGlow;
         bg.renderable = isClassic || config.bgOverlayOpacity > 0;
         ov.renderable = isClassic;
         wg.renderable = wavesActive;
@@ -186,11 +199,11 @@ class PixiNoteRenderer {
             if (topEdge >= canvasH || note.y <= -50) continue;
 
             if (isClassic) {
-                const rect = this._drawNoteClassicBody(bg, ov, note, pos, noteSpeed, speedMultiplier, gameMode, heldFallingNotes);
+                const rect = this._drawNoteClassicBody(glow, bg, ov, note, pos, noteSpeed, speedMultiplier, gameMode, heldFallingNotes, neonGlow);
                 if (rect && classicNoteRects) classicNoteRects.push(rect);
             } else {
-                this._drawNoteBeam(ng, note, pos, noteSpeed, speedMultiplier, gameMode,
-                    practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes);
+                this._drawNoteBeam(glow, ng, note, pos, noteSpeed, speedMultiplier, gameMode,
+                    practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes, neonGlow);
             }
         }
 
@@ -277,8 +290,8 @@ class PixiNoteRenderer {
     }
 
     // ─── Beam-style notes (laser beams) ──────────────────────────────
-    _drawNoteBeam(g, note, pos, noteSpeed, speedMult, gameMode,
-                  practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes) {
+    _drawNoteBeam(glow, g, note, pos, noteSpeed, speedMult, gameMode,
+                  practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes, neonGlow) {
         const noteWidth = pos.width * 0.9;
         const dur = note.duration || 0.15;
         const noteGap = 4;
@@ -319,6 +332,17 @@ class PixiNoteRenderer {
         const tailHeight = noteHeight - headHeight;
         const headY = note.y - headHeight;
 
+        if (neonGlow && glow) {
+            const glowPadX = 10;
+            const glowPadY = 14;
+            const glowW = noteWidth + glowPadX * 2;
+            const glowH = noteHeight + glowPadY * 2;
+            const gx = x - glowPadX;
+            const gy = y - glowPadY;
+            glow.roundRect(gx, gy, glowW, glowH, 10);
+            glow.fill({ color: this._hslToHex(hue, Math.max(30, sat - 12), Math.min(lum + 24, 85)), alpha: alpha * 0.6 });
+        }
+
         // Beam tail — outer glow + bright core
         if (tailHeight > 2) {
             const glowW = beamWidth * 1.6;
@@ -342,7 +366,7 @@ class PixiNoteRenderer {
     // ─── Classic-style notes (matching original Canvas 2D visuals) ──
     // Draws body fill on bg layer, glossy strip + border on overlay layer.
     // Returns the note rect for wave masking.
-    _drawNoteClassicBody(bg, ov, note, pos, noteSpeed, speedMult, gameMode, heldFallingNotes) {
+    _drawNoteClassicBody(glow, bg, ov, note, pos, noteSpeed, speedMult, gameMode, heldFallingNotes, neonGlow) {
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
         const noteGap = 4;
@@ -371,6 +395,17 @@ class PixiNoteRenderer {
 
         const color = this._hslToHex(hue, sat, lum);
         const r = 4; // corner radius
+
+        if (neonGlow && glow) {
+            const glowPadX = 10;
+            const glowPadY = 14;
+            const glowW = noteWidth + glowPadX * 2;
+            const glowH = noteHeight + glowPadY * 2;
+            const gx = x - glowPadX;
+            const gy = y - glowPadY;
+            glow.roundRect(gx, gy, glowW, glowH, r + 6);
+            glow.fill({ color: this._hslToHex(hue, Math.max(25, sat - 12), Math.min(lum + 22, 84)), alpha: alpha * 0.55 });
+        }
 
         // Body fill (bg layer) — full alpha, matching original GL renderer
         bg.roundRect(x, y, noteWidth, noteHeight, r);

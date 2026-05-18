@@ -2338,18 +2338,13 @@ class PianoHero {
     }
 
     /**
-     * Apply (or remove) a CSS drop-shadow on the WebGL note canvas + 2D overlay so the
-     * neon-glow toggle works regardless of whether Pixi or Canvas 2D is the active renderer.
-     * Cheap, GPU-composited, and only affects non-transparent pixels (i.e. the notes themselves).
+     * Ensure CSS filters are cleared; neon glow is now rendered per-note.
      */
     _applyNeonGlowCSS() {
         const glC = document.getElementById('glCanvas');
         const notesC = document.getElementById('notesCanvas');
-        const filter = this.neonGlowEnabled
-            ? 'drop-shadow(0 0 6px rgba(180, 220, 255, 0.85)) drop-shadow(0 0 14px rgba(120, 180, 255, 0.55))'
-            : '';
-        if (glC) glC.style.filter = filter;
-        if (notesC) notesC.style.filter = filter;
+        if (glC) glC.style.filter = '';
+        if (notesC) notesC.style.filter = '';
     }
 
     _markGraphicsPresetCustom() {
@@ -4635,6 +4630,7 @@ class PianoHero {
                 coPlayManualNotes: this.coPlayManualNotes,
                 heldFallingNotes: this.heldFallingNotes,
                 time: this._frameTime / 1000,
+                neonGlow: this.neonGlowEnabled,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
                 waveCount: 0,
                 renderStartIdx: this._firstActiveIdx,
@@ -4676,6 +4672,7 @@ class PianoHero {
                 coPlayManualNotes: this.coPlayManualNotes,
                 heldFallingNotes: this.heldFallingNotes,
                 time: this._frameTime / 1000,
+                neonGlow: this.neonGlowEnabled,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
                 waveCount: this.waveEnabled ? (this.waveCount || 6) : 0,
                 renderStartIdx: this._firstActiveIdx,
