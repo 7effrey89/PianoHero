@@ -129,7 +129,7 @@ class PianoHero {
 
         // Sparkle particles for held notes
         this.particles = [];
-        this.particleStyle = 'sparkle'; // 'sparkle', 'splash', or 'ivory'
+        this.particleStyle = 'sparkle'; // 'sparkle', 'splash', 'ivory', or 'starburst'
         this.sparkleIntensity = 1.0; // 0.0 to 1.0
         this.sparkleEnabled = true;
         this.sparkleHeight = 1.0; // 0.1 to 2.0
@@ -5287,6 +5287,100 @@ class PianoHero {
         if (!this._particlePool) this._particlePool = [];
         const pool = this._particlePool;
         const isBlackKey = pos.isBlack;
+
+        // ── Starburst: bright hemispherical light explosion (dome + halo of fine spikes) ──
+        if (this.particleStyle === 'starburst') {
+            const originX = pos.x;
+            const originY = this.hitZoneY - 2;
+            const intensity = Math.max(0.4, this.sparkleIntensity);
+            const heightMul = Math.max(0.4, this.sparkleHeight);
+            const heightT = Math.max(0, Math.min(1, (heightMul - 0.4) / 0.6));
+            const domeMinScale = 0.75 * (1 - heightT);
+
+            // 1) Big soft glowing dome (single particle, slow fade)
+            const dome = pool.pop() || {};
+            dome.x = originX;
+            dome.y = originY;
+            dome.vx = 0; dome.vy = 0;
+            dome.life = 1.0;
+            dome.decay = 0.012;
+            dome.size = Math.max(
+                (28 + Math.random() * 8) * intensity * heightMul,
+                (28 * domeMinScale) * intensity
+            );
+            dome.type = 'starburst-dome';
+            this.particles.push(dome);
+
+            // 2) Inner bright white-hot core (smaller, faster fade — gives the "flash" punch)
+            const core = pool.pop() || {};
+            core.x = originX;
+            core.y = originY;
+            core.vx = 0; core.vy = 0;
+            core.life = 1.0;
+            core.decay = 0.03;
+            core.size = (14 + Math.random() * 4) * intensity;
+            core.type = 'starburst-core';
+            this.particles.push(core);
+
+            // 3) Halo of many fine short spikes in a ~180° upward fan
+            const spikeCount = Math.round(48 * intensity);
+            const baseAngle = -Math.PI / 2;
+            const spread = Math.PI * 1.02; // ~184° (slightly past horizontal)
+            for (let i = 0; i < spikeCount; i++) {
+                const t = (i + 0.5) / spikeCount;
+                const angle = baseAngle - spread / 2 + spread * t + (Math.random() - 0.5) * 0.08;
+                // Most spikes short (halo), a few longer needles for dynamism
+                const isLongNeedle = Math.random() < 0.18;
+                const len = isLongNeedle
+                    ? (34 + Math.random() * 28) * heightMul
+                    : (10 + Math.random() * 14) * heightMul;
+                // Keep the spike origin near center at low height and never beyond its own length.
+                const innerBase = (6 + Math.random() * 4) * (0.75 - 0.25 * heightT);
+                const innerR = Math.min(innerBase, len * 0.35);
+                // Color: 90% pure white-warm, 10% subtle hand tint for character
+                let color;
+                if (Math.random() < 0.9) {
+                    color = `hsla(${50 + Math.random() * 10}, 100%, ${94 + Math.random() * 6}%, 1)`;
+                } else if (hand === 0) {
+                    color = `hsla(${140 + Math.random() * 20}, 95%, 82%, 1)`;
+                } else {
+                    color = `hsla(${200 + Math.random() * 20}, 95%, 82%, 1)`;
+                }
+                const p = pool.pop() || {};
+                p.x = originX;
+                p.y = originY;
+                p.vx = 0; p.vy = 0;
+                p.life = 1.0;
+                p.decay = isLongNeedle ? 0.018 + Math.random() * 0.012 : 0.028 + Math.random() * 0.018;
+                p.size = isLongNeedle ? 0.9 + Math.random() * 0.6 : 0.6 + Math.random() * 0.5;
+                p.spikeAngle = angle;
+                p.spikeLength = len;
+                p.spikeInner = innerR;
+                p.color = color;
+                p.type = 'starburst-spike';
+                this.particles.push(p);
+            }
+
+            // 4) Sprinkle a few sparkle dots flying upward for extra texture
+            const sparkCount = Math.round(10 * intensity);
+            for (let i = 0; i < sparkCount; i++) {
+                const angle = baseAngle - 0.6 + Math.random() * 1.2;
+                const speed = 1.5 + Math.random() * 2.8;
+                const s = pool.pop() || {};
+                s.x = originX + Math.cos(angle) * 4;
+                s.y = originY + Math.sin(angle) * 4;
+                s.vx = Math.cos(angle) * speed;
+                s.vy = Math.sin(angle) * speed;
+                s.life = 1.0;
+                s.decay = 0.012 + Math.random() * 0.010;
+                s.size = 1.0 + Math.random() * 1.2;
+                s.color = `hsla(${50 + Math.random() * 10}, 100%, 95%, 1)`;
+                s.type = 'starburst-spark';
+                this.particles.push(s);
+            }
+            return;
+        }
+
         const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : this.particleStyle === 'ivory' ? 10 : 5) * this.sparkleIntensity));
         for (let i = 0; i < burstCount; i++) {
             if (this.particleStyle === 'ivory') {
@@ -5404,6 +5498,10 @@ class PianoHero {
             const hand = fallingNote.hand || 0;
             const isBlackKey = pos.isBlack;
 
+            // Starburst is a one-shot effect fired on hit only; no continuous emission
+            // while held (otherwise the screen fills with overlapping ray fans).
+            if (this.particleStyle === 'starburst') continue;
+
             if (this.particleStyle === 'ivory') {
                 // Ivory: continuous rising glowing dots while note is held
                 const baseCount = Math.random() < 0.6 ? 2 : 1;
@@ -5511,7 +5609,94 @@ class PianoHero {
                 continue;
             }
 
-            if (p.type === 'ivory') {
+            if (p.type === 'starburst-dome') {
+                // Big soft hemispherical glow above the hit zone — the "halo of light".
+                // Grows quickly then fades. Clipped to upper hemisphere so it sits
+                // on the hit bar instead of bleeding into the keyboard.
+                const grow = Math.min(1, (1 - p.life) * 4.0);
+                const sz = p.size * (0.55 + 0.45 * grow);
+                // Ease-out: hold high alpha then fade gently at the end
+                const alpha = Math.sqrt(p.life) * 0.85;
+                ctx.save();
+                // Clip to a rectangle above the origin so we render only the top half.
+                ctx.beginPath();
+                const heightMul = Math.max(0.4, this.sparkleHeight);
+                const heightT = Math.max(0, Math.min(1, (heightMul - 0.4) / 0.6));
+                const clipDown = sz * (0.22 + 0.2 * (1 - heightT));
+                ctx.rect(p.x - sz * 1.4, p.y - sz * 1.4, sz * 2.8, sz * 1.4 + clipDown);
+                ctx.clip();
+                ctx.shadowColor = 'rgba(255, 245, 215, 1)';
+                ctx.shadowBlur = 40 * this.sparkleIntensity;
+                ctx.globalAlpha = alpha;
+                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, sz);
+                grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+                grad.addColorStop(0.35, 'rgba(255,250,225,0.85)');
+                grad.addColorStop(0.7, 'rgba(255,225,170,0.35)');
+                grad.addColorStop(1.0, 'rgba(255,200,120,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            } else if (p.type === 'starburst-core') {
+                // Bright white-hot core flash at the contact point.
+                const alpha = Math.sqrt(p.life);
+                const sz = p.size * (0.6 + 0.5 * (1 - p.life));
+                ctx.shadowColor = 'rgba(255, 250, 230, 1)';
+                ctx.shadowBlur = 24 * this.sparkleIntensity;
+                ctx.globalAlpha = alpha;
+                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, sz);
+                grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+                grad.addColorStop(0.5, 'rgba(255,250,220,0.9)');
+                grad.addColorStop(1.0, 'rgba(255,230,170,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.type === 'starburst-spike') {
+                // Triangular ray (sunburst shape): wide at the base near the core,
+                // tapering to a sharp point at the tip.
+                const grow = Math.min(1, (1 - p.life) * 4.5);
+                const len = p.spikeLength * (0.3 + 0.7 * grow);
+                const alpha = Math.sqrt(p.life);
+                const ang = p.spikeAngle;
+                const cos = Math.cos(ang), sin = Math.sin(ang);
+                // Base point at inner radius
+                const bx = p.x + cos * p.spikeInner;
+                const by = p.y + sin * p.spikeInner;
+                // Tip at outer end
+                const tx = p.x + cos * (p.spikeInner + len);
+                const ty = p.y + sin * (p.spikeInner + len);
+                // Perpendicular for base width
+                const halfBase = Math.max(0.8, p.size * 1.8);
+                const px = -sin * halfBase;
+                const py = cos * halfBase;
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur = 8 * this.sparkleIntensity;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.moveTo(bx + px, by + py);
+                ctx.lineTo(bx - px, by - py);
+                ctx.lineTo(tx, ty);
+                ctx.closePath();
+                ctx.fill();
+            } else if (p.type === 'starburst-spark') {
+                // Tiny bright dot flying outward (drifts with vx/vy, gravity-free).
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= 0.94;
+                p.vy *= 0.94;
+                const alpha = p.life;
+                const sz = p.size * (0.5 + 0.5 * p.life);
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur = 10 * this.sparkleIntensity;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.type === 'ivory') {
                 // Ivory rising dot: gentle upward drift, slight horizontal sway, long fade
                 p.vx *= 0.985;
                 // Very mild buoyancy (slows over time)

@@ -146,13 +146,16 @@ handler, `_applyGraphicsPreset`, and `_loadSettings`.
 
 ---
 
-## 9. Particle styles (sparkle / splash / ivory)
+## 9. Particle styles (sparkle / splash / ivory / starburst)
 
 **Problem.** A single hard-coded particle effect didn't fit every theme.
 
-**Fix.** `this.particleStyle` switches between `sparkle`, `splash`, and the
-new rising-ember **ivory** style (white-hot core fading to gold, gentle
-upward drift). Gating in `_emitHitBurst` ([app.js](app.js#L5252)) and
+**Fix.** `this.particleStyle` switches between `sparkle`, `splash`, the
+rising-ember **ivory** style (white-hot core fading to gold, gentle
+upward drift), and a high-impact **starburst** style (~18 stationary
+warm-white rays in a 170° upward fan plus a central radial-gradient
+flash — one-shot per hit, no continuous emission during held notes to
+avoid overlapping fans). Gating in `_emitHitBurst` ([app.js](app.js#L5252)) and
 `_emitHeldNoteParticles` ([app.js](app.js#L5342)) ensures no work is done
 when intensity is 0 or the toggle is off.
 
