@@ -461,9 +461,9 @@ class PianoHero {
                 this._wasmInUse = true;
                 this._updatePerfDebugStatus();
             }
-            return this._wasmMath.note_visible_height(dur, this.noteSpeed, speedMultiplier);
+            return this._wasmMath.note_visible_height(dur, this.noteSpeed, 1);
         }
-        return Math.max(12, dur * this.noteSpeed * speedMultiplier);
+        return Math.max(12, dur * this.noteSpeed);
     }
 
     _drawNoteHeight(duration, speedMultiplier, noteGap = 4) {
@@ -473,9 +473,9 @@ class PianoHero {
                 this._wasmInUse = true;
                 this._updatePerfDebugStatus();
             }
-            return this._wasmMath.note_draw_height(dur, this.noteSpeed, speedMultiplier, noteGap);
+            return this._wasmMath.note_draw_height(dur, this.noteSpeed, 1, noteGap);
         }
-        return Math.max(12, dur * this.noteSpeed * speedMultiplier - noteGap);
+        return Math.max(12, dur * this.noteSpeed - noteGap);
     }
     
     init() {
@@ -1996,9 +1996,41 @@ class PianoHero {
         // ── Speed Control ──
         const speedSlider = document.getElementById('speedSlider');
         const speedInput = document.getElementById('speedInput');
+        const headerSpeedScrubber = document.getElementById('headerSpeedScrubber');
+        const headerSpeedValue = document.getElementById('headerSpeedValue');
+        const headerSpeedDialProgress = document.getElementById('headerSpeedDialProgress');
+        const headerSpeedDialThumb = document.getElementById('headerSpeedDialThumb');
+        const SPEED_MIN = 25;
+        const SPEED_MAX = 150;
+        const dialSweep = Math.PI * 1.5;
+        const dialStart = Math.PI * 0.75;
+        const dialCircumference = 2 * Math.PI * 16;
+        const dialArcLength = dialCircumference * 0.75;
+
+        const syncSpeedUi = (pct) => {
+            speedSlider.value = pct;
+            speedInput.value = pct;
+            if (headerSpeedValue) headerSpeedValue.textContent = `${pct}`;
+            if (headerSpeedScrubber) {
+                headerSpeedScrubber.setAttribute('aria-valuenow', String(pct));
+                headerSpeedScrubber.setAttribute('aria-valuetext', `${pct}% speed`);
+            }
+            const normalized = (pct - SPEED_MIN) / (SPEED_MAX - SPEED_MIN);
+            if (headerSpeedDialProgress) {
+                headerSpeedDialProgress.style.strokeDasharray = `${dialArcLength} ${dialCircumference}`;
+                headerSpeedDialProgress.style.strokeDashoffset = String(dialArcLength * (1 - normalized));
+            }
+            if (headerSpeedDialThumb) {
+                const theta = dialStart + (normalized * dialSweep);
+                const thumbX = 20 + (16 * Math.cos(theta));
+                const thumbY = 20 + (16 * Math.sin(theta));
+                headerSpeedDialThumb.setAttribute('cx', thumbX.toFixed(2));
+                headerSpeedDialThumb.setAttribute('cy', thumbY.toFixed(2));
+            }
+        };
 
         const applySpeed = (val) => {
-            const pct = Math.max(25, Math.min(150, parseInt(val) || 100));
+            const pct = Math.max(SPEED_MIN, Math.min(SPEED_MAX, parseInt(val) || 100));
             const newSpeed = pct / 100;
             const oldSpeed = this.speedMultiplier;
 
@@ -2018,8 +2050,7 @@ class PianoHero {
             }
 
             this.speedMultiplier = newSpeed;
-            speedSlider.value = pct;
-            speedInput.value = pct;
+            syncSpeedUi(pct);
             this.updateBPMDisplay();
 
             // If auto-play is in progress, reschedule timeouts with new speed
@@ -2032,6 +2063,76 @@ class PianoHero {
 
         speedSlider.addEventListener('input', () => { applySpeed(speedSlider.value); this._saveSettings(); });
         speedInput.addEventListener('change', () => { applySpeed(speedInput.value); this._saveSettings(); });
+
+        if (headerSpeedScrubber) {
+            let dragState = null;
+            const commitHeaderSpeed = () => {
+                if (!dragState || !dragState.changed) return;
+                this._saveSettings();
+            };
+
+            headerSpeedScrubber.addEventListener('pointerdown', (event) => {
+                dragState = {
+                    pointerId: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    startPct: parseInt(speedSlider.value, 10) || 100,
+                    axis: null,
+                    changed: false,
+                };
+                headerSpeedScrubber.classList.add('dragging');
+                headerSpeedScrubber.setPointerCapture(event.pointerId);
+                event.preventDefault();
+            });
+
+            headerSpeedScrubber.addEventListener('pointermove', (event) => {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                const dx = event.clientX - dragState.startX;
+                const dy = event.clientY - dragState.startY;
+                if (!dragState.axis) {
+                    if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+                    dragState.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+                }
+                const primaryDelta = dragState.axis === 'x' ? dx : -dy;
+                const deltaPct = Math.round(primaryDelta / 10) * 5;
+                const clampedPct = Math.max(SPEED_MIN, Math.min(SPEED_MAX, dragState.startPct + deltaPct));
+                if (clampedPct === (parseInt(speedSlider.value, 10) || 100)) return;
+                dragState.changed = true;
+                applySpeed(clampedPct);
+            });
+
+            const finishHeaderDrag = (event) => {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                headerSpeedScrubber.classList.remove('dragging');
+                commitHeaderSpeed();
+                if (headerSpeedScrubber.hasPointerCapture(event.pointerId)) {
+                    headerSpeedScrubber.releasePointerCapture(event.pointerId);
+                }
+                dragState = null;
+            };
+
+            headerSpeedScrubber.addEventListener('pointerup', finishHeaderDrag);
+            headerSpeedScrubber.addEventListener('pointercancel', finishHeaderDrag);
+
+            headerSpeedScrubber.addEventListener('keydown', (event) => {
+                let delta = 0;
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') delta = -5;
+                else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') delta = 5;
+                else if (event.key === 'Home') delta = SPEED_MIN - (parseInt(speedSlider.value, 10) || 100);
+                else if (event.key === 'End') delta = SPEED_MAX - (parseInt(speedSlider.value, 10) || 100);
+                else return;
+                event.preventDefault();
+                applySpeed((parseInt(speedSlider.value, 10) || 100) + delta);
+                this._saveSettings();
+            });
+
+            headerSpeedScrubber.addEventListener('wheel', (event) => {
+                event.preventDefault();
+                const direction = event.deltaY > 0 ? -5 : 5;
+                applySpeed((parseInt(speedSlider.value, 10) || 100) + direction);
+                this._saveSettings();
+            }, { passive: false });
+        }
 
         // ── Particle Style ──
         const particleStyleSelect = document.getElementById('particleStyleSelect');

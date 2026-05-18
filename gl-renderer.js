@@ -251,13 +251,13 @@ class GLNoteRenderer {
             if (!pos) continue;
 
             const dur = note.duration || 0.15;
-            const noteH = Math.max(12, dur * config.noteSpeed * speed);
+            const noteH = Math.max(12, dur * config.noteSpeed);
             const topEdge = note.y - noteH;
             if (topEdge >= canvasH || note.y <= -50) continue;
 
             const noteWidth = pos.width * (isClassic ? 0.85 : 0.9);
             const noteGap = 4;
-            const noteHeight = Math.max(12, dur * config.noteSpeed * speed - noteGap);
+            const noteHeight = Math.max(12, dur * config.noteSpeed - noteGap);
             const x = pos.left + (pos.width - noteWidth) / 2;
             const y = note.y - noteHeight;
 

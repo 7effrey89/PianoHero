@@ -194,7 +194,7 @@ class PixiNoteRenderer {
             if (!pos) continue;
 
             const dur = note.duration || 0.15;
-            const noteH = Math.max(12, dur * noteSpeed * speedMultiplier);
+            const noteH = Math.max(12, dur * noteSpeed);
             const topEdge = note.y - noteH;
             if (topEdge >= canvasH || note.y <= -50) continue;
 
@@ -295,7 +295,7 @@ class PixiNoteRenderer {
         const noteWidth = pos.width * 0.9;
         const dur = note.duration || 0.15;
         const noteGap = 4;
-        const noteHeight = Math.max(12, dur * noteSpeed * speedMult - noteGap);
+        const noteHeight = Math.max(12, dur * noteSpeed - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
 
@@ -370,7 +370,7 @@ class PixiNoteRenderer {
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
         const noteGap = 4;
-        const noteHeight = Math.max(12, dur * noteSpeed * speedMult - noteGap);
+        const noteHeight = Math.max(12, dur * noteSpeed - noteGap);
         const x = pos.left + (pos.width - noteWidth) / 2;
         const y = note.y - noteHeight;
 

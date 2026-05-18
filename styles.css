@@ -83,6 +83,7 @@ header.top-header {
     height: 24px;
     background: #3a2d6e;
     flex-shrink: 0;
+    margin: 0 8px;
 }
 
 /* Song browser button (hamburger) */
@@ -472,6 +473,118 @@ header.top-header {
 .header-settings-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
+}
+
+.header-speed-scrubber {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    width: 50px;
+    min-width: 50px;
+    padding: 2px 3px 1px;
+    border: none;
+    background: transparent;
+    color: #d8defe;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    transition: color 0.2s, transform 0.15s;
+    flex-shrink: 0;
+}
+
+.header-speed-scrubber:hover,
+.header-speed-scrubber:focus-visible,
+.header-speed-scrubber.dragging {
+    color: #fff;
+}
+
+.header-speed-scrubber:focus-visible {
+    outline: none;
+}
+
+.header-speed-scrubber.dragging {
+    transform: translateY(-1px);
+    cursor: grabbing;
+}
+
+.header-speed-dial-face {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+
+.header-speed-dial-svg {
+    width: 38px;
+    height: 38px;
+    overflow: visible;
+}
+
+.header-speed-dial-track,
+.header-speed-dial-progress {
+    fill: none;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-dasharray: 75.398 100.531;
+    transform: rotate(135deg);
+    transform-origin: 20px 20px;
+}
+
+.header-speed-dial-track {
+    stroke: rgba(255, 255, 255, 0.18);
+}
+
+.header-speed-dial-progress {
+    stroke: #ff9b3d;
+    transition: stroke-dashoffset 0.14s ease, stroke 0.2s ease;
+}
+
+.header-speed-dial-thumb {
+    fill: #ff9b3d;
+    stroke: rgba(255, 255, 255, 0.75);
+    stroke-width: 1;
+    filter: drop-shadow(0 0 4px rgba(255, 155, 61, 0.45));
+    transition: cx 0.14s ease, cy 0.14s ease, fill 0.2s ease;
+}
+
+.header-speed-value {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #f3f5ff;
+    pointer-events: none;
+}
+
+.header-speed-caption {
+    font-size: 9px;
+    font-weight: 600;
+    font-style: italic;
+    letter-spacing: 0.01em;
+    color: #9ca8bd;
+    line-height: 1;
+    text-transform: none;
+}
+
+.header-speed-scrubber:hover .header-speed-dial-progress,
+.header-speed-scrubber:focus-visible .header-speed-dial-progress,
+.header-speed-scrubber.dragging .header-speed-dial-progress {
+    stroke: #ffb45b;
+}
+
+.header-speed-scrubber:hover .header-speed-dial-thumb,
+.header-speed-scrubber:focus-visible .header-speed-dial-thumb,
+.header-speed-scrubber.dragging .header-speed-dial-thumb {
+    fill: #ffb45b;
 }
 
 .header-status-stack:not(:has(#statusMessage:not(:empty))):not(:has(.progress-bar.visible)) {
@@ -2247,6 +2360,22 @@ body.compact-game #gameCanvas {
 @media (max-width: 760px) {
     .song-browser-dropdown {
         width: min(98vw, 720px);
+    }
+
+    .header-speed-scrubber {
+        width: 44px;
+        min-width: 44px;
+        padding: 2px 2px 0;
+    }
+
+    .header-speed-dial-face,
+    .header-speed-dial-svg {
+        width: 34px;
+        height: 34px;
+    }
+
+    .header-speed-caption {
+        font-size: 8px;
     }
 
     .onlineseq-layout {
