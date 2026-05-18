@@ -1228,6 +1228,19 @@ body.compact-game #gameCanvas {
     contain: layout style;
 }
 
+.timing-feedback-center {
+    left: 50%;
+    top: 10px;
+    bottom: auto;
+    font-size: 1.25rem;
+    z-index: 250;
+    display: none;
+}
+
+.timing-feedback-center.visible {
+    display: block;
+}
+
 .timing-perfect { color: #FFD700; }
 .timing-great { color: #00E5FF; }
 .timing-good { color: #69F0AE; }

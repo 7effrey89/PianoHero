@@ -154,6 +154,10 @@ class PianoHero {
 
         // Reuse timing feedback nodes to reduce frequent DOM allocation/removal churn
         this._timingFeedbackPool = [];
+        this.timingFeedbackMode = 'individual';
+        this._consolidatedFeedbackState = null;
+        this._consolidatedFeedbackTimer = null;
+        this._timingFeedbackCenterEl = null;
 
         // Force field hit bar
         this.forceFieldEnabled = false;
@@ -1862,9 +1866,19 @@ class PianoHero {
 
         // Timing feedback toggle
         const timingFeedbackToggle = document.getElementById('timingFeedbackToggle');
+        const timingFeedbackModeSelect = document.getElementById('timingFeedbackModeSelect');
         if (timingFeedbackToggle) {
             timingFeedbackToggle.addEventListener('change', () => {
                 this.showTimingFeedback = timingFeedbackToggle.checked;
+                if (!this.showTimingFeedback && this._timingFeedbackCenterEl) {
+                    this._timingFeedbackCenterEl.classList.remove('visible');
+                }
+                this._saveSettings();
+            });
+        }
+        if (timingFeedbackModeSelect) {
+            timingFeedbackModeSelect.addEventListener('change', () => {
+                this.timingFeedbackMode = timingFeedbackModeSelect.value;
                 this._saveSettings();
             });
         }
@@ -2213,6 +2227,7 @@ class PianoHero {
             speed: document.getElementById('speedSlider').value,
             gameMode: this.gameMode || 'normal',
             timingFeedback: document.getElementById('timingFeedbackToggle').checked,
+            timingFeedbackMode: document.getElementById('timingFeedbackModeSelect').value,
             sparkleEnabled: document.getElementById('sparkleToggle').checked,
             particleStyle: document.getElementById('particleStyleSelect').value,
             sparkle: document.getElementById('sparkleSlider').value,
@@ -2591,6 +2606,11 @@ class PianoHero {
             const cb = document.getElementById('timingFeedbackToggle');
             cb.checked = settings.timingFeedback;
             cb.dispatchEvent(new Event('change'));
+        }
+        if (settings.timingFeedbackMode) {
+            const sel = document.getElementById('timingFeedbackModeSelect');
+            sel.value = settings.timingFeedbackMode;
+            this.timingFeedbackMode = settings.timingFeedbackMode;
         }
         if (settings.sparkleEnabled != null) {
             const cb = document.getElementById('sparkleToggle');
@@ -4233,8 +4253,69 @@ class PianoHero {
 
         // Show timing feedback text
         if (this.showTimingFeedback) {
-            this._showTimingText(note, success, accuracy);
+            if (this.timingFeedbackMode === 'consolidated') {
+                this._showTimingTextConsolidated(success, accuracy);
+            } else {
+                this._showTimingText(note, success, accuracy);
+            }
         }
+    }
+
+    _getTimingGradeRank(gradeText) {
+        switch (gradeText) {
+            case 'Miss': return 4;
+            case 'OK': return 3;
+            case 'Good': return 2;
+            case 'Great': return 1;
+            case 'Perfect': return 0;
+            default: return 5;
+        }
+    }
+
+    _showTimingTextConsolidated(success, accuracy) {
+        if (!this._timingFeedbackCenterEl) {
+            this._timingFeedbackCenterEl = document.getElementById('timingFeedbackCenter');
+        }
+        const el = this._timingFeedbackCenterEl;
+        if (!el) return;
+
+        const grade = this._getTimingGrade(success, accuracy);
+        const now = performance.now();
+        const state = this._consolidatedFeedbackState;
+        const isMiss = !success;
+
+        // A streak continues only while consecutive hits share the same grade
+        // (and aren't broken by a miss). Any miss resets to a one-off "Miss".
+        if (!state || isMiss || state.grade.text !== grade.text) {
+            this._consolidatedFeedbackState = {
+                count: 1,
+                grade,
+                lastTime: now,
+            };
+        } else {
+            state.count += 1;
+            state.lastTime = now;
+        }
+
+        const active = this._consolidatedFeedbackState;
+        const suffix = active.count > 1 ? ` x${active.count}` : '';
+        el.className = `timing-feedback timing-feedback-center ${active.grade.cls}`;
+        el.textContent = `${active.grade.text}${suffix}`;
+        el.classList.add('visible');
+
+        // Restart the float animation each update so the label re-pops.
+        el.style.animation = 'none';
+        void el.offsetHeight;
+        el.style.animation = '';
+
+        if (this._consolidatedFeedbackTimer) {
+            clearTimeout(this._consolidatedFeedbackTimer);
+        }
+        this._consolidatedFeedbackTimer = setTimeout(() => {
+            el.classList.remove('visible');
+            // Hiding the label also ends the visible streak — next hit starts fresh.
+            this._consolidatedFeedbackState = null;
+        }, 1200);
     }
 
     _getTimingGrade(success, accuracy) {

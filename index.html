@@ -337,6 +337,13 @@
                             <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
                         </label>
                     </div>
+                    <div class="setting-row" id="timingFeedbackModeRow">
+                        <label for="timingFeedbackModeSelect">Feedback Mode</label>
+                        <select id="timingFeedbackModeSelect">
+                            <option value="individual">Individual</option>
+                            <option value="consolidated">Consolidated</option>
+                        </select>
+                    </div>
                     <div class="setting-row">
                         <label for="sparkleToggle">Sparkle Effects</label>
                         <label class="toggle-small">
@@ -435,6 +442,8 @@
                 <canvas id="glCanvas"></canvas>
                 <canvas id="notesCanvas"></canvas>
             </div>
+
+            <div id="timingFeedbackCenter" class="timing-feedback timing-feedback-center"></div>
             
             <!-- Piano Keys -->
             <div id="piano">
