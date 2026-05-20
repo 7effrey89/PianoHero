@@ -1210,7 +1210,9 @@ body.compact-game #gameCanvas {
     display: block;
     width: 100%;
     height: 100%;
-    z-index: 3;
+    /* Above the piano keys (which use z-index 1/2) so sparkles / fog / fire
+       can visibly overlay the keyboard itself. */
+    z-index: 20;
     pointer-events: none;
 }
 

@@ -1172,9 +1172,14 @@ class PianoHero {
             this.glCanvas.height = fullHeight;
         }
         if (this.pianoFx && this.fxCanvas) {
+            // Extend the FX overlay down to cover the keyboard so effects
+            // (sparkles, fog, fire) can render on top of the piano keys.
+            const pianoEl = document.querySelector('.piano-keys');
+            const pianoH = pianoEl ? pianoEl.offsetHeight : 120;
+            const fxHeight = fullHeight + pianoH;
             this.fxCanvas.style.width = fullWidth + 'px';
-            this.fxCanvas.style.height = fullHeight + 'px';
-            this.pianoFx.resize(fullWidth, fullHeight);
+            this.fxCanvas.style.height = fxHeight + 'px';
+            this.pianoFx.resize(fullWidth, fxHeight);
         }
         this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();

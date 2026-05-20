@@ -205,14 +205,19 @@ class PianoKeySparkFX {
     const FIRE_H = 12;
     const sxKey = KEY_W / 48;   // ~0.5 -> texture is 48px wide
     const syKey = FIRE_H / 96;  // ~0.125 -> texture is 96px tall
+    // Sit on top of the keyboard: push the base ~8px below the keypress
+    // anchor (same offset as fog) so the spikes rise from the keyboard top.
+    const baseY = y + 8;
 
     // Centre spike: full key width, 12px tall.
+    const NORMAL_BLEND = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.NORMAL) || 'normal';
     const centre = new PIXI.Sprite(this._textures.spike);
     centre.anchor.set(0.5, 1.0); // anchor at base so it grows upward
     centre.x = x;
-    centre.y = y;
+    centre.y = baseY;
     centre.scale.set(sxKey * power, syKey * power);
     centre.alpha = 1.0;
+    centre.blendMode = NORMAL_BLEND; // solid fire colour, no background bleed
     centre.life = 0.22 + Math.random() * 0.06;
     centre.maxLife = centre.life;
     centre.tick = (dt, sp) => {
@@ -252,8 +257,9 @@ class PianoKeySparkFX {
       const s = new PIXI.Sprite(this._textures.spike);
       s.anchor.set(0.5, 1.0);
       s.x = x + f.off * KEY_W;
-      s.y = y;
+      s.y = baseY;
       s.rotation = f.rot;
+      s.blendMode = NORMAL_BLEND;
       const k = f.k * (0.92 + Math.random() * 0.16);
       s.scale.set(sxKey * f.w * power, syKey * k * power);
       s.alpha = 0.9;
@@ -337,12 +343,15 @@ class PianoKeySparkFX {
   // ---------- Variant: sparkles (simple twinkle - reverted) ----------
 
   _spawnSparkles(x, y, power) {
+    // Sit right at the top border of the keyboard (same +8 offset used by
+    // fog and cartoon) so the twinkles dance along the keyboard edge.
+    const baseY = y + 8;
     const count = 5 + ((Math.random() * 3) | 0);
     for (let i = 0; i < count; i++) {
       const s = new PIXI.Sprite(this._textures.star);
       s.anchor.set(0.5);
       s.x = x;
-      s.y = y;
+      s.y = baseY;
       s.alpha = 1.0;
       const baseScale = 0.18 + Math.random() * 0.18;
       s.scale.set(baseScale * power, baseScale * power);
@@ -364,23 +373,6 @@ class PianoKeySparkFX {
       this.container.addChild(s);
       this.flames.push(s);
     }
-    // bright centre flash
-    const flash = new PIXI.Sprite(this._textures.baseGlow);
-    flash.anchor.set(0.5);
-    flash.x = x;
-    flash.y = y;
-    flash.alpha = 1.0;
-    flash.scale.set(0.9 * power, 0.5 * power);
-    flash.life = 0.12;
-    flash.maxLife = flash.life;
-    flash.tick = (dt, sp) => {
-      const t = Math.max(0, sp.life / sp.maxLife);
-      sp.alpha = t;
-      sp.scale.x *= 0.92;
-      sp.scale.y *= 0.92;
-    };
-    this.container.addChild(flash);
-    this.flames.push(flash);
   }
 
   // ---------- Procedural textures ----------
@@ -433,25 +425,37 @@ class PianoKeySparkFX {
   }
 
   _createSpikeTexture() {
-    // Stacked triangles: red base, orange middle, yellow tip.
+    // Sharp pointy flame: tall narrow triangle silhouette + inner highlight,
+    // with the bottom ~10% left empty so the base fades into the keyboard
+    // (no rectangular slab) and the top reads as a sharp tip (no dome).
     const w = 48;
     const h = 96;
     const g = new PIXI.Graphics();
-    g.moveTo(w / 2, 0);
-    g.lineTo(w, h);
-    g.lineTo(0, h);
+    const baseY = h * 0.92; // leave bottom 8% empty -> transparent fade
+    // Outer red flame body — sharp triangle, narrow base.
+    g.moveTo(w / 2, h * 0.02);
+    g.lineTo(w * 0.78, baseY);
+    g.lineTo(w * 0.22, baseY);
     g.closePath();
-    g.fill({ color: 0xff4a1a, alpha: 1.0 });
-    g.moveTo(w / 2, h * 0.18);
-    g.lineTo(w * 0.86, h);
-    g.lineTo(w * 0.14, h);
+    g.fill({ color: 0xff3a14, alpha: 1.0 });
+    // Orange mid spike — narrower, slightly shorter.
+    g.moveTo(w / 2, h * 0.10);
+    g.lineTo(w * 0.68, baseY);
+    g.lineTo(w * 0.32, baseY);
     g.closePath();
-    g.fill({ color: 0xff9530, alpha: 1.0 });
-    g.moveTo(w / 2, h * 0.45);
-    g.lineTo(w * 0.72, h);
-    g.lineTo(w * 0.28, h);
+    g.fill({ color: 0xff8a28, alpha: 1.0 });
+    // Yellow inner spike.
+    g.moveTo(w / 2, h * 0.22);
+    g.lineTo(w * 0.60, baseY);
+    g.lineTo(w * 0.40, baseY);
     g.closePath();
-    g.fill({ color: 0xffe080, alpha: 1.0 });
+    g.fill({ color: 0xffd060, alpha: 1.0 });
+    // White-hot core spike, very narrow, reaches near the tip.
+    g.moveTo(w / 2, h * 0.30);
+    g.lineTo(w * 0.55, baseY);
+    g.lineTo(w * 0.45, baseY);
+    g.closePath();
+    g.fill({ color: 0xffffff, alpha: 1.0 });
     return this.app.renderer.generateTexture(g);
   }
 

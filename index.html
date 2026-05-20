@@ -527,7 +527,6 @@
             <div id="gameCanvas">
                 <canvas id="glCanvas"></canvas>
                 <canvas id="notesCanvas"></canvas>
-                <canvas id="fxCanvas"></canvas>
             </div>
 
             <div id="timingFeedbackCenter" class="timing-feedback timing-feedback-center"></div>
@@ -538,6 +537,9 @@
                     <!-- Keys generated dynamically by app.js -->
                 </div>
             </div>
+
+            <!-- FX overlay spans the entire game area so effects can sit on top of the keyboard -->
+            <canvas id="fxCanvas"></canvas>
         </div>
     </div>
 
