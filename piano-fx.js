@@ -46,6 +46,8 @@ class UnifiedPianoFX {
             streamStrength: { value: 0.5, type: 'f32' },
             splashStrength: { value: 0.85, type: 'f32' },
             glowStrength: { value: 0.6, type: 'f32' },
+            splashColor: { value: [1.0, 1.0, 1.0], type: 'vec3<f32>' },
+            glowSpread: { value: 0.0, type: 'f32' },
         });
 
         this.uniforms = this.uniformGroup.uniforms;
@@ -285,13 +287,16 @@ uniform float glowlineVal;
 uniform float streamStrength;
 uniform float splashStrength;
 uniform float glowStrength;
+uniform vec3 splashColor;
+uniform float glowSpread;
 
 float splashField(vec2 uv, vec2 center, float age) {
     vec2 p = uv - center;
     float dist = length(p);
-    float radius = age * 0.14;
-    float ring = exp(-46.0 * abs(dist - radius));
-    float core = exp(-16.0 * dist);
+    // glowSpread = 0 → narrow (tight per-key), 1 → wide (legacy bloom).
+    float radius = age * mix(0.025, 0.14, glowSpread);
+    float ring   = exp(-mix(220.0, 46.0, glowSpread) * abs(dist - radius));
+    float core   = exp(-mix(180.0, 16.0, glowSpread) * dist);
     float ripple = sin(dist * 52.0 - age * 14.0) * 0.5 + 0.5;
     return (core + ring * ripple) * exp(-age * 2.0);
 }
@@ -335,7 +340,8 @@ float keyGlow(vec2 uv) {
         if (v <= 0.001) continue;
         float keyX = (float(i) + 0.5) / 88.0;
         float d = abs(uv.x - keyX);
-        glow += exp(-(d * d) / 0.0018) * v;
+        // Tight per-key bloom when glowSpread=0, legacy wide bloom when 1.
+        glow += exp(-(d * d) / mix(0.00006, 0.0018, glowSpread)) * v;
     }
     return glow * smoothstep(1.0, 0.7, uv.y);
 }
@@ -404,7 +410,7 @@ void main() {
 
     vec3 ribbonCol = hsv2rgb(vec3(ribbonHue, ribbonSat, ribbonVal)) * ribbonTerm;
     vec3 lineCol = glowLine(uv, time) * glowlineStrength;
-    vec3 ambient = vec3(0.2, 0.7, 1.0) * (splashTerm * splashStrength + glowTerm * glowStrength);
+    vec3 ambient = splashColor * (splashTerm * splashStrength + glowTerm * glowStrength);
     vec3 streamCol = noteStreamColor(uv) * streamStrength;
     vec3 outColor = ribbonCol + lineCol + ambient + streamCol;
     float energy = length(outColor);
@@ -666,7 +672,7 @@ class PianoFX {
         });
         // Keep on app.stage (NOT the additive trail feedback container,
         // which would smear sprites into ghost trails).
-        const spriteVariants = ['spark', 'fog', 'cartoon', 'ash', 'sparkles'];
+        const spriteVariants = ['spark', 'fog', 'cartoon', 'cartoonhalf', 'ash', 'sparkles'];
         if (this._sparkFx.sprite && this._sparkFx.sprite.parent !== this.app.stage) {
             if (this._sparkFx.sprite.parent) this._sparkFx.sprite.parent.removeChild(this._sparkFx.sprite);
             this.app.stage.addChild(this._sparkFx.sprite);
@@ -758,7 +764,7 @@ class PianoFX {
     setSplashMode(mode) {
         this.splashMode = mode || 'classic';
         // Sprite-based variants all use the PianoKeySparkFX system.
-        const spriteVariants = ['spark', 'fog', 'cartoon', 'ash', 'sparkles'];
+        const spriteVariants = ['spark', 'fog', 'cartoon', 'cartoonhalf', 'ash', 'sparkles'];
         const useBurst = this.splashMode === 'burst';
         const useSprites = spriteVariants.includes(this.splashMode);
         if (useBurst) this._ensureSplashEmitter();
@@ -773,8 +779,31 @@ class PianoFX {
         if (this.unified && this.unified.uniforms) {
             const base = (this._splashStrengthProfile != null) ? this._splashStrengthProfile : this.unified.uniforms.splashStrength;
             this.unified.uniforms.splashStrength = (useBurst || useSprites) ? 0.0 : base;
+            // Tint the per-key ambient glow to match the active splash effect.
+            const colorMap = {
+                classic:     [0.20, 0.70, 1.00], // legacy cyan
+                burst:       [1.00, 0.95, 0.85], // warm white
+                spark:       [1.00, 0.85, 0.55], // anime orange
+                fog:         [0.75, 0.85, 1.00], // cool mist
+                cartoon:     [1.00, 1.00, 1.00], // sun-burst white
+                cartoonhalf: [1.00, 1.00, 1.00],
+                ash:         [1.00, 0.70, 0.35], // ember
+                sparkles:    [1.00, 0.95, 1.00], // twinkle white
+            };
+            const c = colorMap[this.splashMode] || [1.0, 1.0, 1.0];
+            this.unified.uniforms.splashColor[0] = c[0];
+            this.unified.uniforms.splashColor[1] = c[1];
+            this.unified.uniforms.splashColor[2] = c[2];
         }
         if (!useBurst && this._splashEmitter) this._splashEmitter.clear();
+    }
+
+    setGlowSpread(mode) {
+        // 'narrow' (default) or 'wide'.
+        this.glowSpread = (mode === 'wide') ? 'wide' : 'narrow';
+        if (this.unified && this.unified.uniforms) {
+            this.unified.uniforms.glowSpread = (this.glowSpread === 'wide') ? 1.0 : 0.0;
+        }
     }
 
     setFxPalette(palette = {}) {

@@ -2072,6 +2072,13 @@ class PianoHero {
             });
         }
 
+        const fxGlowSpreadSelect = document.getElementById('fxGlowSpreadSelect');
+        if (fxGlowSpreadSelect) {
+            fxGlowSpreadSelect.addEventListener('change', () => {
+                this._applyFxGlowSpread(fxGlowSpreadSelect.value);
+            });
+        }
+
         const bindFxSlider = (id, valueId, suffix, setter) => {
             const slider = document.getElementById(id);
             const valueEl = document.getElementById(valueId);
@@ -2480,6 +2487,7 @@ class PianoHero {
             fxOnlyMode: document.getElementById('fxOnlyToggle').checked,
             fxVisualizerMode: document.getElementById('fxVisualizerSelect').value,
             fxSplashMode: document.getElementById('fxSplashSelect').value,
+            fxGlowSpread: (document.getElementById('fxGlowSpreadSelect') || {}).value || 'narrow',
             fxGlowlineHueStart: document.getElementById('fxGlowHueStart').value,
             fxGlowlineHueEnd: document.getElementById('fxGlowHueEnd').value,
             fxGlowlineSat: document.getElementById('fxGlowSat').value,
@@ -2659,6 +2667,17 @@ class PianoHero {
         this.fxSplashMode = mode;
         if (this.pianoFx && typeof this.pianoFx.setSplashMode === 'function') {
             this.pianoFx.setSplashMode(mode);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxGlowSpread(mode, { skipSave = false } = {}) {
+        const m = (mode === 'wide') ? 'wide' : 'narrow';
+        const select = document.getElementById('fxGlowSpreadSelect');
+        if (select) select.value = m;
+        this.fxGlowSpread = m;
+        if (this.pianoFx && typeof this.pianoFx.setGlowSpread === 'function') {
+            this.pianoFx.setGlowSpread(m);
         }
         if (!skipSave) this._saveSettings();
     }
@@ -3122,6 +3141,8 @@ class PianoHero {
         if (settings.fxSplashMode) {
             this._applyFxSplashMode(settings.fxSplashMode, { skipSave: true });
         }
+
+        this._applyFxGlowSpread(settings.fxGlowSpread || 'narrow', { skipSave: true });
 
         if (settings.fxGlowlineHueStart != null) {
             const s = document.getElementById('fxGlowHueStart');

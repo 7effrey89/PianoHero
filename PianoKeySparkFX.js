@@ -33,7 +33,7 @@ class PianoKeySparkFX {
   }
 
   setVariant(name) {
-    const valid = ['spark', 'fog', 'cartoon', 'ash', 'sparkles'];
+    const valid = ['spark', 'fog', 'cartoon', 'cartoonhalf', 'ash', 'sparkles'];
     this.variant = valid.includes(name) ? name : 'spark';
     const additive = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.ADD) || 'add';
     const normal = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.NORMAL) || 'normal';
@@ -66,6 +66,7 @@ class PianoKeySparkFX {
     switch (this.variant) {
       case 'fog':      this._spawnFog(x, y, power); break;
       case 'cartoon':  this._spawnCartoon(x, y, power); break;
+      case 'cartoonhalf': this._spawnCartoon(x, y, power, { clipTopHalf: true }); break;
       case 'ash':      this._spawnAsh(x, y, power); break;
       case 'sparkles': this._spawnSparkles(x, y, power); break;
       case 'spark':
@@ -198,20 +199,29 @@ class PianoKeySparkFX {
 
   // ---------- Variant: cartoon (12px tall base, key-wide) ----------
 
-  _spawnCartoon(x, y, power) {
+  _spawnCartoon(x, y, power, opts = {}) {
     // Clean lens-flare burst: a single bright hot core with light rays
     // fanning outward. No surrounding rings, no floating bokeh.
     const baseY = y + 14;
+    const centerY = baseY - 4;
     const ADD_BLEND = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.ADD) || 'add';
+
+    // In clip mode we crop the bottom of the burst geometrically rather
+    // than via a mask (PIXI mask sharing across siblings + ADD blend is
+    // unreliable). Radial sprites get bottom-anchored so they extend only
+    // upward from the centre line, and rays are restricted to the upper
+    // hemisphere.
+    const clip = !!opts.clipTopHalf;
+    const radialAnchorY = clip ? 1.0 : 0.5;
 
     // --- Soft outer glow -------------------------------------------------
     // Big diffuse bokeh underneath everything to bathe the area in light.
     // The smoothed bokeh texture has no banding so this reads as glow,
     // not as a ring.
     const glow = new PIXI.Sprite(this._textures.bokeh);
-    glow.anchor.set(0.5, 0.5);
+    glow.anchor.set(0.5, radialAnchorY);
     glow.x = x;
-    glow.y = baseY - 4;
+    glow.y = centerY;
     glow.scale.set((140 / 64) * power, (140 / 64) * power);
     glow.alpha = 0.30;
     glow.blendMode = ADD_BLEND;
@@ -228,9 +238,9 @@ class PianoKeySparkFX {
 
     // --- Hot core -------------------------------------------------------
     const core = new PIXI.Sprite(this._textures.bokeh);
-    core.anchor.set(0.5, 0.5);
+    core.anchor.set(0.5, radialAnchorY);
     core.x = x;
-    core.y = baseY - 4;
+    core.y = centerY;
     core.scale.set((28 / 64) * power, (28 / 64) * power);
     core.alpha = 0.65;
     core.blendMode = ADD_BLEND;
@@ -250,11 +260,19 @@ class PianoKeySparkFX {
     // Thin elongated bokeh dots radiating outward like sun beams.
     const rayCount = 10;
     for (let i = 0; i < rayCount; i++) {
-      const ang = (i / rayCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
+      // In clip mode use only the upper hemisphere (angles \u03c0..2\u03c0 \u2014 sin<0
+      // means the ray points up in screen coords). Anchor at the origin
+      // end so the entire ray extends outward from the centre, never below.
+      let ang;
+      if (clip) {
+        ang = Math.PI + (i / rayCount) * Math.PI + (Math.random() - 0.5) * 0.18;
+      } else {
+        ang = (i / rayCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
+      }
       const ray = new PIXI.Sprite(this._textures.bokeh);
-      ray.anchor.set(0.5, 0.5);
+      ray.anchor.set(clip ? 0.0 : 0.5, 0.5);
       ray.x = x;
-      ray.y = baseY - 4;
+      ray.y = centerY;
       ray.rotation = ang;
       const len = 32 + Math.random() * 20;
       ray.scale.set(len / 64, 6 / 64);
