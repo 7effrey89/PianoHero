@@ -790,7 +790,10 @@ class PianoFX {
                 ash:         [1.00, 0.70, 0.35], // ember
                 sparkles:    [1.00, 0.95, 1.00], // twinkle white
             };
-            const c = colorMap[this.splashMode] || [1.0, 1.0, 1.0];
+            // Legacy wide glow always uses the old cyan tint, regardless of variant.
+            const c = (this.glowSpread === 'wide')
+                ? [0.20, 0.70, 1.00]
+                : (colorMap[this.splashMode] || [1.0, 1.0, 1.0]);
             this.unified.uniforms.splashColor[0] = c[0];
             this.unified.uniforms.splashColor[1] = c[1];
             this.unified.uniforms.splashColor[2] = c[2];
@@ -804,6 +807,8 @@ class PianoFX {
         if (this.unified && this.unified.uniforms) {
             this.unified.uniforms.glowSpread = (this.glowSpread === 'wide') ? 1.0 : 0.0;
         }
+        // Re-apply splash mode so the per-key tint refreshes (wide forces cyan).
+        if (this.splashMode) this.setSplashMode(this.splashMode);
     }
 
     setFxPalette(palette = {}) {
