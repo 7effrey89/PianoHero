@@ -199,82 +199,78 @@ class PianoKeySparkFX {
   // ---------- Variant: cartoon (12px tall base, key-wide) ----------
 
   _spawnCartoon(x, y, power) {
-    // Spec: base of the fire is one key wide (~24px) and 12px tall.
-    // Texture is 48 x 96; centre spike anchored at its base.
-    const KEY_W = 24;
-    const FIRE_H = 12;
-    const sxKey = KEY_W / 48;   // ~0.5 -> texture is 48px wide
-    const syKey = FIRE_H / 96;  // ~0.125 -> texture is 96px tall
-    // Sit on top of the keyboard: push the base ~8px below the keypress
-    // anchor (same offset as fog) so the spikes rise from the keyboard top.
-    const baseY = y + 8;
+    // Clean lens-flare burst: a single bright hot core with light rays
+    // fanning outward. No surrounding rings, no floating bokeh.
+    const baseY = y + 14;
+    const ADD_BLEND = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.ADD) || 'add';
 
-    // Centre spike: full key width, 12px tall.
-    const NORMAL_BLEND = (PIXI.BLEND_MODES && PIXI.BLEND_MODES.NORMAL) || 'normal';
-    const centre = new PIXI.Sprite(this._textures.spike);
-    centre.anchor.set(0.5, 1.0); // anchor at base so it grows upward
-    centre.x = x;
-    centre.y = baseY;
-    centre.scale.set(sxKey * power, syKey * power);
-    centre.alpha = 1.0;
-    centre.blendMode = NORMAL_BLEND; // solid fire colour, no background bleed
-    centre.life = 0.22 + Math.random() * 0.06;
-    centre.maxLife = centre.life;
-    centre.tick = (dt, sp) => {
+    // --- Soft outer glow -------------------------------------------------
+    // Big diffuse bokeh underneath everything to bathe the area in light.
+    // The smoothed bokeh texture has no banding so this reads as glow,
+    // not as a ring.
+    const glow = new PIXI.Sprite(this._textures.bokeh);
+    glow.anchor.set(0.5, 0.5);
+    glow.x = x;
+    glow.y = baseY - 4;
+    glow.scale.set((140 / 64) * power, (140 / 64) * power);
+    glow.alpha = 0.30;
+    glow.blendMode = ADD_BLEND;
+    glow.life = 0.70;
+    glow.maxLife = glow.life;
+    glow.tick = (dt, sp) => {
       const t = Math.max(0, sp.life / sp.maxLife);
-      sp.alpha = t;
-      const age = sp.maxLife - sp.life;
-      // quick puff up, then settle
-      const grow = age < 0.06 ? (1 + dt * 3.5) : (1 - dt * 1.6);
-      sp.scale.x *= grow;
-      sp.scale.y *= grow;
+      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.30;
+      sp.scale.x *= (1 - dt * 0.06);
+      sp.scale.y *= (1 - dt * 0.06);
     };
-    this.container.addChild(centre);
-    this.flames.push(centre);
+    this.container.addChild(glow);
+    this.flames.push(glow);
 
-    // Flame silhouette picks one of two forms at random:
-    //   - triangle : tightly packed spikes forming one cohesive flame
-    //   - crown    : spikes splayed outward like a crown / sun rays
-    const form = Math.random() < 0.5 ? 'crown' : 'triangle';
-    const triangleFlanks = [
-      { off: -0.42, rot: -0.42, k: 0.50, w: 0.34 },
-      { off: -0.26, rot: -0.22, k: 0.70, w: 0.40 },
-      { off:  0.26, rot:  0.22, k: 0.72, w: 0.40 },
-      { off:  0.42, rot:  0.42, k: 0.52, w: 0.34 },
-      { off: -0.12, rot: -0.08, k: 0.85, w: 0.40 },
-      { off:  0.12, rot:  0.08, k: 0.85, w: 0.40 }
-    ];
-    const crownFlanks = [
-      { off: -0.48, rot: -1.20, k: 0.55, w: 0.30 },
-      { off: -0.32, rot: -0.75, k: 0.75, w: 0.32 },
-      { off: -0.16, rot: -0.35, k: 0.92, w: 0.34 },
-      { off:  0.16, rot:  0.35, k: 0.92, w: 0.34 },
-      { off:  0.32, rot:  0.75, k: 0.75, w: 0.32 },
-      { off:  0.48, rot:  1.20, k: 0.55, w: 0.30 }
-    ];
-    const flanks = form === 'crown' ? crownFlanks : triangleFlanks;
-    for (const f of flanks) {
-      const s = new PIXI.Sprite(this._textures.spike);
-      s.anchor.set(0.5, 1.0);
-      s.x = x + f.off * KEY_W;
-      s.y = baseY;
-      s.rotation = f.rot;
-      s.blendMode = NORMAL_BLEND;
-      const k = f.k * (0.92 + Math.random() * 0.16);
-      s.scale.set(sxKey * f.w * power, syKey * k * power);
-      s.alpha = 0.9;
-      s.life = 0.18 + Math.random() * 0.08;
-      s.maxLife = s.life;
-      s.tick = (dt, sp) => {
+    // --- Hot core -------------------------------------------------------
+    const core = new PIXI.Sprite(this._textures.bokeh);
+    core.anchor.set(0.5, 0.5);
+    core.x = x;
+    core.y = baseY - 4;
+    core.scale.set((28 / 64) * power, (28 / 64) * power);
+    core.alpha = 0.65;
+    core.blendMode = ADD_BLEND;
+    core.life = 0.70;
+    core.maxLife = core.life;
+    core.tick = (dt, sp) => {
+      const t = Math.max(0, sp.life / sp.maxLife);
+      // Smooth ease-out: starts at 1, eases gently down to 0.
+      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.65;
+      sp.scale.x *= (1 - dt * 0.10);
+      sp.scale.y *= (1 - dt * 0.10);
+    };
+    this.container.addChild(core);
+    this.flames.push(core);
+
+    // --- Radial light rays ----------------------------------------------
+    // Thin elongated bokeh dots radiating outward like sun beams.
+    const rayCount = 10;
+    for (let i = 0; i < rayCount; i++) {
+      const ang = (i / rayCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
+      const ray = new PIXI.Sprite(this._textures.bokeh);
+      ray.anchor.set(0.5, 0.5);
+      ray.x = x;
+      ray.y = baseY - 4;
+      ray.rotation = ang;
+      const len = 32 + Math.random() * 20;
+      ray.scale.set(len / 64, 6 / 64);
+      ray.alpha = 0.35 + Math.random() * 0.15;
+      ray.blendMode = ADD_BLEND;
+      ray.life = 0.70;
+      ray.maxLife = ray.life;
+      ray.tick = (dt, sp) => {
         const t = Math.max(0, sp.life / sp.maxLife);
-        sp.alpha = t;
-        const age = sp.maxLife - sp.life;
-        const grow = age < 0.05 ? (1 + dt * 3.5) : (1 - dt * 2.0);
-        sp.scale.x *= grow;
-        sp.scale.y *= grow;
+        // Same smooth ease-out as the core.
+        sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.45;
+        sp.scale.x *= (1 + dt * 0.12);
+        sp.scale.y *= (1 - dt * 0.08);
       };
-      this.container.addChild(s);
-      this.flames.push(s);
+      this.container.addChild(ray);
+      this.flames.push(ray);
     }
   }
 
@@ -386,6 +382,7 @@ class PianoKeySparkFX {
     this._textures.ashSliver = this._createAshSliverTexture();
     this._textures.ashSpeck = this._createAshSpeckTexture();
     this._textures.star = this._createStarTexture();
+    this._textures.bokeh = this._createBokehTexture();
   }
 
   _createFlameTexture() {
@@ -407,6 +404,23 @@ class PianoKeySparkFX {
     return this.app.renderer.generateTexture(g);
   }
 
+  _createBokehTexture() {
+    // Smooth radial gradient dot — many small alpha steps so there's no
+    // visible ring banding when used at large sizes.
+    const size = 64;
+    const g = new PIXI.Graphics();
+    const c = size / 2;
+    const steps = 24;
+    for (let i = steps; i >= 1; i--) {
+      const t = i / steps; // 1..0
+      const r = (size * 0.5) * t;
+      // Quadratic falloff for a soft, smooth gradient (no rings).
+      const a = Math.pow(1 - t, 2.2);
+      g.circle(c, c, r).fill({ color: 0xffffff, alpha: a });
+    }
+    return this.app.renderer.generateTexture(g);
+  }
+
   _createFogTexture() {
     // Soft cloud silhouette: halo + several lobes + bright core. White.
     const size = 192;
@@ -425,37 +439,22 @@ class PianoKeySparkFX {
   }
 
   _createSpikeTexture() {
-    // Sharp pointy flame: tall narrow triangle silhouette + inner highlight,
-    // with the bottom ~10% left empty so the base fades into the keyboard
-    // (no rectangular slab) and the top reads as a sharp tip (no dome).
+    // Wispy translucent flame tongue: thin teardrop with a bright core and
+    // soft fading edges. Designed for ADDITIVE blending so multiple tongues
+    // bloom together into a glowing fire instead of looking like cut-out
+    // paper spikes.
     const w = 48;
     const h = 96;
     const g = new PIXI.Graphics();
-    const baseY = h * 0.92; // leave bottom 8% empty -> transparent fade
-    // Outer red flame body — sharp triangle, narrow base.
-    g.moveTo(w / 2, h * 0.02);
-    g.lineTo(w * 0.78, baseY);
-    g.lineTo(w * 0.22, baseY);
-    g.closePath();
-    g.fill({ color: 0xff3a14, alpha: 1.0 });
-    // Orange mid spike — narrower, slightly shorter.
-    g.moveTo(w / 2, h * 0.10);
-    g.lineTo(w * 0.68, baseY);
-    g.lineTo(w * 0.32, baseY);
-    g.closePath();
-    g.fill({ color: 0xff8a28, alpha: 1.0 });
-    // Yellow inner spike.
-    g.moveTo(w / 2, h * 0.22);
-    g.lineTo(w * 0.60, baseY);
-    g.lineTo(w * 0.40, baseY);
-    g.closePath();
-    g.fill({ color: 0xffd060, alpha: 1.0 });
-    // White-hot core spike, very narrow, reaches near the tip.
-    g.moveTo(w / 2, h * 0.30);
-    g.lineTo(w * 0.55, baseY);
-    g.lineTo(w * 0.45, baseY);
-    g.closePath();
-    g.fill({ color: 0xffffff, alpha: 1.0 });
+    const cx = w / 2;
+    // Outer soft halo (very translucent, wide for bloom).
+    g.ellipse(cx, h * 0.55, w * 0.22, h * 0.42).fill({ color: 0xff5520, alpha: 0.28 });
+    // Mid orange body — thinner, taller.
+    g.ellipse(cx, h * 0.50, w * 0.14, h * 0.42).fill({ color: 0xff8030, alpha: 0.55 });
+    // Yellow inner — narrower, reaches higher.
+    g.ellipse(cx, h * 0.45, w * 0.09, h * 0.40).fill({ color: 0xffd060, alpha: 0.75 });
+    // White-hot core — thin streak, fully opaque, runs most of the height.
+    g.ellipse(cx, h * 0.42, w * 0.05, h * 0.36).fill({ color: 0xffffff, alpha: 1.0 });
     return this.app.renderer.generateTexture(g);
   }
 

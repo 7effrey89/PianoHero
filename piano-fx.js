@@ -553,18 +553,28 @@ class PianoFX {
     _applyAnchors() {
         if (!this.unified || !this.unified.uniforms || !this.app || !this.app.renderer) return;
         const h = this.app.renderer.height || 1;
+        // Bottom-relative anchor offset: how far above the canvas bottom the
+        // keyboard top sits. When the fxCanvas is extended over the piano
+        // keys, this is the keyboard height so the glow line / ribbon hug
+        // the top of the keyboard instead of the bottom of the window.
+        const keyboardOffsetPx = this._keyboardOffsetPx || 0;
         const offsetPx = (this._ribbonOffsetPx != null) ? this._ribbonOffsetPx : 8;
         const thicknessPx = (this._ribbonThicknessPx != null) ? this._ribbonThicknessPx : 26;
         const lineOffsetPx = (this._glowlineOffsetPx != null) ? this._glowlineOffsetPx : 4;
         const lineThicknessPx = (this._glowlineThicknessPx != null) ? this._glowlineThicknessPx : 8;
-        const ribbonY = Math.max(0.0, Math.min(1.0, 1.0 - (offsetPx / h)));
+        const ribbonY = Math.max(0.0, Math.min(1.0, 1.0 - ((offsetPx + keyboardOffsetPx) / h)));
         const ribbonThickness = Math.max(0.01, Math.min(0.2, thicknessPx / h));
-        const glowlineY = Math.max(0.0, Math.min(1.0, 1.0 - (lineOffsetPx / h)));
+        const glowlineY = Math.max(0.0, Math.min(1.0, 1.0 - ((lineOffsetPx + keyboardOffsetPx) / h)));
         const glowlineThickness = Math.max(0.003, Math.min(0.08, lineThicknessPx / h));
         this.unified.uniforms.ribbonY = ribbonY;
         this.unified.uniforms.ribbonThickness = ribbonThickness;
         this.unified.uniforms.glowlineY = glowlineY;
         this.unified.uniforms.glowlineThickness = glowlineThickness;
+    }
+
+    setKeyboardOffset(px) {
+        this._keyboardOffsetPx = Math.max(0, px | 0);
+        this._applyAnchors();
     }
 
     _createSplashTexture() {

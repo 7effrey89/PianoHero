@@ -1180,6 +1180,12 @@ class PianoHero {
             this.fxCanvas.style.width = fullWidth + 'px';
             this.fxCanvas.style.height = fxHeight + 'px';
             this.pianoFx.resize(fullWidth, fxHeight);
+            // Tell pianoFx how far above the canvas bottom the keyboard top
+            // sits, so the glow ribbon / hit line stay anchored to the
+            // keyboard edge instead of dropping to the window bottom.
+            if (typeof this.pianoFx.setKeyboardOffset === 'function') {
+                this.pianoFx.setKeyboardOffset(pianoH);
+            }
         }
         this.hitZoneY = this.canvas.height;
         this.keyPositions = this.calculateKeyPositions();
@@ -1512,17 +1518,25 @@ class PianoHero {
     }
 
     _startUploadPoll() {
-        if (this._uploadPollId) return;
-        this._uploadPollId = setInterval(async () => {
-            try {
-                const resp = await fetch('/api/onlineseq/last_upload');
-                if (!resp.ok) return;
-                const data = await resp.json();
-                if (data && data.success && data.notes) {
-                    await this._applyUploadedSong(data);
-                }
-            } catch (_) { /* ignore */ }
-        }, 2000);
+        if (this._uploadStream) return;
+        // Subscribe to the server's Server-Sent Events stream. The server
+        // pushes a message whenever the bookmarklet uploads a new MIDI —
+        // no polling required.
+        try {
+            const es = new EventSource('/api/onlineseq/upload_stream');
+            this._uploadStream = es;
+            es.onmessage = async (ev) => {
+                try {
+                    const data = JSON.parse(ev.data);
+                    if (data && data.success && data.notes) {
+                        await this._applyUploadedSong(data);
+                    }
+                } catch (_) { /* ignore malformed payload */ }
+            };
+            es.onerror = () => {
+                // Browser will auto-reconnect; nothing to do here.
+            };
+        } catch (_) { /* EventSource unavailable */ }
     }
 
     async _applyUploadedSong(data) {
