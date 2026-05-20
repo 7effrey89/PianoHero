@@ -362,44 +362,59 @@
                             <option value="ribbon">Ribbon Only</option>
                         </select>
                     </div>
-                    <div class="setting-row" title="Glowline gradient start hue">
-                        <label for="fxGlowHueStart">Glowline Hue Start</label>
-                        <input type="range" id="fxGlowHueStart" min="0" max="360" value="210">
-                        <span id="fxGlowHueStartVal">210°</span>
+                    <div class="setting-row" title="Splash effect style">
+                        <label for="fxSplashSelect">Splash Effect</label>
+                        <select id="fxSplashSelect">
+                            <option value="classic">Classic (shader)</option>
+                            <option value="burst">Burst (premium)</option>
+                            <option value="spark">Spark (anime)</option>
+                            <option value="fog">Fog (cinematic mist)</option>
+                            <option value="cartoon">Cartoon fire (spikes)</option>
+                            <option value="ash">Ash (wind-blown embers)</option>
+                            <option value="sparkles">Sparkles (twinkles)</option>
+                        </select>
                     </div>
-                    <div class="setting-row" title="Glowline gradient end hue">
-                        <label for="fxGlowHueEnd">Glowline Hue End</label>
-                        <input type="range" id="fxGlowHueEnd" min="0" max="360" value="320">
-                        <span id="fxGlowHueEndVal">320°</span>
-                    </div>
-                    <div class="setting-row" title="Glowline saturation">
-                        <label for="fxGlowSat">Glowline Saturation</label>
-                        <input type="range" id="fxGlowSat" min="0" max="100" value="60">
-                        <span id="fxGlowSatVal">60%</span>
-                    </div>
-                    <div class="setting-row" title="Glowline brightness">
-                        <label for="fxGlowVal">Glowline Brightness</label>
-                        <input type="range" id="fxGlowVal" min="20" max="100" value="100">
-                        <span id="fxGlowValVal">100%</span>
-                    </div>
-                    <div class="setting-row" title="Ribbon smoke hue">
-                        <label for="fxSmokeHue">Ribbon Hue</label>
-                        <input type="range" id="fxSmokeHue" min="0" max="360" value="30">
-                        <span id="fxSmokeHueVal">30°</span>
-                    </div>
-                    <div class="setting-row" title="Ribbon smoke saturation">
-                        <label for="fxSmokeSat">Ribbon Saturation</label>
-                        <input type="range" id="fxSmokeSat" min="0" max="100" value="55">
-                        <span id="fxSmokeSatVal">55%</span>
-                    </div>
-                    <div class="setting-row" title="Ribbon smoke brightness">
-                        <label for="fxSmokeVal">Ribbon Brightness</label>
-                        <input type="range" id="fxSmokeVal" min="20" max="100" value="100">
-                        <span id="fxSmokeValVal">100%</span>
-                    </div>
-                    <div class="setting-row">
-                        <label>FX Colors</label>
-                        <button id="fxPaletteResetBtn" class="setting-btn-small">Reset to Default</button>
+                    <div class="setting-group" id="fxPaletteGroup">
+                        <div class="setting-group-title">Keyboard Ambiligt</div>
+                        <div class="setting-row" title="Glowline gradient start hue">
+                            <label for="fxGlowHueStart">Glowline Hue Start</label>
+                            <input type="range" id="fxGlowHueStart" min="0" max="360" value="210">
+                            <span id="fxGlowHueStartVal">210°</span>
+                        </div>
+                        <div class="setting-row" title="Glowline gradient end hue">
+                            <label for="fxGlowHueEnd">Glowline Hue End</label>
+                            <input type="range" id="fxGlowHueEnd" min="0" max="360" value="320">
+                            <span id="fxGlowHueEndVal">320°</span>
+                        </div>
+                        <div class="setting-row" title="Glowline saturation">
+                            <label for="fxGlowSat">Glowline Saturation</label>
+                            <input type="range" id="fxGlowSat" min="0" max="100" value="60">
+                            <span id="fxGlowSatVal">60%</span>
+                        </div>
+                        <div class="setting-row" title="Glowline brightness">
+                            <label for="fxGlowVal">Glowline Brightness</label>
+                            <input type="range" id="fxGlowVal" min="20" max="100" value="100">
+                            <span id="fxGlowValVal">100%</span>
+                        </div>
+                        <div class="setting-row" title="Ribbon smoke hue">
+                            <label for="fxSmokeHue">Ribbon Hue</label>
+                            <input type="range" id="fxSmokeHue" min="0" max="360" value="30">
+                            <span id="fxSmokeHueVal">30°</span>
+                        </div>
+                        <div class="setting-row" title="Ribbon smoke saturation">
+                            <label for="fxSmokeSat">Ribbon Saturation</label>
+                            <input type="range" id="fxSmokeSat" min="0" max="100" value="55">
+                            <span id="fxSmokeSatVal">55%</span>
+                        </div>
+                        <div class="setting-row" title="Ribbon smoke brightness">
+                            <label for="fxSmokeVal">Ribbon Brightness</label>
+                            <input type="range" id="fxSmokeVal" min="20" max="100" value="100">
+                            <span id="fxSmokeValVal">100%</span>
+                        </div>
+                        <div class="setting-row">
+                            <label>FX Colors</label>
+                            <button id="fxPaletteResetBtn" class="setting-btn-small">Reset to Default</button>
+                        </div>
                     </div>
                     <div class="setting-row">
                         <label for="timingFeedbackToggle">Hit Feedback</label>
@@ -529,9 +544,10 @@
     <script src="https://pixijs.download/v8.18.1/pixi.min.js"></script>
     <script src="https://unpkg.com/@pixi/mesh@8.18.1/dist/mesh.min.js"></script>
     <script src="https://unpkg.com/@pixi/filter-bloom@8.18.1/dist/filter-bloom.min.js"></script>
+    <script src="PianoKeySparkFX.js?v=17"></script>
     <script src="pixi-renderer.js?v=6"></script>
-    <script src="piano-fx.js?v=4"></script>
-    <script src="app.js?v=54"></script>
+    <script src="piano-fx.js?v=7"></script>
+    <script src="app.js?v=56"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

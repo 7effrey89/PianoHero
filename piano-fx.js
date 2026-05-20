@@ -122,6 +122,130 @@ class UnifiedPianoFX {
     }
 }
 
+class SplashEmitter {
+    constructor(container, texture, spikeTexture) {
+            this.container = container;
+            this.texture = texture;
+        this.spikeTexture = spikeTexture || texture;
+            this.particles = [];
+        }
+
+        emit(x, y, velocity = 1) {
+        const palette = [0xfff9e6, 0xfff2b8, 0xffe59a, 0xffd27a, 0xffffff];
+
+        for (let i = 0; i < 2; i++) {
+            const core = new PIXI.Sprite(this.texture);
+            core.anchor.set(0.5);
+            core.x = x;
+            core.y = y;
+            core.alpha = 0.9;
+            core.scale.set(1.05 + Math.random() * 0.5);
+            core.blendMode = 'add';
+            core.tint = 0xfffff0;
+            core.vx = 0;
+            core.vy = 0;
+            core.life = 0.7;
+            core.spin = 0;
+            core.shrinkX = 0.985;
+            core.shrinkY = 0.985;
+            this.container.addChild(core);
+            this.particles.push(core);
+        }
+
+        const spikeCount = 18;
+        const baseAngle = -Math.PI / 2;
+        const spread = Math.PI * 1.05;
+        for (let i = 0; i < spikeCount; i++) {
+            const t = (i + 0.5) / spikeCount;
+            const angle = baseAngle - spread / 2 + spread * t + (Math.random() - 0.5) * 0.08;
+            const speed = (0.4 + Math.random() * 0.8) * velocity;
+            const len = 0.7 + Math.random() * 1.1;
+
+            const p = new PIXI.Sprite(this.spikeTexture);
+            p.anchor.set(0.5, 0.92);
+            p.x = x;
+            p.y = y;
+            p.alpha = 0.85;
+            p.scale.set(0.16 + Math.random() * 0.12, 0.45 + len);
+            p.blendMode = 'add';
+            p.tint = palette[Math.floor(Math.random() * palette.length)];
+            p.rotation = angle + Math.PI / 2;
+            p.spin = (Math.random() - 0.5) * 0.03;
+            p.vx = Math.cos(angle) * speed;
+            p.vy = Math.sin(angle) * speed;
+            p.life = 1.0;
+            p.shrinkX = 0.99;
+            p.shrinkY = 0.975;
+
+            this.container.addChild(p);
+            this.particles.push(p);
+        }
+
+        const sparkCount = 8;
+        for (let i = 0; i < sparkCount; i++) {
+            const angle = baseAngle - 0.6 + Math.random() * 1.2;
+            const speed = (1.2 + Math.random() * 1.6) * velocity;
+            const s = new PIXI.Sprite(this.texture);
+            s.anchor.set(0.5);
+            s.x = x;
+            s.y = y;
+            s.alpha = 0.8;
+            s.scale.set(0.18 + Math.random() * 0.18);
+            s.blendMode = 'add';
+            s.tint = 0xfff7d0;
+            s.rotation = Math.random() * Math.PI * 2;
+            s.spin = (Math.random() - 0.5) * 0.06;
+            s.vx = Math.cos(angle) * speed;
+            s.vy = Math.sin(angle) * speed;
+            s.life = 0.9;
+            s.shrinkX = 0.985;
+            s.shrinkY = 0.985;
+
+            this.container.addChild(s);
+            this.particles.push(s);
+        }
+        }
+
+        update(delta = 1) {
+            const fade = Math.pow(0.93, delta);
+            const shrink = Math.pow(0.985, delta);
+            const lifeStep = 0.03 * delta;
+
+            this.particles = this.particles.filter(p => {
+                p.x += p.vx * delta;
+                p.y += p.vy * delta;
+                p.vx *= 0.98;
+                p.vy *= 0.98;
+                p.rotation += p.spin * delta;
+                p.alpha *= fade;
+                p.life -= lifeStep;
+                const sx = p.shrinkX || shrink;
+                const sy = p.shrinkY || shrink;
+                p.scale.x *= sx;
+                p.scale.y *= sy;
+
+                if (p.life <= 0) {
+                    if (p.parent) p.parent.removeChild(p);
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        clear() {
+            this.particles.forEach(p => {
+                if (p.parent) p.parent.removeChild(p);
+            });
+            this.particles = [];
+        }
+
+        destroy() {
+            this.clear();
+            this.container = null;
+            this.texture = null;
+        }
+    }
+
 UnifiedPianoFX.vertex = `
 precision mediump float;
 
@@ -303,7 +427,14 @@ class PianoFX {
         this._trailFeedback = null;
         this._trailOutput = null;
         this._bloomFilter = null;
+        this._splashContainer = null;
+        this._splashEmitter = null;
+        this._splashTexture = null;
+        this._splashSpikeTexture = null;
+        this._sparkFx = null;
+        this._splashStrengthProfile = null;
         this.fxMode = 'cinematic';
+        this.splashMode = 'classic';
         this.ready = this._init();
     }
 
@@ -340,6 +471,7 @@ class PianoFX {
         this._initTrailPass();
 
         this.setFxMode(this.fxMode);
+        this.setSplashMode(this.splashMode);
         this._applyAnchors();
 
         this.app.ticker.stop();
@@ -366,6 +498,8 @@ class PianoFX {
 
         this._trailContainer = new PIXI.Container();
         this._trailContainer.addChild(this._trailFeedback);
+        this._splashContainer = new PIXI.Container();
+        this._trailContainer.addChild(this._splashContainer);
         this._trailContainer.addChild(this.unified.display);
 
         this._trailOutput = new PIXI.Sprite(this._trailRT[0]);
@@ -400,8 +534,19 @@ class PianoFX {
             this._trailContainer.destroy({ children: false });
             this._trailContainer = null;
         }
+        if (this._splashContainer) {
+            this._splashContainer.destroy({ children: true });
+            this._splashContainer = null;
+        }
+        if (this._splashEmitter) {
+            this._splashEmitter.destroy();
+            this._splashEmitter = null;
+        }
+        this._splashSpikeTexture = null;
+        this._sparkFx = null;
         this._initTrailPass();
         this.setFxMode(this.fxMode);
+        this.setSplashMode(this.splashMode);
         this._applyAnchors();
     }
 
@@ -420,6 +565,106 @@ class PianoFX {
         this.unified.uniforms.ribbonThickness = ribbonThickness;
         this.unified.uniforms.glowlineY = glowlineY;
         this.unified.uniforms.glowlineThickness = glowlineThickness;
+    }
+
+    _createSplashTexture() {
+        const size = 64;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const cx = size / 2;
+        const cy = size / 2;
+
+        ctx.clearRect(0, 0, size, size);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.shadowColor = 'rgba(255, 210, 140, 0.8)';
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        const w = 22;
+        const h = 22;
+        const r = 6;
+        ctx.beginPath();
+        ctx.moveTo(-w / 2 + r, -h / 2);
+        ctx.lineTo(w / 2 - r, -h / 2);
+        ctx.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+        ctx.lineTo(w / 2, h / 2 - r);
+        ctx.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+        ctx.lineTo(-w / 2 + r, h / 2);
+        ctx.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+        ctx.lineTo(-w / 2, -h / 2 + r);
+        ctx.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, 26);
+        grad.addColorStop(0, 'rgba(255, 245, 220, 0.95)');
+        grad.addColorStop(0.45, 'rgba(255, 210, 140, 0.35)');
+        grad.addColorStop(1, 'rgba(255, 210, 140, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+        ctx.fill();
+
+        return PIXI.Texture.from(canvas);
+    }
+
+    _createSplashSpikeTexture() {
+        const w = 24;
+        const h = 80;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+
+        const grad = ctx.createLinearGradient(0, h, 0, 0);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        grad.addColorStop(0.2, 'rgba(255, 245, 220, 0.35)');
+        grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.95)');
+        grad.addColorStop(0.8, 'rgba(255, 220, 160, 0.35)');
+        grad.addColorStop(1, 'rgba(255, 200, 140, 0)');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(w * 0.4, h * 0.05, w * 0.2, h * 0.9, w * 0.1);
+        ctx.fill();
+
+        return PIXI.Texture.from(canvas);
+    }
+
+    _ensureSplashEmitter() {
+        if (!this._splashContainer) return;
+        if (!this._splashTexture) this._splashTexture = this._createSplashTexture();
+        if (!this._splashSpikeTexture) this._splashSpikeTexture = this._createSplashSpikeTexture();
+        if (!this._splashEmitter) {
+            this._splashEmitter = new SplashEmitter(this._splashContainer, this._splashTexture, this._splashSpikeTexture);
+        }
+    }
+
+    _ensureSparkFx() {
+        if (this._sparkFx || typeof window === 'undefined') return;
+        if (!window.PianoKeySparkFX) return;
+        if (!this.app || !this.app.renderer) return;
+        this._sparkFx = new window.PianoKeySparkFX(this.app, {
+            alpha: 0.9,
+            bloomStrength: 2.4,
+            bloomBlur: 10,
+            bloomQuality: 4,
+        });
+        // Keep on app.stage (NOT the additive trail feedback container,
+        // which would smear sprites into ghost trails).
+        const spriteVariants = ['spark', 'fog', 'cartoon', 'ash', 'sparkles'];
+        if (this._sparkFx.sprite && this._sparkFx.sprite.parent !== this.app.stage) {
+            if (this._sparkFx.sprite.parent) this._sparkFx.sprite.parent.removeChild(this._sparkFx.sprite);
+            this.app.stage.addChild(this._sparkFx.sprite);
+        }
+        if (this._sparkFx.sprite) this._sparkFx.sprite.visible = spriteVariants.includes(this.splashMode);
+        if (typeof this._sparkFx.setVariant === 'function') {
+            this._sparkFx.setVariant(this.splashMode);
+        }
     }
 
     setFxMode(mode) {
@@ -478,7 +723,8 @@ class PianoFX {
 
         if (this.unified && this.unified.uniforms) {
             this.unified.uniforms.streamStrength = profile.streamStrength;
-            this.unified.uniforms.splashStrength = profile.splashStrength;
+            this._splashStrengthProfile = profile.splashStrength;
+            this.unified.uniforms.splashStrength = (this.splashMode === 'burst') ? 0.0 : profile.splashStrength;
             this.unified.uniforms.glowStrength = profile.glowStrength;
             this.unified.uniforms.glowlineStrength = profile.glowlineStrength;
         }
@@ -499,6 +745,28 @@ class PianoFX {
         this._applyAnchors();
     }
 
+    setSplashMode(mode) {
+        this.splashMode = mode || 'classic';
+        // Sprite-based variants all use the PianoKeySparkFX system.
+        const spriteVariants = ['spark', 'fog', 'cartoon', 'ash', 'sparkles'];
+        const useBurst = this.splashMode === 'burst';
+        const useSprites = spriteVariants.includes(this.splashMode);
+        if (useBurst) this._ensureSplashEmitter();
+        if (useSprites) {
+            this._ensureSparkFx();
+            if (this._sparkFx && typeof this._sparkFx.setVariant === 'function') {
+                this._sparkFx.setVariant(this.splashMode);
+            }
+        }
+        if (this._splashContainer) this._splashContainer.visible = useBurst;
+        if (this._sparkFx && this._sparkFx.sprite) this._sparkFx.sprite.visible = useSprites;
+        if (this.unified && this.unified.uniforms) {
+            const base = (this._splashStrengthProfile != null) ? this._splashStrengthProfile : this.unified.uniforms.splashStrength;
+            this.unified.uniforms.splashStrength = (useBurst || useSprites) ? 0.0 : base;
+        }
+        if (!useBurst && this._splashEmitter) this._splashEmitter.clear();
+    }
+
     setFxPalette(palette = {}) {
         if (!this.unified || !this.unified.uniforms) return;
         const u = this.unified.uniforms;
@@ -515,6 +783,13 @@ class PianoFX {
         if (!this.isReady) return;
         this._lastImpact = this._fxTime;
         this.unified.triggerKey(keyIndex, x, y, velocity);
+        if (this.splashMode === 'burst') {
+            this._ensureSplashEmitter();
+            if (this._splashEmitter) this._splashEmitter.emit(x, y, velocity);
+        } else if (this.splashMode !== 'classic') {
+            this._ensureSparkFx();
+            if (this._sparkFx) this._sparkFx.triggerKey(keyIndex, x, y, velocity);
+        }
     }
 
     update(delta) {
@@ -533,6 +808,13 @@ class PianoFX {
         const idleRibbon = fxOnly ? Math.max(ribbonIdle, 0.05) : ribbonIdle;
         this.unified.uniforms.ribbonStrength = active ? ribbonActive : idleRibbon;
         this.unified.update(delta);
+
+        if (this._splashEmitter) {
+            this._splashEmitter.update(delta);
+        }
+        if (this._sparkFx) {
+            this._sparkFx.update(delta);
+        }
 
         if (this._trailRT && this._trailOutput && this._trailFeedback && this._trailContainer) {
             const readIndex = this._trailIndex % 2;

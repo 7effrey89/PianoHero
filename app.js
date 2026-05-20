@@ -184,6 +184,7 @@ class PianoHero {
         this.compactGameArea = false;
         this.fxOnlyMode = false;
         this.fxVisualizerMode = 'cinematic';
+        this.fxSplashMode = 'classic';
         this.fxGlowlineHueStart = 210;
         this.fxGlowlineHueEnd = 320;
         this.fxGlowlineSat = 60;
@@ -2045,6 +2046,13 @@ class PianoHero {
             });
         }
 
+        const fxSplashSelect = document.getElementById('fxSplashSelect');
+        if (fxSplashSelect) {
+            fxSplashSelect.addEventListener('change', () => {
+                this._applyFxSplashMode(fxSplashSelect.value);
+            });
+        }
+
         const bindFxSlider = (id, valueId, suffix, setter) => {
             const slider = document.getElementById(id);
             const valueEl = document.getElementById(valueId);
@@ -2452,6 +2460,7 @@ class PianoHero {
             bgOverlayOpacity: document.getElementById('bgOpacitySlider').value,
             fxOnlyMode: document.getElementById('fxOnlyToggle').checked,
             fxVisualizerMode: document.getElementById('fxVisualizerSelect').value,
+            fxSplashMode: document.getElementById('fxSplashSelect').value,
             fxGlowlineHueStart: document.getElementById('fxGlowHueStart').value,
             fxGlowlineHueEnd: document.getElementById('fxGlowHueEnd').value,
             fxGlowlineSat: document.getElementById('fxGlowSat').value,
@@ -2621,6 +2630,16 @@ class PianoHero {
         this.fxVisualizerMode = mode;
         if (this.pianoFx && typeof this.pianoFx.setFxMode === 'function') {
             this.pianoFx.setFxMode(mode);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxSplashMode(mode, { skipSave = false } = {}) {
+        const select = document.getElementById('fxSplashSelect');
+        if (select) select.value = mode;
+        this.fxSplashMode = mode;
+        if (this.pianoFx && typeof this.pianoFx.setSplashMode === 'function') {
+            this.pianoFx.setSplashMode(mode);
         }
         if (!skipSave) this._saveSettings();
     }
@@ -3079,6 +3098,10 @@ class PianoHero {
 
         if (settings.fxVisualizerMode) {
             this._applyFxVisualizerMode(settings.fxVisualizerMode, { skipSave: true });
+        }
+
+        if (settings.fxSplashMode) {
+            this._applyFxSplashMode(settings.fxSplashMode, { skipSave: true });
         }
 
         if (settings.fxGlowlineHueStart != null) {

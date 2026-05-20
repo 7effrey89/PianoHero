@@ -1723,6 +1723,23 @@ body.compact-game #gameCanvas {
     gap: 10px;
 }
 
+.setting-group {
+    border: 1px solid #3a2d6e;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 4px 0 10px;
+    background: rgba(10, 8, 24, 0.35);
+}
+
+.setting-group-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #f0e9ff;
+    margin: 0 0 6px;
+}
+
 .setting-row label {
     min-width: 80px;
     font-size: 14px;
