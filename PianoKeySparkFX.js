@@ -161,7 +161,10 @@ class PianoKeySparkFX {
       s.anchor.set(0.5);
       const tNorm = (i - (puffs - 1) / 2) / Math.max(1, puffs - 1);
       const offX = tNorm * targetW * 0.55 + (Math.random() - 0.5) * 6;
-      const offY = -2 - i * 3 + (Math.random() - 0.5) * 3;
+      // Sit on top of the keyboard: bias the cloud downward, with a
+      // slight horizontal-band layout (puffs in the same Y range) so it
+      // floats along the keyboard edge instead of plume-ing upward.
+      const offY = 8 + (Math.random() - 0.5) * 4 + Math.abs(tNorm) * 2;
       s.x = x + offX;
       s.y = y + offY;
       const sx = (targetW / 192) * (0.95 + Math.random() * 0.2) * power;
@@ -171,7 +174,9 @@ class PianoKeySparkFX {
       s.tint = 0xffffff;
       s.life = 0.9 + Math.random() * 0.6;
       s.maxLife = s.life;
-      const driftY = -10 - Math.random() * 14;
+      // Gentle hover instead of fast rise so the cloud stays seated on
+      // the keyboard top.
+      const driftY = -2 - Math.random() * 3;
       const driftX = (Math.random() - 0.5) * 8;
       const grow = 0.5 + Math.random() * 0.5;
       const seed = Math.random() * Math.PI * 2;
