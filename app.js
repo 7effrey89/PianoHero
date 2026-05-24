@@ -136,6 +136,9 @@ class PianoHero {
         this.micDetectionFrame = null;
         this.micStartPromise = null;
         this.micDetectedNote = null;
+        this.micLastDetectedNote = null;
+        this.micLastDetectedAt = 0;
+        this.micDetectedNoteHoldMs = 2000;
         this.micCandidateNote = null;
         this.micCandidateSince = 0;
 
@@ -524,6 +527,10 @@ class PianoHero {
         this.initGameSettings();
         this._loadSettings();
         this._ensureSoundfontLoaded();
+        if (this._isMicPracticeMode()) {
+            this._setMicPracticeIdleStatus();
+            this._syncMicPracticeState();
+        }
 
         // Song browser dropdown toggle
         const toggleSongBrowser = (e) => {
@@ -777,6 +784,53 @@ class PianoHero {
         return true;
     }
 
+    _setMicPracticeStatus(message) {
+        if (!this.statusMessage.classList.contains('mic-practice-status')) {
+            this.statusMessage.textContent = '';
+            this.statusMessage.classList.add('mic-practice-status');
+
+            const leftSpacer = document.createElement('span');
+            leftSpacer.className = 'mic-practice-note-spacer';
+
+            const main = document.createElement('span');
+            main.className = 'mic-practice-main';
+
+            const note = document.createElement('span');
+            note.className = 'mic-practice-note';
+
+            this.statusMessage.append(leftSpacer, main, note);
+        }
+
+        const main = this.statusMessage.querySelector('.mic-practice-main');
+        const note = this.statusMessage.querySelector('.mic-practice-note');
+        if (main) main.textContent = message;
+        if (note) {
+            note.textContent = this.micDetectedNote ? `mic: ${this.micDetectedNote}` : 'mic: --';
+            note.classList.toggle('is-empty', !this.micDetectedNote);
+        }
+    }
+
+    _setMicPracticeIdleStatus() {
+        const message = this.notes.length > 0
+            ? 'Mic Practice: press Play when ready'
+            : 'Mic Practice: select a song';
+        this._setMicPracticeStatus(message);
+    }
+
+    _setSongLoadedStatus(message) {
+        if (this._isMicPracticeMode()) {
+            this._setMicPracticeIdleStatus();
+            this._syncMicPracticeState();
+        } else {
+            this._clearMicPracticeStatusLayout();
+            this.statusMessage.textContent = message;
+        }
+    }
+
+    _clearMicPracticeStatusLayout() {
+        this.statusMessage.classList.remove('mic-practice-status');
+    }
+
     async _ensurePitchDetector() {
         if (this.pitchDetector) return this.pitchDetector;
         if (!this.pitchfinderPromise) {
@@ -797,6 +851,7 @@ class PianoHero {
             throw new Error('Microphone input is not supported in this browser.');
         }
 
+        this._clearMicPracticeStatusLayout();
         this.statusMessage.textContent = 'Mic Practice: requesting microphone access...';
 
         this.micStartPromise = (async () => {
@@ -827,9 +882,15 @@ class PianoHero {
             this.micBuffer = new Float32Array(this.micAnalyser.fftSize);
             this.micSourceNode.connect(this.micAnalyser);
             this.micDetectedNote = null;
+            this.micLastDetectedNote = null;
+            this.micLastDetectedAt = 0;
             this.micCandidateNote = null;
             this.micCandidateSince = 0;
-            this.statusMessage.textContent = 'Mic Practice: microphone ready. Play the highlighted notes.';
+            if (this.isPlaying) {
+                this._setMicPracticeStatus('Mic Practice: microphone ready. Play the highlighted notes.');
+            } else {
+                this._setMicPracticeIdleStatus();
+            }
             this._runMicPracticeDetection();
         })();
 
@@ -859,12 +920,15 @@ class PianoHero {
         }
         this.micBuffer = null;
         this.micDetectedNote = null;
+        this.micLastDetectedNote = null;
+        this.micLastDetectedAt = 0;
         this.micCandidateNote = null;
         this.micCandidateSince = 0;
+        this._clearMicPracticeStatusLayout();
     }
 
     _runMicPracticeDetection() {
-        if (!this._isMicPracticeMode() || !this.isPlaying || this.isPaused || !this.micAnalyser || !this.micBuffer || !this.pitchDetector) {
+        if (!this._isMicPracticeMode() || this.isPaused || !this.micAnalyser || !this.micBuffer || !this.pitchDetector) {
             this.micDetectionFrame = null;
             return;
         }
@@ -881,7 +945,19 @@ class PianoHero {
         const detectedNote = this._frequencyToNoteName(frequency);
         const now = performance.now();
 
-        this.micDetectedNote = detectedNote;
+        if (detectedNote) {
+            this.micLastDetectedNote = detectedNote;
+            this.micLastDetectedAt = now;
+        }
+        this.micDetectedNote = detectedNote || (
+            this.micLastDetectedNote && now - this.micLastDetectedAt <= this.micDetectedNoteHoldMs
+                ? this.micLastDetectedNote
+                : null
+        );
+
+        if (!this.isPlaying) {
+            this._setMicPracticeIdleStatus();
+        }
 
         if (this.practiceWaiting && detectedNote && this.practiceExpectedNotes.has(detectedNote) && this._hasRemainingPracticeHits(detectedNote)) {
             if (this.micCandidateNote !== detectedNote) {
@@ -901,12 +977,15 @@ class PianoHero {
     }
 
     _syncMicPracticeState() {
-        if (this._isMicPracticeMode() && this.isPlaying && !this.isPaused) {
+        if (this._isMicPracticeMode() && !this.isPaused) {
             this._startMicPracticeDetection().catch((err) => {
                 console.error('[PianoHero] Mic practice failed to start', err);
                 this.reset();
                 this.statusMessage.textContent = this._getMicPracticeErrorMessage(err);
             });
+            if (!this.isPlaying && this.micAnalyser) {
+                this._setMicPracticeIdleStatus();
+            }
             return;
         }
         this._stopMicPracticeDetection();
@@ -1365,7 +1444,7 @@ class PianoHero {
             // inheriting fallingNotes / startTime from the previously played song.
             this.reset();
             this.updateProgress(100);
-            this.statusMessage.textContent = `Loaded "${data.filename}" — ${data.noteCount} notes. Press Play!`;
+            this._setSongLoadedStatus(`Loaded "${data.filename}" — ${data.noteCount} notes. Press Play!`);
             this._updateControlButtons();
         } catch (error) {
             console.error('Error loading MIDI file:', error);
@@ -1556,7 +1635,7 @@ class PianoHero {
         this.applyGameMode();
         this.reset();
 
-        this.statusMessage.textContent = `Loaded "${displayName}" from bookmarklet \u2014 ${data.noteCount} notes. Press Play!`;
+        this._setSongLoadedStatus(`Loaded "${displayName}" from bookmarklet \u2014 ${data.noteCount} notes. Press Play!`);
         const cookieStatus = document.getElementById('onlineseqCookieStatus');
         const spinner = document.getElementById('onlineseqStatusSpinner');
         if (cookieStatus) cookieStatus.textContent = `\u2713 Loaded "${displayName}" \u2014 click your bookmark again for the next song.`;
@@ -1706,7 +1785,7 @@ class PianoHero {
             this.updateProgress(100);
 
             const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
-            this.statusMessage.textContent = `Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`;
+            this._setSongLoadedStatus(`Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`);
             this._updateControlButtons();
             this.refreshMidiFileList();
         } catch (err) {
@@ -1789,7 +1868,7 @@ class PianoHero {
             this.reset();
             this.updateProgress(100);
             const savedName = data.savedAs ? ` (saved as "${data.savedAs}")` : '';
-            this.statusMessage.textContent = `Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`;
+            this._setSongLoadedStatus(`Loaded "${name}"${savedName} — ${data.noteCount} notes. Press Play!`);
             this._updateControlButtons();
             this.refreshMidiFileList();
         } catch (err) {
@@ -3706,7 +3785,12 @@ class PianoHero {
         this.practicePauseOffset = 0;
 
         const modeLabel = this._getModeDisplayName();
-        this.statusMessage.textContent = `${modeLabel} in progress...`;
+        if (this._isMicPracticeMode()) {
+            this._setMicPracticeStatus('Mic Practice: listening for highlighted notes.');
+        } else {
+            this._clearMicPracticeStatusLayout();
+            this.statusMessage.textContent = `${modeLabel} in progress...`;
+        }
         
         this.totalNotes = this.fallingNotes.length;
         
@@ -4104,7 +4188,10 @@ class PianoHero {
             if (this.isAutoPlay) {
                 this._scheduleAutoPlayNotes();
                 this.statusMessage.textContent = 'Auto Play in progress...';
+            } else if (this._isMicPracticeMode()) {
+                this._setMicPracticeStatus('Mic Practice: listening for highlighted notes.');
             } else {
+                this._clearMicPracticeStatusLayout();
                 this.statusMessage.textContent = `${this._getModeDisplayName()} in progress...`;
             }
         }
@@ -5097,6 +5184,7 @@ class PianoHero {
                 this._practiceHighlighted = null;
             }
             const modeName = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
+            this._clearMicPracticeStatusLayout();
             this.statusMessage.textContent = 
                 `${modeName} complete! Score: ${this.score} | Accuracy: ${this.accuracyElement.textContent}%`;
             this._updateControlButtons();
@@ -5169,10 +5257,13 @@ class PianoHero {
         this._practiceHighlighted = newTargets;
 
         const remaining = [...this.practiceExpectedNotes];
-        const prefix = this.gameMode === 'micpractice' ? 'Mic Practice' : 'Practice';
-        const detected = this.gameMode === 'micpractice' && this.micDetectedNote ? ` | mic: ${this.micDetectedNote}` : '';
         const instruction = remaining.length > 0 ? remaining.join(' + ') : 'hold the highlighted chord';
-        this.statusMessage.textContent = `${prefix}: play ${instruction}${detected}`;
+        if (this.gameMode === 'micpractice') {
+            this._setMicPracticeStatus(`Mic Practice: play ${instruction}`);
+        } else {
+            this._clearMicPracticeStatusLayout();
+            this.statusMessage.textContent = `Practice: play ${instruction}`;
+        }
     }
 
     _setsEqual(a, b) {

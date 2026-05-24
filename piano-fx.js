@@ -335,13 +335,19 @@ float ribbon(vec2 uv, float t) {
 
 float keyGlow(vec2 uv) {
     float glow = 0.0;
+    // Over the keyboard area (lower ~18% of the canvas) the glow is forced
+    // narrow so it only lights the pressed key and its immediate neighbours,
+    // regardless of the wide/narrow spread setting. Above the keys the full
+    // glowSpread setting still applies.
+    float overKeys = smoothstep(0.78, 0.92, uv.y);
+    float spreadFactor = mix(glowSpread, 0.0, overKeys);
     for (int i = 0; i < 88; i++) {
         float v = activeKeys[i];
         if (v <= 0.001) continue;
         float keyX = (float(i) + 0.5) / 88.0;
         float d = abs(uv.x - keyX);
-        // Tight per-key bloom when glowSpread=0, legacy wide bloom when 1.
-        glow += exp(-(d * d) / mix(0.00006, 0.0018, glowSpread)) * v;
+        // Tight per-key bloom when spreadFactor=0, legacy wide bloom when 1.
+        glow += exp(-(d * d) / mix(0.00006, 0.0018, spreadFactor)) * v;
     }
     return glow * smoothstep(1.0, 0.7, uv.y);
 }

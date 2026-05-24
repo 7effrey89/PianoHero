@@ -67,6 +67,40 @@ header.top-header {
     display: none;
 }
 
+.header-status-message.mic-practice-status {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) 72px;
+    align-items: center;
+    column-gap: 8px;
+    text-align: initial;
+}
+
+.mic-practice-main {
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mic-practice-note,
+.mic-practice-note-spacer {
+    width: 72px;
+}
+
+.mic-practice-note {
+    color: #7ff0a0;
+    font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.mic-practice-note.is-empty {
+    color: rgba(170, 170, 170, 0.45);
+}
+
 .header-logo {
     flex-shrink: 0;
     display: flex;
