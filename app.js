@@ -106,7 +106,7 @@ class PianoHero {
         this.pianoFx = (this.fxCanvas && window.PianoFX) ? new PianoFX(this.fxCanvas) : null;
         this._lastFxFrame = null;
         if (this.pianoFx && this.pianoFx.ready && typeof this.pianoFx.ready.then === 'function') {
-            this.pianoFx.ready.then(() => this._applyFxPalette({ skipSave: true }));
+            this.pianoFx.ready.then(() => this._applyPianoFxRuntimeSettings());
         }
         try { window.pianoHero = this; } catch (_) {}
 
@@ -147,30 +147,18 @@ class PianoHero {
         this.activeNoteSources = new Map();       // note name → { source, noteGain, fadeStart, fadeEnd }
         this.heldFallingNotes = new Map();        // note name → falling note being held
 
-        // Sparkle particles for held notes
-        this.particles = [];
-        this.particleStyle = 'sparkle'; // 'sparkle', 'splash', 'ivory', or 'starburst'
-        this.sparkleIntensity = 1.0; // 0.0 to 1.0
-        this.sparkleEnabled = true;
-        this.sparkleHeight = 1.0; // 0.1 to 2.0
-        this.laneStyle = 'synthesia'; // full, fill, blackonly, dim, synthesia, none
+        this.laneStyle = 'synthesia';
         this.noteStyle = 'classic'; // beam, classic
         this.showNoteNames = false; // overlay note letter labels (works for beam + classic)
         this.ultraPerformance = false; // route everything through Pixi, skip 2D overlay
-        this.waveEnabled = true;
-        this.waveCount = 6;
 
         // Neon glow effect for falling notes
         this.neonGlowEnabled = false;
         this.hasBgImage = false;
         this.currentBackgroundName = '';
-        this.bgOverlayOpacity = 0.25;
+        this.bgOverlayOpacity = 0;
         this._glowCanvas = null;
         this._glowCtx = null;
-
-        // Shared wave overlay canvas for classic bars
-        this._waveCanvas = null;
-        this._waveCtx = null;
 
         // Reuse timing feedback nodes to reduce frequent DOM allocation/removal churn
         this._timingFeedbackPool = [];
@@ -185,8 +173,10 @@ class PianoHero {
         this._forceFieldTime = 0;
         this.graphicsPreset = 'high';
         this.compactGameArea = false;
-        this.fxOnlyMode = false;
-        this.fxVisualizerMode = 'cinematic';
+        this.fxOnlyMode = true;
+        this.fxStreamMode = 'off';
+        this.fxStreamWidth = 'normal';
+        this.fxRibbonMode = 'strong';
         this.fxSplashMode = 'classic';
         this.fxGlowlineHueStart = 210;
         this.fxGlowlineHueEnd = 320;
@@ -195,6 +185,13 @@ class PianoHero {
         this.fxSmokeHue = 30;
         this.fxSmokeSat = 55;
         this.fxSmokeVal = 100;
+        this.fxKeyGlowHue = 200;
+        this.fxKeyGlowSat = 70;
+        this.fxKeyGlowVal = 100;
+        this.keyPressTint = 'off';
+        this.keyPressTintHue = 256;
+        this.keyPressTintSat = 70;
+        this.keyPressTintVal = 100;
         this._fxPaletteDefaults = {
             glowlineHueStart: 210,
             glowlineHueEnd: 320,
@@ -203,8 +200,13 @@ class PianoHero {
             smokeHue: 30,
             smokeSat: 55,
             smokeVal: 100,
+            keyGlowHue: 200,
+            keyGlowSat: 70,
+            keyGlowVal: 100,
+            keyPressTintHue: 256,
+            keyPressTintSat: 70,
+            keyPressTintVal: 100,
         };
-        this._fxOnlyRestore = null;
 
         // Visible-note windowing cursors (advance forward only;
         // reset whenever fallingNotes is rebuilt)
@@ -742,7 +744,6 @@ class PianoHero {
             this.score += Math.floor(100 * this._getMultiplier());
             this.updateScore();
             this.showHitFeedback(target.note, true, 1);
-            this._emitHitBurst(target.note, target.hand || 0);
         }
 
         if (this._practiceHighlighted) {
@@ -1284,6 +1285,20 @@ class PianoHero {
         const y = this.canvas.height - 10;
         this.pianoFx.onKeyPress(x, y, keyIndex, velocity);
     }
+
+    _syncPianoFxKeyCenters() {
+        if (!this.pianoFx || typeof this.pianoFx.setKeyCenters !== 'function' || !this.keyPositions) return;
+        const width = this.canvas && this.canvas.width ? this.canvas.width : 1;
+        const centers = new Array(88);
+        const count = Math.max(1, (this.allNotes && this.allNotes.length) || 1);
+        for (let i = 0; i < 88; i++) {
+            const noteIndex = Math.round((i / 87) * (count - 1));
+            const note = this.allNotes[noteIndex];
+            const pos = this.keyPositions[note];
+            centers[i] = pos ? (pos.left + pos.width / 2) / width : (i + 0.5) / 88;
+        }
+        this.pianoFx.setKeyCenters(centers);
+    }
     
     calculateKeyPositions() {
         const positions = {};
@@ -1313,6 +1328,8 @@ class PianoHero {
                 };
             }
         });
+
+        requestAnimationFrame(() => this._syncPianoFxKeyCenters());
         
         return positions;
     }
@@ -2023,21 +2040,15 @@ class PianoHero {
             });
         }
 
-        // Timing feedback toggle
-        const timingFeedbackToggle = document.getElementById('timingFeedbackToggle');
         const timingFeedbackModeSelect = document.getElementById('timingFeedbackModeSelect');
-        if (timingFeedbackToggle) {
-            timingFeedbackToggle.addEventListener('change', () => {
-                this.showTimingFeedback = timingFeedbackToggle.checked;
+        if (timingFeedbackModeSelect) {
+            timingFeedbackModeSelect.addEventListener('change', () => {
+                const mode = timingFeedbackModeSelect.value;
+                this.showTimingFeedback = mode !== 'none';
+                this.timingFeedbackMode = this.showTimingFeedback ? mode : 'individual';
                 if (!this.showTimingFeedback && this._timingFeedbackCenterEl) {
                     this._timingFeedbackCenterEl.classList.remove('visible');
                 }
-                this._saveSettings();
-            });
-        }
-        if (timingFeedbackModeSelect) {
-            timingFeedbackModeSelect.addEventListener('change', () => {
-                this.timingFeedbackMode = timingFeedbackModeSelect.value;
                 this._saveSettings();
             });
         }
@@ -2130,17 +2141,24 @@ class PianoHero {
             });
         }
 
-        const fxOnlyToggle = document.getElementById('fxOnlyToggle');
-        if (fxOnlyToggle) {
-            fxOnlyToggle.addEventListener('change', () => {
-                this._applyFxOnlyMode(fxOnlyToggle.checked);
+        const fxStreamSelect = document.getElementById('fxStreamSelect');
+        if (fxStreamSelect) {
+            fxStreamSelect.addEventListener('change', () => {
+                this._applyFxStreamMode(fxStreamSelect.value);
             });
         }
 
-        const fxVisualizerSelect = document.getElementById('fxVisualizerSelect');
-        if (fxVisualizerSelect) {
-            fxVisualizerSelect.addEventListener('change', () => {
-                this._applyFxVisualizerMode(fxVisualizerSelect.value);
+        const fxStreamWidthSelect = document.getElementById('fxStreamWidthSelect');
+        if (fxStreamWidthSelect) {
+            fxStreamWidthSelect.addEventListener('change', () => {
+                this._applyFxStreamWidth(fxStreamWidthSelect.value);
+            });
+        }
+
+        const fxRibbonSelect = document.getElementById('fxRibbonSelect');
+        if (fxRibbonSelect) {
+            fxRibbonSelect.addEventListener('change', () => {
+                this._applyFxRibbonMode(fxRibbonSelect.value);
             });
         }
 
@@ -2155,6 +2173,23 @@ class PianoHero {
         if (fxGlowSpreadSelect) {
             fxGlowSpreadSelect.addEventListener('change', () => {
                 this._applyFxGlowSpread(fxGlowSpreadSelect.value);
+            });
+        }
+
+        const keyPressTintSelect = document.getElementById('keyPressTintSelect');
+        if (keyPressTintSelect) {
+            keyPressTintSelect.addEventListener('change', () => {
+                this._applyKeyPressTint(keyPressTintSelect.value);
+            });
+            this._applyKeyPressTint(keyPressTintSelect.value, { skipSave: true });
+        }
+
+        const laneStyleSelect = document.getElementById('laneStyleSelect');
+        if (laneStyleSelect) {
+            laneStyleSelect.addEventListener('change', () => {
+                this.laneStyle = laneStyleSelect.value;
+                this._laneCacheDirty = true;
+                this._saveSettings();
             });
         }
 
@@ -2179,6 +2214,12 @@ class PianoHero {
         bindFxSlider('fxSmokeHue', 'fxSmokeHueVal', '°', (v) => { this.fxSmokeHue = v; });
         bindFxSlider('fxSmokeSat', 'fxSmokeSatVal', '%', (v) => { this.fxSmokeSat = v; });
         bindFxSlider('fxSmokeVal', 'fxSmokeValVal', '%', (v) => { this.fxSmokeVal = v; });
+        bindFxSlider('fxKeyGlowHue', 'fxKeyGlowHueVal', '°', (v) => { this.fxKeyGlowHue = v; });
+        bindFxSlider('fxKeyGlowSat', 'fxKeyGlowSatVal', '%', (v) => { this.fxKeyGlowSat = v; });
+        bindFxSlider('fxKeyGlowVal', 'fxKeyGlowValVal', '%', (v) => { this.fxKeyGlowVal = v; });
+        bindFxSlider('keyPressTintHue', 'keyPressTintHueVal', '°', (v) => { this.keyPressTintHue = v; this._applyKeyPressTintColor(); });
+        bindFxSlider('keyPressTintSat', 'keyPressTintSatVal', '%', (v) => { this.keyPressTintSat = v; this._applyKeyPressTintColor(); });
+        bindFxSlider('keyPressTintVal', 'keyPressTintValVal', '%', (v) => { this.keyPressTintVal = v; this._applyKeyPressTintColor(); });
 
         const fxPaletteResetBtn = document.getElementById('fxPaletteResetBtn');
         if (fxPaletteResetBtn) {
@@ -2342,69 +2383,14 @@ class PianoHero {
             }, { passive: false });
         }
 
-        // ── Particle Style ──
-        const particleStyleSelect = document.getElementById('particleStyleSelect');
-        particleStyleSelect.addEventListener('change', () => {
-            this.particleStyle = particleStyleSelect.value;
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-
-        // ── Sparkle FX Toggle ──
-        const sparkleToggle = document.getElementById('sparkleToggle');
-        this.sparkleEnabled = sparkleToggle.checked;
-        const sparkleSubRows = ['particleStyleRow', 'sparkleSliderRow', 'sparkleHeightRow'];
-        const updateSparkleRows = () => {
-            const show = sparkleToggle.checked;
-            sparkleSubRows.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.style.display = show ? '' : 'none';
-            });
-        };
-        sparkleToggle.addEventListener('change', () => {
-            this.sparkleEnabled = sparkleToggle.checked;
-            if (!this.sparkleEnabled) this.particles = [];
-            updateSparkleRows();
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-        updateSparkleRows();
-
-        // ── Sparkle FX ──
-        const sparkleSlider = document.getElementById('sparkleSlider');
-        const sparkleValue = document.getElementById('sparkleValue');
-        this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
-        sparkleSlider.addEventListener('input', () => {
-            this.sparkleIntensity = parseInt(sparkleSlider.value) / 100;
-            sparkleValue.textContent = sparkleSlider.value + '%';
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-
-        // ── Sparkle Height ──
-        const sparkleHeightSlider = document.getElementById('sparkleHeightSlider');
-        const sparkleHeightValue = document.getElementById('sparkleHeightValue');
-        sparkleHeightSlider.addEventListener('input', () => {
-            this.sparkleHeight = parseInt(sparkleHeightSlider.value) / 100;
-            sparkleHeightValue.textContent = sparkleHeightSlider.value + '%';
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-
-        // ── Lane Style ──
-        const laneStyleSelect = document.getElementById('laneStyleSelect');
-        laneStyleSelect.addEventListener('change', () => {
-            this.laneStyle = laneStyleSelect.value;
-            this._laneCacheDirty = true;
-            this._saveSettings();
-        });
-
         // ── Note Style ──
         const noteStyleSelect = document.getElementById('noteStyleSelect');
-        noteStyleSelect.addEventListener('change', () => {
-            this.noteStyle = noteStyleSelect.value;
-            this._saveSettings();
-        });
+        if (noteStyleSelect) {
+            noteStyleSelect.addEventListener('change', () => {
+                this.noteStyle = noteStyleSelect.value;
+                this._saveSettings();
+            });
+        }
 
         // ── Show Note Names ──
         const showNoteNamesToggle = document.getElementById('showNoteNamesToggle');
@@ -2416,49 +2402,29 @@ class PianoHero {
             });
         }
 
-        // ── Wave Ribbon Toggle ──
-        const waveToggle = document.getElementById('waveToggle');
-        this.waveEnabled = waveToggle.checked;
-        const updateWaveRows = () => {
-            // Wave count slider is always visible; toggle only controls rendering
-        };
-        waveToggle.addEventListener('change', () => {
-            this.waveEnabled = waveToggle.checked;
-            updateWaveRows();
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-        updateWaveRows();
-
-        // ── Wave Ribbon Count ──
-        const waveCountSlider = document.getElementById('waveCountSlider');
-        this.waveCount = parseInt(waveCountSlider.value) || 6;
-        waveCountSlider.addEventListener('input', () => {
-            this.waveCount = parseInt(waveCountSlider.value) || 1;
-            document.getElementById('waveCountVal').textContent = this.waveCount;
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
-
         // ── Neon Glow ──
         const neonGlowToggle = document.getElementById('neonGlowToggle');
-        neonGlowToggle.addEventListener('change', () => {
-            this.neonGlowEnabled = neonGlowToggle.checked;
-            this._applyNeonGlowCSS();
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
+        if (neonGlowToggle) {
+            neonGlowToggle.addEventListener('change', () => {
+                this.neonGlowEnabled = neonGlowToggle.checked;
+                this._applyNeonGlowCSS();
+                this._markGraphicsPresetCustom();
+                this._saveSettings();
+            });
+        }
         // Apply initial state for the GL canvas filter
         this._applyNeonGlowCSS();
 
         // ── Force Field Bar ──
         const forceFieldToggle = document.getElementById('forceFieldToggle');
-        forceFieldToggle.addEventListener('change', () => {
-            this.forceFieldEnabled = forceFieldToggle.checked;
-            this._laneCacheDirty = true;
-            this._markGraphicsPresetCustom();
-            this._saveSettings();
-        });
+        if (forceFieldToggle) {
+            forceFieldToggle.addEventListener('change', () => {
+                this.forceFieldEnabled = forceFieldToggle.checked;
+                this._laneCacheDirty = true;
+                this._markGraphicsPresetCustom();
+                this._saveSettings();
+            });
+        }
 
         // ── Custom Background Image ──
         const bgImageBtn = document.getElementById('bgImageBtn');
@@ -2484,14 +2450,16 @@ class PianoHero {
         // ── Overlay Opacity Slider ──
         const bgOpacitySlider = document.getElementById('bgOpacitySlider');
         const bgOpacityVal = document.getElementById('bgOpacityVal');
-        bgOpacitySlider.addEventListener('input', () => {
-            const val = parseInt(bgOpacitySlider.value);
-            bgOpacityVal.textContent = val + '%';
-            this.bgOverlayOpacity = val / 100;
-            this._applyOverlayOpacity();
-            this._laneCacheDirty = true;
-            this._saveSettings();
-        });
+        if (bgOpacitySlider && bgOpacityVal) {
+            bgOpacitySlider.addEventListener('input', () => {
+                const val = parseInt(bgOpacitySlider.value);
+                bgOpacityVal.textContent = val + '%';
+                this.bgOverlayOpacity = val / 100;
+                this._applyOverlayOpacity();
+                this._laneCacheDirty = true;
+                this._saveSettings();
+            });
+        }
 
         // Restore saved background
         const savedBg = localStorage.getItem('pianoHeroBgImage');
@@ -2543,28 +2511,28 @@ class PianoHero {
             keyScale: document.getElementById('keyScaleSlider').value,
             speed: document.getElementById('speedSlider').value,
             gameMode: this.gameMode || 'normal',
-            timingFeedback: document.getElementById('timingFeedbackToggle').checked,
+            timingFeedback: document.getElementById('timingFeedbackModeSelect').value !== 'none',
             timingFeedbackMode: document.getElementById('timingFeedbackModeSelect').value,
-            sparkleEnabled: document.getElementById('sparkleToggle').checked,
-            particleStyle: document.getElementById('particleStyleSelect').value,
-            sparkle: document.getElementById('sparkleSlider').value,
-            sparkleHeight: document.getElementById('sparkleHeightSlider').value,
-            laneStyle: document.getElementById('laneStyleSelect').value,
             coplayAutoVolume: document.getElementById('coplayAutoVolume').value,
             autoPlay: document.getElementById('modeToggleSwitch').checked,
             eqCompression: document.getElementById('eqCompressionToggle').checked,
             sympatheticResonance: document.getElementById('sympatheticResonanceToggle').checked,
-            noteStyle: document.getElementById('noteStyleSelect').value,
+            noteStyle: (document.getElementById('noteStyleSelect') || {}).value || this.noteStyle,
             showNoteNames: this.showNoteNames,
-            graphicsPreset: document.getElementById('graphicsPresetSelect').value,
+            graphicsPreset: 'custom',
             compactGameArea: this.compactGameArea,
-            waveEnabled: document.getElementById('waveToggle').checked,
-            waveCount: document.getElementById('waveCountSlider').value,
-            neonGlow: document.getElementById('neonGlowToggle').checked,
-            forceField: document.getElementById('forceFieldToggle').checked,
-            bgOverlayOpacity: document.getElementById('bgOpacitySlider').value,
-            fxOnlyMode: document.getElementById('fxOnlyToggle').checked,
-            fxVisualizerMode: document.getElementById('fxVisualizerSelect').value,
+            neonGlow: (document.getElementById('neonGlowToggle') || {}).checked || false,
+            forceField: false,
+            bgOverlayOpacity: 0,
+            fxOnlyMode: true,
+            laneStyle: document.getElementById('laneStyleSelect').value,
+            keyPressTint: document.getElementById('keyPressTintSelect').value,
+            keyPressTintHue: document.getElementById('keyPressTintHue').value,
+            keyPressTintSat: document.getElementById('keyPressTintSat').value,
+            keyPressTintVal: document.getElementById('keyPressTintVal').value,
+            fxStreamMode: document.getElementById('fxStreamSelect').value,
+            fxStreamWidth: document.getElementById('fxStreamWidthSelect').value,
+            fxRibbonMode: document.getElementById('fxRibbonSelect').value,
             fxSplashMode: document.getElementById('fxSplashSelect').value,
             fxGlowSpread: (document.getElementById('fxGlowSpreadSelect') || {}).value || 'narrow',
             fxGlowlineHueStart: document.getElementById('fxGlowHueStart').value,
@@ -2574,6 +2542,9 @@ class PianoHero {
             fxSmokeHue: document.getElementById('fxSmokeHue').value,
             fxSmokeSat: document.getElementById('fxSmokeSat').value,
             fxSmokeVal: document.getElementById('fxSmokeVal').value,
+            fxKeyGlowHue: document.getElementById('fxKeyGlowHue').value,
+            fxKeyGlowSat: document.getElementById('fxKeyGlowSat').value,
+            fxKeyGlowVal: document.getElementById('fxKeyGlowVal').value,
         };
         try { localStorage.setItem('pianoHeroSettings', JSON.stringify(settings)); } catch(e) {}
     }
@@ -2615,128 +2586,93 @@ class PianoHero {
         document.getElementById('gameCanvas').style.background = `rgba(14, 11, 34, ${o * 0.4})`;
     }
 
-    _applyFxOnlyMode(enabled, { skipSave = false } = {}) {
-        if (enabled && !this._fxOnlyRestore) {
-            this._fxOnlyRestore = {
-                sparkleEnabled: this.sparkleEnabled,
-                particleStyle: this.particleStyle,
-                sparkleIntensity: this.sparkleIntensity,
-                sparkleHeight: this.sparkleHeight,
-                laneStyle: this.laneStyle,
-                waveEnabled: this.waveEnabled,
-                waveCount: this.waveCount,
-                neonGlowEnabled: this.neonGlowEnabled,
-                forceFieldEnabled: this.forceFieldEnabled,
-                showNoteNames: this.showNoteNames,
-                bgOverlayOpacity: this.bgOverlayOpacity,
-                graphicsPreset: this.graphicsPreset,
-            };
-        }
-
-        this.fxOnlyMode = enabled;
+    _applyFxOnlyMode(_enabled = true, { skipSave = false } = {}) {
+        this.fxOnlyMode = true;
 
         const prevLoading = this._loading;
         this._loading = true;
 
-        const fxOnlyToggle = document.getElementById('fxOnlyToggle');
-        if (fxOnlyToggle) fxOnlyToggle.checked = enabled;
+        const fxStreamSelect = document.getElementById('fxStreamSelect');
+        const fxStreamWidthSelect = document.getElementById('fxStreamWidthSelect');
+        const fxRibbonSelect = document.getElementById('fxRibbonSelect');
+        if (fxStreamSelect) fxStreamSelect.disabled = false;
+        if (fxStreamWidthSelect) fxStreamWidthSelect.disabled = false;
+        if (fxRibbonSelect) fxRibbonSelect.disabled = false;
 
-        const fxVisualizerSelect = document.getElementById('fxVisualizerSelect');
-        const fxVisualizerRow = document.getElementById('fxVisualizerRow');
-        if (fxVisualizerSelect) fxVisualizerSelect.disabled = !enabled;
-        if (fxVisualizerRow) fxVisualizerRow.style.opacity = enabled ? '1' : '0.55';
+        this.forceFieldEnabled = false;
+        this.bgOverlayOpacity = 0;
+        const bgOpacitySlider = document.getElementById('bgOpacitySlider');
+        const bgOpacityVal = document.getElementById('bgOpacityVal');
+        if (bgOpacitySlider) bgOpacitySlider.value = 0;
+        if (bgOpacityVal) bgOpacityVal.textContent = '0%';
+        this._applyOverlayOpacity();
+        this._laneCacheDirty = true;
 
-        if (enabled) {
-            const setToggle = (id, value) => {
-                const cb = document.getElementById(id);
-                if (!cb) return;
-                cb.checked = value;
-                cb.dispatchEvent(new Event('change'));
-            };
-            const setSelect = (id, value) => {
-                const sel = document.getElementById(id);
-                if (!sel) return;
-                sel.value = value;
-                sel.dispatchEvent(new Event('change'));
-            };
-            const setSlider = (id, value) => {
-                const s = document.getElementById(id);
-                if (!s) return;
-                s.value = value;
-                s.dispatchEvent(new Event('input'));
-            };
-
-            setSelect('graphicsPresetSelect', 'custom');
-            setToggle('sparkleToggle', false);
-            setSelect('particleStyleSelect', 'sparkle');
-            setSlider('sparkleSlider', 0);
-            setSlider('sparkleHeightSlider', 100);
-            setSelect('laneStyleSelect', 'none');
-            setToggle('waveToggle', false);
-            setSlider('waveCountSlider', 1);
-            setToggle('neonGlowToggle', false);
-            setToggle('forceFieldToggle', false);
-            setToggle('showNoteNamesToggle', false);
-            setSlider('bgOpacitySlider', 0);
-
-            if (fxVisualizerSelect) {
-                this._applyFxVisualizerMode(fxVisualizerSelect.value, { skipSave: true });
-            }
-
-            this.particles = [];
-            this._laneCacheDirty = true;
-        } else if (this._fxOnlyRestore) {
-            const restore = this._fxOnlyRestore;
-            this._fxOnlyRestore = null;
-
-            const setToggle = (id, value) => {
-                const cb = document.getElementById(id);
-                if (!cb) return;
-                cb.checked = value;
-                cb.dispatchEvent(new Event('change'));
-            };
-            const setSelect = (id, value) => {
-                const sel = document.getElementById(id);
-                if (!sel) return;
-                sel.value = value;
-                sel.dispatchEvent(new Event('change'));
-            };
-            const setSlider = (id, value) => {
-                const s = document.getElementById(id);
-                if (!s) return;
-                s.value = value;
-                s.dispatchEvent(new Event('input'));
-            };
-
-            setSelect('graphicsPresetSelect', restore.graphicsPreset || 'custom');
-            setToggle('sparkleToggle', restore.sparkleEnabled);
-            setSelect('particleStyleSelect', restore.particleStyle || 'sparkle');
-            setSlider('sparkleSlider', Math.round((restore.sparkleIntensity || 0) * 100));
-            setSlider('sparkleHeightSlider', Math.round((restore.sparkleHeight || 1) * 100));
-            setSelect('laneStyleSelect', restore.laneStyle || 'synthesia');
-            setToggle('waveToggle', !!restore.waveEnabled);
-            setSlider('waveCountSlider', restore.waveCount || 6);
-            setToggle('neonGlowToggle', !!restore.neonGlowEnabled);
-            setToggle('forceFieldToggle', !!restore.forceFieldEnabled);
-            setToggle('showNoteNamesToggle', !!restore.showNoteNames);
-            setSlider('bgOpacitySlider', Math.round((restore.bgOverlayOpacity || 0.25) * 100));
-
-            if (fxVisualizerSelect) {
-                this._applyFxVisualizerMode(fxVisualizerSelect.value, { skipSave: true });
-            }
-        }
+        if (fxStreamSelect) this._applyFxStreamMode(fxStreamSelect.value, { skipSave: true });
+        if (fxStreamWidthSelect) this._applyFxStreamWidth(fxStreamWidthSelect.value, { skipSave: true });
+        if (fxRibbonSelect) this._applyFxRibbonMode(fxRibbonSelect.value, { skipSave: true });
 
         this._loading = prevLoading;
         if (!skipSave) this._saveSettings();
     }
 
+    _applyFxStreamMode(mode, { skipSave = false } = {}) {
+        const m = (mode === 'cinematic' || mode === 'subtle') ? mode : 'off';
+        const select = document.getElementById('fxStreamSelect');
+        if (select) select.value = m;
+        this.fxStreamMode = m;
+        const widthRow = document.getElementById('fxStreamWidthRow');
+        const widthSelect = document.getElementById('fxStreamWidthSelect');
+        if (widthRow) widthRow.style.display = m === 'off' ? 'none' : '';
+        if (widthSelect) widthSelect.disabled = m === 'off';
+        if (this.pianoFx && typeof this.pianoFx.setStreamMode === 'function') {
+            this.pianoFx.setStreamMode(m);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxStreamWidth(mode, { skipSave = false } = {}) {
+        const m = (mode === 'narrow' || mode === 'wide') ? mode : 'normal';
+        const select = document.getElementById('fxStreamWidthSelect');
+        if (select) select.value = m;
+        this.fxStreamWidth = m;
+        if (this.pianoFx && typeof this.pianoFx.setStreamWidth === 'function') {
+            this.pianoFx.setStreamWidth(m);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _applyFxRibbonMode(mode, { skipSave = false } = {}) {
+        const m = (mode === 'off' || mode === 'hitbar' || mode === 'subtle' || mode === 'cinematic') ? mode : 'strong';
+        const select = document.getElementById('fxRibbonSelect');
+        if (select) select.value = m;
+        this.fxRibbonMode = m;
+        this._laneCacheDirty = true;
+        this._updateKeyboardTopColorControls();
+        if (this.pianoFx && typeof this.pianoFx.setRibbonMode === 'function') {
+            this.pianoFx.setRibbonMode(m);
+        }
+        if (!skipSave) this._saveSettings();
+    }
+
+    _updateKeyboardTopColorControls() {
+        const disabled = this.fxRibbonMode === 'off' || this.fxRibbonMode === 'hitbar';
+        document.querySelectorAll('.keyboard-top-color-control').forEach((row) => {
+            row.style.opacity = disabled ? '0.45' : '';
+            row.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = disabled;
+            });
+        });
+    }
+
     _applyFxVisualizerMode(mode, { skipSave = false } = {}) {
+        const legacy = mode || 'ribbon';
+        const streamMode = legacy === 'ribbon' ? 'off' : legacy;
+        const ribbonMode = legacy === 'ribbon' ? 'strong' : legacy;
+        this._applyFxStreamMode(streamMode, { skipSave: true });
+        this._applyFxRibbonMode(ribbonMode, { skipSave: true });
         const select = document.getElementById('fxVisualizerSelect');
         if (select) select.value = mode;
-        this.fxVisualizerMode = mode;
-        if (this.pianoFx && typeof this.pianoFx.setFxMode === 'function') {
-            this.pianoFx.setFxMode(mode);
-        }
         if (!skipSave) this._saveSettings();
     }
 
@@ -2751,14 +2687,90 @@ class PianoHero {
     }
 
     _applyFxGlowSpread(mode, { skipSave = false } = {}) {
-        const m = (mode === 'wide') ? 'wide' : 'narrow';
+        const m = (mode === 'none' || mode === 'wide') ? mode : 'narrow';
         const select = document.getElementById('fxGlowSpreadSelect');
         if (select) select.value = m;
         this.fxGlowSpread = m;
+        this._updateStrokeGlowColorControls();
         if (this.pianoFx && typeof this.pianoFx.setGlowSpread === 'function') {
             this.pianoFx.setGlowSpread(m);
         }
         if (!skipSave) this._saveSettings();
+    }
+
+    _applyPianoFxRuntimeSettings() {
+        this._applyFxStreamMode(this.fxStreamMode || 'off', { skipSave: true });
+        this._applyFxStreamWidth(this.fxStreamWidth || 'normal', { skipSave: true });
+        this._applyFxRibbonMode(this.fxRibbonMode || 'strong', { skipSave: true });
+        this._applyFxSplashMode(this.fxSplashMode || 'classic', { skipSave: true });
+        this._applyFxGlowSpread(this.fxGlowSpread || 'narrow', { skipSave: true });
+        this._applyFxPalette({ skipSave: true });
+        this._syncPianoFxKeyCenters();
+    }
+
+    _applyKeyPressTint(mode, { skipSave = false } = {}) {
+        const m = mode === 'on' || mode === 'purple' ? 'on' : 'off';
+        const select = document.getElementById('keyPressTintSelect');
+        if (select) select.value = m;
+        this.keyPressTint = m;
+        document.body.classList.toggle('no-key-press-tint', m === 'off');
+        this._updateKeyPressTintColorControls();
+        this._applyKeyPressTintColor();
+        if (!skipSave) this._saveSettings();
+    }
+
+    _hsvToRgb255(h, s, v) {
+        const hue = (((h % 360) + 360) % 360) / 60;
+        const sat = Math.max(0, Math.min(100, s)) / 100;
+        const val = Math.max(0, Math.min(100, v)) / 100;
+        const c = val * sat;
+        const x = c * (1 - Math.abs((hue % 2) - 1));
+        const m = val - c;
+        let r = 0, g = 0, b = 0;
+        if (hue < 1) [r, g, b] = [c, x, 0];
+        else if (hue < 2) [r, g, b] = [x, c, 0];
+        else if (hue < 3) [r, g, b] = [0, c, x];
+        else if (hue < 4) [r, g, b] = [0, x, c];
+        else if (hue < 5) [r, g, b] = [x, 0, c];
+        else [r, g, b] = [c, 0, x];
+        return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+    }
+
+    _applyKeyPressTintColor() {
+        const hue = this.keyPressTintHue ?? 256;
+        const sat = this.keyPressTintSat ?? 70;
+        const val = this.keyPressTintVal ?? 100;
+        if (hue === 256 && sat === 70 && val === 100) {
+            document.body.style.setProperty('--key-press-tint-top', '#7c4dff');
+            document.body.style.setProperty('--key-press-tint-bottom', '#6a3de8');
+            return;
+        }
+        const [r, g, b] = this._hsvToRgb255(hue, sat, val);
+        const bottom = this._hsvToRgb255(hue, sat, Math.max(0, val - 12));
+        document.body.style.setProperty('--key-press-tint-top', `rgb(${r}, ${g}, ${b})`);
+        document.body.style.setProperty('--key-press-tint-bottom', `rgb(${bottom[0]}, ${bottom[1]}, ${bottom[2]})`);
+    }
+
+    _updateKeyPressTintColorControls() {
+        const disabled = this.keyPressTint === 'off';
+        ['keyPressTintHue', 'keyPressTintSat', 'keyPressTintVal'].forEach((id) => {
+            const input = document.getElementById(id);
+            if (!input) return;
+            input.disabled = disabled;
+            const row = input.closest('.setting-row');
+            if (row) row.style.opacity = disabled ? '0.45' : '';
+        });
+    }
+
+    _updateStrokeGlowColorControls() {
+        const disabled = this.fxGlowSpread === 'none';
+        ['fxKeyGlowHue', 'fxKeyGlowSat', 'fxKeyGlowVal'].forEach((id) => {
+            const input = document.getElementById(id);
+            if (!input) return;
+            input.disabled = disabled;
+            const row = input.closest('.setting-row');
+            if (row) row.style.opacity = disabled ? '0.45' : '';
+        });
     }
 
     _applyFxPalette({ skipSave = false } = {}) {
@@ -2771,6 +2783,9 @@ class PianoHero {
                 ribbonHue: (this.fxSmokeHue || 0) / 360,
                 ribbonSat: (this.fxSmokeSat || 0) / 100,
                 ribbonVal: (this.fxSmokeVal || 0) / 100,
+                keyGlowHue: (this.fxKeyGlowHue || 0) / 360,
+                keyGlowSat: (this.fxKeyGlowSat || 0) / 100,
+                keyGlowVal: (this.fxKeyGlowVal || 0) / 100,
             });
         }
         if (!skipSave) this._saveSettings();
@@ -2794,6 +2809,12 @@ class PianoHero {
         setSlider('fxSmokeHue', d.smokeHue || 30, '°', (v) => { this.fxSmokeHue = v; });
         setSlider('fxSmokeSat', d.smokeSat || 55, '%', (v) => { this.fxSmokeSat = v; });
         setSlider('fxSmokeVal', d.smokeVal || 100, '%', (v) => { this.fxSmokeVal = v; });
+        setSlider('fxKeyGlowHue', d.keyGlowHue || 200, '°', (v) => { this.fxKeyGlowHue = v; });
+        setSlider('fxKeyGlowSat', d.keyGlowSat || 70, '%', (v) => { this.fxKeyGlowSat = v; });
+        setSlider('fxKeyGlowVal', d.keyGlowVal || 100, '%', (v) => { this.fxKeyGlowVal = v; });
+        setSlider('keyPressTintHue', d.keyPressTintHue || 256, '°', (v) => { this.keyPressTintHue = v; this._applyKeyPressTintColor(); });
+        setSlider('keyPressTintSat', d.keyPressTintSat || 70, '%', (v) => { this.keyPressTintSat = v; this._applyKeyPressTintColor(); });
+        setSlider('keyPressTintVal', d.keyPressTintVal || 100, '%', (v) => { this.keyPressTintVal = v; this._applyKeyPressTintColor(); });
 
         this._applyFxPalette();
     }
@@ -2804,12 +2825,6 @@ class PianoHero {
                 // Ultra-performance: route everything through Pixi, disable Canvas 2D overlay.
                 // No particles, no lane cache draw, no timeline, no labels, no force field.
                 return {
-                    sparkleEnabled: false,
-                    particleStyle: 'sparkle',
-                    sparkle: 0,
-                    sparkleHeight: 70,
-                    waveEnabled: false,
-                    waveCount: 0,
                     neonGlow: false,
                     forceField: false,
                     compactGameArea: true,
@@ -2819,24 +2834,12 @@ class PianoHero {
                 // Performance default: turn off every scenic extra so update/render
                 // stay close to what OnlinePianist does on its compact player.
                 return {
-                    sparkleEnabled: false,
-                    particleStyle: 'sparkle',
-                    sparkle: 0,
-                    sparkleHeight: 70,
-                    waveEnabled: false,
-                    waveCount: 1,
                     neonGlow: false,
                     forceField: false,
                     compactGameArea: true,
                 };
             case 'medium':
                 return {
-                    sparkleEnabled: true,
-                    particleStyle: 'sparkle',
-                    sparkle: 55,
-                    sparkleHeight: 85,
-                    waveEnabled: true,
-                    waveCount: 3,
                     neonGlow: false,
                     forceField: false,
                     compactGameArea: false,
@@ -2844,12 +2847,6 @@ class PianoHero {
             case 'high':
             default:
                 return {
-                    sparkleEnabled: true,
-                    particleStyle: 'sparkle',
-                    sparkle: 100,
-                    sparkleHeight: 100,
-                    waveEnabled: true,
-                    waveCount: 6,
                     neonGlow: true,
                     forceField: true,
                     compactGameArea: false,
@@ -2883,52 +2880,15 @@ class PianoHero {
         const config = this._getGraphicsPresetConfig(preset);
         this._applyingGraphicsPreset = true;
 
-        const sparkleToggle = document.getElementById('sparkleToggle');
-        const particleStyleSelect = document.getElementById('particleStyleSelect');
-        const sparkleSlider = document.getElementById('sparkleSlider');
-        const sparkleValue = document.getElementById('sparkleValue');
-        const sparkleHeightSlider = document.getElementById('sparkleHeightSlider');
-        const sparkleHeightValue = document.getElementById('sparkleHeightValue');
-        const particleStyleRow = document.getElementById('particleStyleRow');
-        const sparkleSliderRow = document.getElementById('sparkleSliderRow');
-        const sparkleHeightRow = document.getElementById('sparkleHeightRow');
-        const waveToggle = document.getElementById('waveToggle');
-        const waveCountSlider = document.getElementById('waveCountSlider');
-        const waveCountVal = document.getElementById('waveCountVal');
         const neonGlowToggle = document.getElementById('neonGlowToggle');
         const forceFieldToggle = document.getElementById('forceFieldToggle');
 
-        this.sparkleEnabled = config.sparkleEnabled;
-        sparkleToggle.checked = config.sparkleEnabled;
-        if (!config.sparkleEnabled) this.particles = [];
-        [particleStyleRow, sparkleSliderRow, sparkleHeightRow].forEach((el) => {
-            if (el) el.style.display = config.sparkleEnabled ? '' : 'none';
-        });
-
-        this.particleStyle = config.particleStyle;
-        particleStyleSelect.value = config.particleStyle;
-
-        this.sparkleIntensity = config.sparkle / 100;
-        sparkleSlider.value = config.sparkle;
-        sparkleValue.textContent = config.sparkle + '%';
-
-        this.sparkleHeight = config.sparkleHeight / 100;
-        sparkleHeightSlider.value = config.sparkleHeight;
-        sparkleHeightValue.textContent = config.sparkleHeight + '%';
-
-        this.waveEnabled = config.waveEnabled;
-        waveToggle.checked = config.waveEnabled;
-
-        this.waveCount = config.waveCount;
-        waveCountSlider.value = config.waveCount;
-        waveCountVal.textContent = config.waveCount;
-
         this.neonGlowEnabled = config.neonGlow;
-        neonGlowToggle.checked = config.neonGlow;
+        if (neonGlowToggle) neonGlowToggle.checked = config.neonGlow;
         this._applyNeonGlowCSS();
 
         this.forceFieldEnabled = config.forceField;
-        forceFieldToggle.checked = config.forceField;
+        if (forceFieldToggle) forceFieldToggle.checked = config.forceField;
         this._laneCacheDirty = true;
 
         this._applyCompactGameArea(config.compactGameArea);
@@ -2985,7 +2945,6 @@ class PianoHero {
                 this.noteStyle = 'beam';
                 sel.value = 'beam';
             }
-            this.particles = [];
         } else if (this._prevNoteStyleBeforeUltra) {
             const sel = document.getElementById('noteStyleSelect');
             this.noteStyle = this._prevNoteStyleBeforeUltra;
@@ -3113,41 +3072,41 @@ class PianoHero {
                 sel.dispatchEvent(new Event('change'));
             }
         }
-        if (settings.timingFeedback != null) {
-            const cb = document.getElementById('timingFeedbackToggle');
-            cb.checked = settings.timingFeedback;
-            cb.dispatchEvent(new Event('change'));
-        }
-        if (settings.timingFeedbackMode) {
+        if (settings.timingFeedbackMode || settings.timingFeedback != null) {
             const sel = document.getElementById('timingFeedbackModeSelect');
-            sel.value = settings.timingFeedbackMode;
-            this.timingFeedbackMode = settings.timingFeedbackMode;
-        }
-        if (settings.sparkleEnabled != null) {
-            const cb = document.getElementById('sparkleToggle');
-            cb.checked = settings.sparkleEnabled;
-            cb.dispatchEvent(new Event('change'));
-        }
-        if (settings.sparkle != null) {
-            const s = document.getElementById('sparkleSlider');
-            s.value = settings.sparkle;
-            s.dispatchEvent(new Event('input'));
-        }
-        if (settings.sparkleHeight != null) {
-            const s = document.getElementById('sparkleHeightSlider');
-            s.value = settings.sparkleHeight;
-            s.dispatchEvent(new Event('input'));
-        }
-        if (settings.particleStyle) {
-            const sel = document.getElementById('particleStyleSelect');
-            sel.value = settings.particleStyle;
-            sel.dispatchEvent(new Event('change'));
+            const savedMode = settings.timingFeedbackMode || 'individual';
+            const mode = settings.timingFeedback === false ? 'none' : savedMode;
+            sel.value = mode;
+            this.showTimingFeedback = mode !== 'none';
+            this.timingFeedbackMode = this.showTimingFeedback ? mode : 'individual';
         }
         if (settings.laneStyle) {
             const sel = document.getElementById('laneStyleSelect');
-            sel.value = settings.laneStyle;
-            sel.dispatchEvent(new Event('change'));
+            if (sel) sel.value = settings.laneStyle;
+            this.laneStyle = settings.laneStyle;
+            this._laneCacheDirty = true;
         }
+        this._applyKeyPressTint(settings.keyPressTint || 'off', { skipSave: true });
+        if (settings.keyPressTintHue != null) {
+            const s = document.getElementById('keyPressTintHue');
+            s.value = settings.keyPressTintHue;
+            document.getElementById('keyPressTintHueVal').textContent = s.value + '°';
+            this.keyPressTintHue = parseInt(s.value, 10) || 0;
+        }
+        if (settings.keyPressTintSat != null) {
+            const s = document.getElementById('keyPressTintSat');
+            s.value = settings.keyPressTintSat;
+            document.getElementById('keyPressTintSatVal').textContent = s.value + '%';
+            this.keyPressTintSat = parseInt(s.value, 10) || 0;
+        }
+        if (settings.keyPressTintVal != null) {
+            const s = document.getElementById('keyPressTintVal');
+            s.value = settings.keyPressTintVal;
+            document.getElementById('keyPressTintValVal').textContent = s.value + '%';
+            this.keyPressTintVal = parseInt(s.value, 10) || 0;
+        }
+        this._applyKeyPressTintColor();
+        this._updateKeyPressTintColorControls();
         if (settings.coplayAutoVolume != null) {
             const s = document.getElementById('coplayAutoVolume');
             s.value = settings.coplayAutoVolume;
@@ -3166,7 +3125,7 @@ class PianoHero {
         }
         if (settings.noteStyle) {
             const sel = document.getElementById('noteStyleSelect');
-            sel.value = settings.noteStyle;
+            if (sel) sel.value = settings.noteStyle;
             this.noteStyle = settings.noteStyle;
         }
         if (settings.showNoteNames != null) {
@@ -3174,47 +3133,41 @@ class PianoHero {
             const cb = document.getElementById('showNoteNamesToggle');
             if (cb) cb.checked = this.showNoteNames;
         }
-        if (settings.waveEnabled != null) {
-            const cb = document.getElementById('waveToggle');
-            cb.checked = settings.waveEnabled;
-            cb.dispatchEvent(new Event('change'));
-        }
-        if (settings.waveCount != null) {
-            const val = Math.max(1, parseInt(settings.waveCount) || 6);
-            const s = document.getElementById('waveCountSlider');
-            s.value = val;
-            document.getElementById('waveCountVal').textContent = val;
-            this.waveCount = val;
-        }
         if (settings.neonGlow != null) {
             const cb = document.getElementById('neonGlowToggle');
-            cb.checked = settings.neonGlow;
+            if (cb) cb.checked = settings.neonGlow;
             this.neonGlowEnabled = settings.neonGlow;
             this._applyNeonGlowCSS();
         }
         if (settings.forceField != null) {
             const cb = document.getElementById('forceFieldToggle');
-            cb.checked = settings.forceField;
+            if (cb) cb.checked = settings.forceField;
             this.forceFieldEnabled = settings.forceField;
             this._laneCacheDirty = true;
         }
         if (settings.bgOverlayOpacity != null) {
             const s = document.getElementById('bgOpacitySlider');
-            s.value = settings.bgOverlayOpacity;
-            document.getElementById('bgOpacityVal').textContent = settings.bgOverlayOpacity + '%';
+            if (s) s.value = settings.bgOverlayOpacity;
+            const val = document.getElementById('bgOpacityVal');
+            if (val) val.textContent = settings.bgOverlayOpacity + '%';
             this.bgOverlayOpacity = parseInt(settings.bgOverlayOpacity) / 100;
             this._applyOverlayOpacity();
             this._laneCacheDirty = true;
         }
 
-        if (settings.fxOnlyMode != null) {
-            const cb = document.getElementById('fxOnlyToggle');
-            if (cb) cb.checked = settings.fxOnlyMode;
-            this._applyFxOnlyMode(!!settings.fxOnlyMode, { skipSave: true });
-        }
+        this._applyFxOnlyMode(true, { skipSave: true });
 
-        if (settings.fxVisualizerMode) {
+        if (settings.fxStreamMode || settings.fxRibbonMode) {
+            this._applyFxStreamMode(settings.fxStreamMode || 'off', { skipSave: true });
+            this._applyFxStreamWidth(settings.fxStreamWidth || 'normal', { skipSave: true });
+            this._applyFxRibbonMode(settings.fxRibbonMode || 'strong', { skipSave: true });
+        } else if (settings.fxVisualizerMode) {
             this._applyFxVisualizerMode(settings.fxVisualizerMode, { skipSave: true });
+            this._applyFxStreamWidth(settings.fxStreamWidth || 'normal', { skipSave: true });
+        } else {
+            this._applyFxStreamMode('off', { skipSave: true });
+            this._applyFxStreamWidth('normal', { skipSave: true });
+            this._applyFxRibbonMode('strong', { skipSave: true });
         }
 
         if (settings.fxSplashMode) {
@@ -3264,6 +3217,24 @@ class PianoHero {
             s.value = settings.fxSmokeVal;
             document.getElementById('fxSmokeValVal').textContent = s.value + '%';
             this.fxSmokeVal = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxKeyGlowHue != null) {
+            const s = document.getElementById('fxKeyGlowHue');
+            s.value = settings.fxKeyGlowHue;
+            document.getElementById('fxKeyGlowHueVal').textContent = s.value + '°';
+            this.fxKeyGlowHue = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxKeyGlowSat != null) {
+            const s = document.getElementById('fxKeyGlowSat');
+            s.value = settings.fxKeyGlowSat;
+            document.getElementById('fxKeyGlowSatVal').textContent = s.value + '%';
+            this.fxKeyGlowSat = parseInt(s.value, 10) || 0;
+        }
+        if (settings.fxKeyGlowVal != null) {
+            const s = document.getElementById('fxKeyGlowVal');
+            s.value = settings.fxKeyGlowVal;
+            document.getElementById('fxKeyGlowValVal').textContent = s.value + '%';
+            this.fxKeyGlowVal = parseInt(s.value, 10) || 0;
         }
 
         this._applyFxPalette({ skipSave: true });
@@ -4073,7 +4044,6 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
-            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -4276,7 +4246,6 @@ class PianoHero {
                 this.updateScore();
                 this.showHitFeedback(note.note, true, 1);
                 this.heldFallingNotes.set(note.note, note);
-                this._emitHitBurst(note.note, note.hand || 0);
             }
             if (!this._keyElementCache) this._keyElementCache = {};
             let keyElement = this._keyElementCache[note.note];
@@ -4353,7 +4322,6 @@ class PianoHero {
         this._logicAccumulatorSec = 0;
         this.heldFallingNotes.clear();
         this.heldKeys.clear();
-        this.particles = [];
         // Stop all active note sounds
         for (const note of this.activeNoteSources.keys()) {
             this.stopNoteSound(note);
@@ -4807,7 +4775,6 @@ class PianoHero {
             this.updateScore();
             this.showHitFeedback(note, true, accuracy);
             this.heldFallingNotes.set(note, closestNote);
-            this._emitHitBurst(note, closestNote.hand || 0);
         } else {
             // Wrong key — show red miss feedback
             this.combo = 0;
@@ -5366,7 +5333,6 @@ class PianoHero {
                 time: this._frameTime / 1000,
                 neonGlow: this.neonGlowEnabled,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
-                waveCount: 0,
                 renderStartIdx: this._firstActiveIdx,
                 renderEndIdx: this._lastVisibleIdx,
             });
@@ -5381,7 +5347,7 @@ class PianoHero {
         if (this._laneCacheDirty || !this._laneCanvas) {
             this._rebuildLaneCache();
         }
-        if (this._laneCanvas && !this.fxOnlyMode) {
+        if (this._laneCanvas) {
             ctx.drawImage(this._laneCanvas, 0, 0);
         }
         
@@ -5395,7 +5361,7 @@ class PianoHero {
         const speed = this.speedMultiplier;
 
         if (this.glRenderer && this.glRenderer.available) {
-            // === PixiJS GPU-accelerated rendering (notes + wave ribbons) ===
+            // === PixiJS GPU-accelerated note rendering ===
             this.glRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
                 noteSpeed: this.noteSpeed,
                 speedMultiplier: speed,
@@ -5410,7 +5376,6 @@ class PianoHero {
                 time: this._frameTime / 1000,
                 neonGlow: this.neonGlowEnabled,
                 bgOverlayOpacity: this.laneStyle === 'synthesia' ? this.bgOverlayOpacity : 0,
-                waveCount: (this.waveEnabled && !this.fxOnlyMode) ? (this.waveCount || 6) : 0,
                 renderStartIdx: this._firstActiveIdx,
                 renderEndIdx: this._lastVisibleIdx,
             });
@@ -5421,11 +5386,6 @@ class PianoHero {
             this._drawNoteLabels(ctx, speed, canvasH);
         } else {
             // === Canvas 2D fallback ===
-            // Pre-render shared wave overlay once per frame for classic bars
-            if (this.noteStyle === 'classic') {
-                this._renderWaveOverlay();
-            }
-
             // If neon glow is enabled, draw notes to a glow canvas first for bloom
             if (this.neonGlowEnabled) {
                 this._ensureGlowCanvas(w, h);
@@ -5468,10 +5428,6 @@ class PianoHero {
         if (this.forceFieldEnabled) {
             this._drawForceField(ctx, w);
         }
-
-        // Emit and draw sparkle particles for held notes
-        this._emitHeldNoteParticles();
-        this._updateAndDrawParticles(ctx);
 
         if (this.pianoFx) {
             const delta = (this._frameTime - (this._lastFxFrame || this._frameTime)) / 16.6667;
@@ -5565,16 +5521,10 @@ class PianoHero {
             }
         }
 
-        // Draw hit zone bar (note-thickness, just above the keyboard)
-        // Skip static hit bar if force field is enabled (drawn dynamically each frame)
-        const hitBarHeight = 12;
-        if (this.forceFieldEnabled) {
-            // Force field is animated — skip static bar rendering
-        } else if (style === 'synthesia') {
-            // Synthesia: golden hit bar with note-letter labels
+        if (this.fxRibbonMode === 'hitbar') {
+            const hitBarHeight = 12;
             lctx.fillStyle = 'rgba(218, 165, 32, 0.7)';
             lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
-            // Note letter labels inside the hit bar
             lctx.font = `bold ${Math.max(9, Math.min(11, this.keyWidth * 0.45))}px sans-serif`;
             lctx.textAlign = 'center';
             lctx.textBaseline = 'middle';
@@ -5585,25 +5535,6 @@ class PianoHero {
                 const cx = pos.left + pos.width / 2;
                 lctx.fillStyle = 'rgba(255, 223, 100, 0.8)';
                 lctx.fillText(letter, cx, this.hitZoneY - hitBarHeight / 2);
-            }
-        } else {
-            lctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-            lctx.fillRect(0, this.hitZoneY - hitBarHeight, w, hitBarHeight);
-        }
-
-        // Draw hit zone indicators
-        if (style !== 'synthesia' && !this.forceFieldEnabled) {
-            for (const [note, pos] of Object.entries(this.keyPositions)) {
-                const iw = pos.width * 0.9;
-                const ih = hitBarHeight;
-                const ix = pos.left + (pos.width - iw) / 2;
-                const iy = this.hitZoneY - ih;
-                lctx.fillStyle = pos.isBlack ? 
-                    'rgba(156, 39, 176, 0.4)' : 'rgba(33, 150, 243, 0.4)';
-                lctx.fillRect(ix, iy, iw, ih);
-                lctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-                lctx.lineWidth = 2;
-                lctx.strokeRect(ix, iy, iw, ih);
             }
         }
 
@@ -5730,82 +5661,6 @@ class PianoHero {
             }
             ctx.strokeText(note.note, pos.x, labelY);
             ctx.fillText(note.note, pos.x, labelY);
-        }
-    }
-
-    /** Render the shared wave animation overlay (called once per frame when classic bars are active) */
-    _renderWaveOverlay() {
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-        if (!this._waveCanvas || this._waveCanvas.width !== w || this._waveCanvas.height !== h) {
-            this._waveCanvas = document.createElement('canvas');
-            this._waveCanvas.width = w;
-            this._waveCanvas.height = h;
-            this._waveCtx = this._waveCanvas.getContext('2d');
-        }
-        const wctx = this._waveCtx;
-        wctx.clearRect(0, 0, w, h);
-
-        const t = performance.now() / 1000;
-
-        // Smooth flowing ribbon waves (reduced for performance)
-        const ribbons = [
-            { yBase: 0.25, thickness: 0.20, freq: 0.5, amp: 0.13, speed: 0.4, hue: 170, sat: 50, alpha: 0.25 },
-            { yBase: 0.55, thickness: 0.22, freq: 0.6, amp: 0.12, speed: -0.35, hue: 200, sat: 50, alpha: 0.22 },
-            { yBase: 0.80, thickness: 0.18, freq: 0.45, amp: 0.10, speed: 0.5, hue: 180, sat: 55, alpha: 0.20 },
-        ];
-
-        const segments = 5; // bezier control points across width
-
-        for (const ribbon of ribbons) {
-            // Compute top and bottom edges of ribbon using smooth sine curves
-            const topPoints = [];
-            const botPoints = [];
-            for (let i = 0; i <= segments; i++) {
-                const frac = i / segments;
-                const px = frac * w;
-                const phase = frac * Math.PI * 2 * ribbon.freq + t * ribbon.speed;
-                const wave = Math.sin(phase) * ribbon.amp * h;
-                const wave2 = Math.sin(phase * 1.3 + 1.7) * ribbon.amp * h * 0.3;
-                const centerY = ribbon.yBase * h + wave + wave2;
-                const halfThick = ribbon.thickness * h * 0.5 * (0.7 + 0.3 * Math.sin(frac * Math.PI));
-                topPoints.push({ x: px, y: centerY - halfThick });
-                botPoints.push({ x: px, y: centerY + halfThick });
-            }
-
-            // Draw ribbon as a filled path using smooth curves
-            wctx.beginPath();
-            wctx.moveTo(topPoints[0].x, topPoints[0].y);
-            // Top edge (left to right) — smooth quadratic through points
-            for (let i = 1; i < topPoints.length; i++) {
-                const prev = topPoints[i - 1];
-                const curr = topPoints[i];
-                const cpx = (prev.x + curr.x) / 2;
-                const cpy = (prev.y + curr.y) / 2;
-                wctx.quadraticCurveTo(prev.x + (curr.x - prev.x) * 0.5, prev.y, cpx, cpy);
-            }
-            wctx.lineTo(topPoints[topPoints.length - 1].x, topPoints[topPoints.length - 1].y);
-            // Bottom edge (right to left)
-            wctx.lineTo(botPoints[botPoints.length - 1].x, botPoints[botPoints.length - 1].y);
-            for (let i = botPoints.length - 2; i >= 0; i--) {
-                const prev = botPoints[i + 1];
-                const curr = botPoints[i];
-                const cpx = (prev.x + curr.x) / 2;
-                const cpy = (prev.y + curr.y) / 2;
-                wctx.quadraticCurveTo(prev.x + (curr.x - prev.x) * 0.5, prev.y, cpx, cpy);
-            }
-            wctx.closePath();
-
-            // Fill with a gradient along the ribbon height
-            const midY = ribbon.yBase * h;
-            const grad = wctx.createLinearGradient(0, midY - ribbon.thickness * h * 0.5, 0, midY + ribbon.thickness * h * 0.5);
-            grad.addColorStop(0, `hsla(${ribbon.hue}, ${ribbon.sat}%, 75%, ${ribbon.alpha * 0.3})`);
-            grad.addColorStop(0.3, `hsla(${ribbon.hue}, ${ribbon.sat}%, 85%, ${ribbon.alpha})`);
-            grad.addColorStop(0.5, `hsla(${ribbon.hue}, ${ribbon.sat + 10}%, 90%, ${ribbon.alpha * 1.2})`);
-            grad.addColorStop(0.7, `hsla(${ribbon.hue}, ${ribbon.sat}%, 85%, ${ribbon.alpha})`);
-            grad.addColorStop(1, `hsla(${ribbon.hue}, ${ribbon.sat}%, 75%, ${ribbon.alpha * 0.3})`);
-            wctx.fillStyle = grad;
-            wctx.fill();
         }
     }
 
@@ -6016,517 +5871,6 @@ class PianoHero {
         }
 
         ctx.restore();
-    }
-
-    /** Emit a one-time burst of sparkle particles when a note is hit */
-    _emitHitBurst(noteName, hand) {
-        if (!this.sparkleEnabled || this.sparkleIntensity <= 0) return;
-        const pos = this.keyPositions[noteName];
-        if (!pos) return;
-        if (!this._particlePool) this._particlePool = [];
-        const pool = this._particlePool;
-        const isBlackKey = pos.isBlack;
-
-        // ── Starburst: bright hemispherical light explosion (dome + halo of fine spikes) ──
-        if (this.particleStyle === 'starburst') {
-            const originX = pos.x;
-            const originY = this.hitZoneY - 2;
-            const intensity = Math.max(0.4, this.sparkleIntensity);
-            const heightMul = Math.max(0.4, this.sparkleHeight);
-            const heightT = Math.max(0, Math.min(1, (heightMul - 0.4) / 0.6));
-            const domeMinScale = 0.75 * (1 - heightT);
-
-            // 1) Big soft glowing dome (single particle, slow fade)
-            const dome = pool.pop() || {};
-            dome.x = originX;
-            dome.y = originY;
-            dome.vx = 0; dome.vy = 0;
-            dome.life = 1.0;
-            dome.decay = 0.012;
-            dome.size = Math.max(
-                (28 + Math.random() * 8) * intensity * heightMul,
-                (28 * domeMinScale) * intensity
-            );
-            dome.type = 'starburst-dome';
-            this.particles.push(dome);
-
-            // 2) Inner bright white-hot core (smaller, faster fade — gives the "flash" punch)
-            const core = pool.pop() || {};
-            core.x = originX;
-            core.y = originY;
-            core.vx = 0; core.vy = 0;
-            core.life = 1.0;
-            core.decay = 0.03;
-            core.size = (14 + Math.random() * 4) * intensity;
-            core.type = 'starburst-core';
-            this.particles.push(core);
-
-            // 3) Halo of many fine short spikes in a ~180° upward fan
-            const spikeCount = Math.round(48 * intensity);
-            const baseAngle = -Math.PI / 2;
-            const spread = Math.PI * 1.02; // ~184° (slightly past horizontal)
-            for (let i = 0; i < spikeCount; i++) {
-                const t = (i + 0.5) / spikeCount;
-                const angle = baseAngle - spread / 2 + spread * t + (Math.random() - 0.5) * 0.08;
-                // Most spikes short (halo), a few longer needles for dynamism
-                const isLongNeedle = Math.random() < 0.18;
-                const len = isLongNeedle
-                    ? (34 + Math.random() * 28) * heightMul
-                    : (10 + Math.random() * 14) * heightMul;
-                // Keep the spike origin near center at low height and never beyond its own length.
-                const innerBase = (6 + Math.random() * 4) * (0.75 - 0.25 * heightT);
-                const innerR = Math.min(innerBase, len * 0.35);
-                // Color: 90% pure white-warm, 10% subtle hand tint for character
-                let color;
-                if (Math.random() < 0.9) {
-                    color = `hsla(${50 + Math.random() * 10}, 100%, ${94 + Math.random() * 6}%, 1)`;
-                } else if (hand === 0) {
-                    color = `hsla(${140 + Math.random() * 20}, 95%, 82%, 1)`;
-                } else {
-                    color = `hsla(${200 + Math.random() * 20}, 95%, 82%, 1)`;
-                }
-                const p = pool.pop() || {};
-                p.x = originX;
-                p.y = originY;
-                p.vx = 0; p.vy = 0;
-                p.life = 1.0;
-                p.decay = isLongNeedle ? 0.018 + Math.random() * 0.012 : 0.028 + Math.random() * 0.018;
-                p.size = isLongNeedle ? 0.9 + Math.random() * 0.6 : 0.6 + Math.random() * 0.5;
-                p.spikeAngle = angle;
-                p.spikeLength = len;
-                p.spikeInner = innerR;
-                p.color = color;
-                p.type = 'starburst-spike';
-                this.particles.push(p);
-            }
-
-            // 4) Sprinkle a few sparkle dots flying upward for extra texture
-            const sparkCount = Math.round(10 * intensity);
-            for (let i = 0; i < sparkCount; i++) {
-                const angle = baseAngle - 0.6 + Math.random() * 1.2;
-                const speed = 1.5 + Math.random() * 2.8;
-                const s = pool.pop() || {};
-                s.x = originX + Math.cos(angle) * 4;
-                s.y = originY + Math.sin(angle) * 4;
-                s.vx = Math.cos(angle) * speed;
-                s.vy = Math.sin(angle) * speed;
-                s.life = 1.0;
-                s.decay = 0.012 + Math.random() * 0.010;
-                s.size = 1.0 + Math.random() * 1.2;
-                s.color = `hsla(${50 + Math.random() * 10}, 100%, 95%, 1)`;
-                s.type = 'starburst-spark';
-                this.particles.push(s);
-            }
-            return;
-        }
-
-        const burstCount = Math.max(2, Math.round((this.particleStyle === 'splash' ? 8 : this.particleStyle === 'ivory' ? 10 : 5) * this.sparkleIntensity));
-        for (let i = 0; i < burstCount; i++) {
-            if (this.particleStyle === 'ivory') {
-                // Rising glowing dot — small, slow drift up, long fade
-                let color;
-                if (hand === 0) {
-                    const hue = isBlackKey ? 160 + Math.random() * 20 : 140 + Math.random() * 20;
-                    color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
-                } else {
-                    const hue = isBlackKey ? 220 + Math.random() * 20 : 200 + Math.random() * 20;
-                    color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
-                }
-                const p = pool.pop() || {};
-                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.9;
-                p.y = this.hitZoneY - 6 - Math.random() * 8;
-                p.vx = (Math.random() - 0.5) * 0.6;
-                p.vy = -(0.8 + Math.random() * 1.4) * this.sparkleHeight;
-                p.life = 1.0;
-                p.decay = (0.008 + Math.random() * 0.008) / Math.max(this.sparkleHeight, 0.3);
-                p.size = 1.5 + Math.random() * 2.5;
-                p.color = color;
-                p.type = 'ivory';
-                this.particles.push(p);
-            } else if (this.particleStyle === 'splash') {
-                const isWhite = Math.random() < 0.3;
-                let color;
-                if (isWhite) {
-                    color = `hsla(200, 100%, ${90 + Math.random() * 10}%, 0.95)`;
-                } else if (hand === 0) {
-                    const hue = isBlackKey ? 160 + Math.random() * 40 : 140 + Math.random() * 40;
-                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
-                } else {
-                    const hue = isBlackKey ? 210 + Math.random() * 40 : 190 + Math.random() * 40;
-                    color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
-                }
-                const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2;
-                const speed = (3.0 + Math.random() * 4.0) * this.sparkleHeight;
-                const spikeLen = (18 + Math.random() * 28) * this.sparkleHeight;
-                const p = pool.pop() || {};
-                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.5;
-                p.y = this.hitZoneY - 12 - Math.random() * 3;
-                p.vx = Math.cos(angle) * speed;
-                p.vy = Math.sin(angle) * speed;
-                p.life = 1.0;
-                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
-                p.size = 1.8 + Math.random() * 2.2;
-                p.spikeLength = spikeLen;
-                p.spikeAngle = angle;
-                p.color = color;
-                p.type = 'splash';
-                this.particles.push(p);
-            } else {
-                const isWhite = Math.random() < 0.35;
-                let color;
-                if (isWhite) {
-                    color = `hsl(0, 0%, ${85 + Math.random() * 15}%)`;
-                } else if (hand === 0) {
-                    const baseHue = isBlackKey ? 150 + Math.random() * 30 : 120 + Math.random() * 30;
-                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
-                } else {
-                    const baseHue = isBlackKey ? 230 + Math.random() * 30 : 200 + Math.random() * 30;
-                    color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
-                }
-                const p = pool.pop() || {};
-                p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.8;
-                p.y = this.hitZoneY - 12 - Math.random() * 10;
-                p.vx = (Math.random() - 0.5) * 2.0;
-                p.vy = -(Math.random() * 5 + 3.0) * this.sparkleHeight;
-                p.life = 1.0;
-                p.decay = (0.02 + Math.random() * 0.018) / Math.max(this.sparkleHeight, 0.3);
-                p.size = 2.0 + Math.random() * 2.5;
-                p.length = (10 + Math.random() * 16) * this.sparkleHeight;
-                p.color = color;
-                p.type = 'sparkle';
-                this.particles.push(p);
-            }
-        }
-    }
-
-    _emitHeldNoteParticles() {
-        if (!this.isPlaying || this.isPaused || this.sparkleIntensity <= 0 || !this.sparkleEnabled) return;
-        // Reusable pool to avoid GC pressure
-        if (!this._particlePool) this._particlePool = [];
-        const pool = this._particlePool;
-
-        for (const [noteName, fallingNote] of this.heldFallingNotes) {
-            // Only sparkle while the note body still overlaps the hit zone
-            const dur = fallingNote.duration || 0.15;
-            const noteH = this._visibleNoteHeight(dur, this.speedMultiplier || 1);
-            const noteTop = fallingNote.y - noteH;
-            if (noteTop > this.hitZoneY) {
-                // Note scrolled past — skip sparkle but don't delete held state
-                // (cleanup happens in update() when note leaves the screen)
-                continue;
-            }
-
-            // In manual mode, only sparkle while the key is physically held down
-            if (!this.isAutoPlay) {
-                const boundKey = this.noteToKey[noteName];
-                if (boundKey) {
-                    if (!this.heldKeys.has(boundKey)) continue;
-                } else {
-                    if (!this._keyElementCache) this._keyElementCache = {};
-                    let el = this._keyElementCache[noteName];
-                    if (el === undefined) {
-                        el = document.querySelector(`.key[data-note="${noteName}"]`);
-                        this._keyElementCache[noteName] = el || null;
-                    }
-                    if (!el || !el.classList.contains('active')) continue;
-                }
-            }
-
-            const pos = this.keyPositions[noteName];
-            if (!pos) continue;
-            const hand = fallingNote.hand || 0;
-            const isBlackKey = pos.isBlack;
-
-            // Starburst is a one-shot effect fired on hit only; no continuous emission
-            // while held (otherwise the screen fills with overlapping ray fans).
-            if (this.particleStyle === 'starburst') continue;
-
-            if (this.particleStyle === 'ivory') {
-                // Ivory: continuous rising glowing dots while note is held
-                const baseCount = Math.random() < 0.6 ? 2 : 1;
-                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
-                for (let i = 0; i < count; i++) {
-                    let color;
-                    if (hand === 0) {
-                        const hue = isBlackKey ? 160 + Math.random() * 20 : 140 + Math.random() * 20;
-                        color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
-                    } else {
-                        const hue = isBlackKey ? 220 + Math.random() * 20 : 200 + Math.random() * 20;
-                        color = `hsla(${hue}, 90%, ${70 + Math.random() * 15}%, 0.95)`;
-                    }
-                    const p = pool.pop() || {};
-                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.9;
-                    p.y = this.hitZoneY - 6 - Math.random() * 6;
-                    p.vx = (Math.random() - 0.5) * 0.4;
-                    p.vy = -(0.7 + Math.random() * 1.2) * this.sparkleHeight;
-                    p.life = 1.0;
-                    p.decay = (0.007 + Math.random() * 0.007) / Math.max(this.sparkleHeight, 0.3);
-                    p.size = 1.5 + Math.random() * 2.2;
-                    p.color = color;
-                    p.type = 'ivory';
-                    this.particles.push(p);
-                }
-            } else if (this.particleStyle === 'splash') {
-                // Splash: sharp spiky bursts radiating outward from hit zone
-                const baseCount = Math.random() < 0.4 ? 5 : 4;
-                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
-                for (let i = 0; i < count; i++) {
-                    const isWhite = Math.random() < 0.3;
-                    let color;
-                    if (isWhite) {
-                        color = `hsla(200, 100%, ${90 + Math.random() * 10}%, 0.95)`;
-                    } else if (hand === 0) {
-                        const hue = isBlackKey ? 160 + Math.random() * 40 : 140 + Math.random() * 40;
-                        color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
-                    } else {
-                        const hue = isBlackKey ? 210 + Math.random() * 40 : 190 + Math.random() * 40;
-                        color = `hsla(${hue}, 80%, ${60 + Math.random() * 20}%, 0.9)`;
-                    }
-                    // Spread in a fan upward with some randomness
-                    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.0;
-                    const speed = (2.0 + Math.random() * 3.5) * this.sparkleHeight;
-                    const spikeLen = (15 + Math.random() * 25) * this.sparkleHeight;
-                    const p = pool.pop() || {};
-                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.4;
-                    p.y = this.hitZoneY - 12 - Math.random() * 2;
-                    p.vx = Math.cos(angle) * speed;
-                    p.vy = Math.sin(angle) * speed;
-                    p.life = 1.0;
-                    p.decay = (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3);
-                    p.size = 1.5 + Math.random() * 2.0;
-                    p.spikeLength = spikeLen;
-                    p.spikeAngle = angle;
-                    p.color = color;
-                    p.type = 'splash';
-                    this.particles.push(p);
-                }
-            } else {
-                // Sparkle (default): beam/streak particles
-                const baseCount = Math.random() < 0.5 ? 3 : 2;
-                const count = Math.max(1, Math.round(baseCount * this.sparkleIntensity));
-                for (let i = 0; i < count; i++) {
-                    const isWhite = Math.random() < 0.35;
-                    let color;
-                    if (isWhite) {
-                        color = `hsl(0, 0%, ${85 + Math.random() * 15}%)`;
-                    } else if (hand === 0) {
-                        const baseHue = isBlackKey ? 150 + Math.random() * 30 : 120 + Math.random() * 30;
-                        color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
-                    } else {
-                        const baseHue = isBlackKey ? 230 + Math.random() * 30 : 200 + Math.random() * 30;
-                        color = `hsl(${baseHue}, 80%, ${50 + Math.random() * 20}%)`;
-                    }
-                    const p = pool.pop() || {};
-                    p.x = pos.x + (Math.random() - 0.5) * pos.width * 0.7;
-                    p.y = this.hitZoneY - 12 - Math.random() * 8;
-                    p.vx = (Math.random() - 0.5) * 1.5;
-                    p.vy = -(Math.random() * 4 + 2.5) * this.sparkleHeight;
-                    p.life = 1.0;
-                    p.decay = (0.018 + Math.random() * 0.015) / Math.max(this.sparkleHeight, 0.3);
-                    p.size = 1.5 + Math.random() * 2.5;
-                    p.length = (8 + Math.random() * 14) * this.sparkleHeight;
-                    p.color = color;
-                    p.type = 'sparkle';
-                    this.particles.push(p);
-                }
-            }
-        }
-    }
-
-    _updateAndDrawParticles(ctx) {
-        const pool = this._particlePool || (this._particlePool = []);
-        for (let i = this.particles.length - 1; i >= 0; i--) {
-            const p = this.particles[i];
-            p.x += p.vx;
-            p.y += p.vy;
-            p.life -= p.decay;
-            if (p.life <= 0) {
-                const last = this.particles.length - 1;
-                if (i !== last) this.particles[i] = this.particles[last];
-                this.particles.pop();
-                if (pool.length < 500) pool.push(p); // recycle
-                continue;
-            }
-
-            if (p.type === 'starburst-dome') {
-                // Big soft hemispherical glow above the hit zone — the "halo of light".
-                // Grows quickly then fades. Clipped to upper hemisphere so it sits
-                // on the hit bar instead of bleeding into the keyboard.
-                const grow = Math.min(1, (1 - p.life) * 4.0);
-                const sz = p.size * (0.55 + 0.45 * grow);
-                // Ease-out: hold high alpha then fade gently at the end
-                const alpha = Math.sqrt(p.life) * 0.85;
-                ctx.save();
-                // Clip to a rectangle above the origin so we render only the top half.
-                ctx.beginPath();
-                const heightMul = Math.max(0.4, this.sparkleHeight);
-                const heightT = Math.max(0, Math.min(1, (heightMul - 0.4) / 0.6));
-                const clipDown = sz * (0.22 + 0.2 * (1 - heightT));
-                ctx.rect(p.x - sz * 1.4, p.y - sz * 1.4, sz * 2.8, sz * 1.4 + clipDown);
-                ctx.clip();
-                ctx.shadowColor = 'rgba(255, 245, 215, 1)';
-                ctx.shadowBlur = 40 * this.sparkleIntensity;
-                ctx.globalAlpha = alpha;
-                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, sz);
-                grad.addColorStop(0.0, 'rgba(255,255,255,1)');
-                grad.addColorStop(0.35, 'rgba(255,250,225,0.85)');
-                grad.addColorStop(0.7, 'rgba(255,225,170,0.35)');
-                grad.addColorStop(1.0, 'rgba(255,200,120,0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            } else if (p.type === 'starburst-core') {
-                // Bright white-hot core flash at the contact point.
-                const alpha = Math.sqrt(p.life);
-                const sz = p.size * (0.6 + 0.5 * (1 - p.life));
-                ctx.shadowColor = 'rgba(255, 250, 230, 1)';
-                ctx.shadowBlur = 24 * this.sparkleIntensity;
-                ctx.globalAlpha = alpha;
-                const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, sz);
-                grad.addColorStop(0.0, 'rgba(255,255,255,1)');
-                grad.addColorStop(0.5, 'rgba(255,250,220,0.9)');
-                grad.addColorStop(1.0, 'rgba(255,230,170,0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (p.type === 'starburst-spike') {
-                // Triangular ray (sunburst shape): wide at the base near the core,
-                // tapering to a sharp point at the tip.
-                const grow = Math.min(1, (1 - p.life) * 4.5);
-                const len = p.spikeLength * (0.3 + 0.7 * grow);
-                const alpha = Math.sqrt(p.life);
-                const ang = p.spikeAngle;
-                const cos = Math.cos(ang), sin = Math.sin(ang);
-                // Base point at inner radius
-                const bx = p.x + cos * p.spikeInner;
-                const by = p.y + sin * p.spikeInner;
-                // Tip at outer end
-                const tx = p.x + cos * (p.spikeInner + len);
-                const ty = p.y + sin * (p.spikeInner + len);
-                // Perpendicular for base width
-                const halfBase = Math.max(0.8, p.size * 1.8);
-                const px = -sin * halfBase;
-                const py = cos * halfBase;
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 8 * this.sparkleIntensity;
-                ctx.globalAlpha = alpha;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.moveTo(bx + px, by + py);
-                ctx.lineTo(bx - px, by - py);
-                ctx.lineTo(tx, ty);
-                ctx.closePath();
-                ctx.fill();
-            } else if (p.type === 'starburst-spark') {
-                // Tiny bright dot flying outward (drifts with vx/vy, gravity-free).
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vx *= 0.94;
-                p.vy *= 0.94;
-                const alpha = p.life;
-                const sz = p.size * (0.5 + 0.5 * p.life);
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 10 * this.sparkleIntensity;
-                ctx.globalAlpha = alpha;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (p.type === 'ivory') {
-                // Ivory rising dot: gentle upward drift, slight horizontal sway, long fade
-                p.vx *= 0.985;
-                // Very mild buoyancy (slows over time)
-                p.vy *= 0.995;
-                const alpha = p.life;
-                const sz = p.size * (0.6 + 0.4 * p.life);
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 10 * this.sparkleIntensity;
-                ctx.globalAlpha = alpha * 0.85;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
-                ctx.fill();
-                // Bright core
-                ctx.globalAlpha = alpha;
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = 'rgba(255,255,255,0.95)';
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, sz * 0.4, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (p.type === 'splash') {
-                // Splash: sharp spiky spines radiating outward
-                p.vy += 0.06;
-                p.vx *= 0.98;
-                const alpha = p.life * p.life;
-                const len = p.spikeLength * p.life;
-                const baseW = p.size * p.life;
-                const ang = p.spikeAngle;
-
-                // Spike tip position
-                const tipX = p.x + Math.cos(ang) * len;
-                const tipY = p.y + Math.sin(ang) * len;
-                // Perpendicular for base width
-                const perpX = -Math.sin(ang) * baseW;
-                const perpY = Math.cos(ang) * baseW;
-
-                // Glow
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 12 * this.sparkleIntensity;
-
-                // Draw spike as a sharp triangle
-                ctx.globalAlpha = alpha * 0.85;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.moveTo(tipX, tipY);
-                ctx.lineTo(p.x + perpX, p.y + perpY);
-                ctx.lineTo(p.x - perpX, p.y - perpY);
-                ctx.closePath();
-                ctx.fill();
-
-                // Bright core line along the spike center
-                ctx.globalAlpha = alpha * 0.95;
-                ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-                ctx.lineWidth = Math.max(0.5, baseW * 0.4);
-                ctx.lineCap = 'round';
-                ctx.beginPath();
-                ctx.moveTo(p.x, p.y);
-                ctx.lineTo(tipX, tipY);
-                ctx.stroke();
-            } else {
-                // Sparkle: beam/streak rendering (original)
-                p.vy += 0.03;
-                const alpha = p.life * p.life;
-                const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-                const beamLen = p.length * p.life;
-                const nx = speed > 0 ? p.vx / speed : 0;
-                const ny = speed > 0 ? p.vy / speed : -1;
-                const tailX = p.x - nx * beamLen;
-                const tailY = p.y - ny * beamLen;
-
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 8 * this.sparkleIntensity;
-
-                ctx.globalAlpha = alpha * 0.7;
-                ctx.strokeStyle = p.color;
-                ctx.lineWidth = p.size * p.life;
-                ctx.lineCap = 'round';
-                ctx.beginPath();
-                ctx.moveTo(tailX, tailY);
-                ctx.lineTo(p.x, p.y);
-                ctx.stroke();
-
-                ctx.globalAlpha = alpha;
-                ctx.fillStyle = '#fff';
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.size * p.life * 0.7, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
     }
 
     _drawTimeline() {

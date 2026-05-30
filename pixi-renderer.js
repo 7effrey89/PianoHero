@@ -1,4 +1,4 @@
-// PixiJS-based note & wave ribbon renderer for Piano Hero
+// PixiJS-based note renderer for Piano Hero
 // Replaces gl-renderer.js with PixiJS v8 for smoother GPU-accelerated rendering
 class PixiNoteRenderer {
     constructor(canvas) {
@@ -7,8 +7,6 @@ class PixiNoteRenderer {
         this.app = null;
         this.noteBgGraphics = null;   // note body fills (bottom layer)
         this.noteGlow = null;         // neon glow layer (blurred + additive)
-        this.waveGraphics = null;     // wave ribbons masked to note rects
-        this.waveMask = null;         // mask: union of all classic note rects
         this.noteOverlay = null;      // glossy strips + borders (top layer)
         this.notesGraphics = null;    // beam-style notes (when not classic)
         this._pendingResize = null;
@@ -44,14 +42,7 @@ class PixiNoteRenderer {
             this.noteBgGraphics = new PIXI.Graphics();
             this.app.stage.addChild(this.noteBgGraphics);
 
-            // Layer 2: Wave ribbons — masked to only show inside note rects
-            this.waveGraphics = new PIXI.Graphics();
-            this.waveMask = new PIXI.Graphics();
-            this.waveGraphics.mask = this.waveMask;
-            this.app.stage.addChild(this.waveGraphics);
-            this.app.stage.addChild(this.waveMask);
-
-            // Layer 3: Note overlay (glossy strip + border for classic; or full beam notes)
+            // Layer 2: Note overlay (glossy strip + border for classic; or full beam notes)
             this.noteOverlay = new PIXI.Graphics();
             this.app.stage.addChild(this.noteOverlay);
 
@@ -134,22 +125,18 @@ class PixiNoteRenderer {
     }
 
     /**
-     * Main render call — draws notes (with wave overlay masked inside classic bars),
-     * then flushes to GPU. Matches the GLNoteRenderer.renderNotes() signature.
+    * Main render call — draws notes, then flushes to GPU.
+    * Matches the GLNoteRenderer.renderNotes() signature.
      */
     renderNotes(fallingNotes, keyPositions, config) {
         if (!this.available) return;
 
         const glow = this.noteGlow;
         const bg = this.noteBgGraphics;
-        const wg = this.waveGraphics;
-        const wm = this.waveMask;
         const ov = this.noteOverlay;
         const ng = this.notesGraphics;
         glow.clear();
         bg.clear();
-        wg.clear();
-        wm.clear();
         ov.clear();
         ng.clear();
 
@@ -167,19 +154,12 @@ class PixiNoteRenderer {
             coPlayManualNotes, heldFallingNotes, neonGlow } = config;
 
         const isClassic = noteStyle === 'classic';
-        const waveCountCfg = config.waveCount || 0;
-        const wavesActive = isClassic && waveCountCfg > 0;
 
         // Layer culling — skip traversal of layers that won't draw this frame.
         ng.renderable = !isClassic;
         glow.renderable = !!neonGlow;
         bg.renderable = isClassic || config.bgOverlayOpacity > 0;
         ov.renderable = isClassic;
-        wg.renderable = wavesActive;
-        wm.renderable = wavesActive;
-
-        // Collect visible note rects for classic mode (needed for wave mask)
-        const classicNoteRects = wavesActive ? [] : null;
 
         // Visible-note windowing: only iterate notes near the viewport when provided
         const startIdx = (typeof config.renderStartIdx === 'number') ? config.renderStartIdx : 0;
@@ -199,94 +179,15 @@ class PixiNoteRenderer {
             if (topEdge >= canvasH || note.y <= -50) continue;
 
             if (isClassic) {
-                const rect = this._drawNoteClassicBody(glow, bg, ov, note, pos, noteSpeed, speedMultiplier, gameMode, heldFallingNotes, neonGlow);
-                if (rect && classicNoteRects) classicNoteRects.push(rect);
+                this._drawNoteClassicBody(glow, bg, ov, note, pos, noteSpeed, speedMultiplier, gameMode, heldFallingNotes, neonGlow);
             } else {
                 this._drawNoteBeam(glow, ng, note, pos, noteSpeed, speedMultiplier, gameMode,
                     practiceWaiting, practiceExpectedNotes, coPlayManualNotes, heldFallingNotes, neonGlow);
             }
         }
 
-        // Draw wave ribbons masked to classic note rects
-        if (wavesActive && classicNoteRects && classicNoteRects.length > 0) {
-            // Build mask from all note rects (rounded to match note shape)
-            for (const nr of classicNoteRects) {
-                wm.roundRect(nr.x, nr.y, nr.w, nr.h, nr.r || 4);
-            }
-            wm.fill({ color: 0xffffff });
-
-            // Draw full-screen wave ribbons (they'll be clipped by the mask)
-            this._drawWaveOverlay(wg, w, h, waveCountCfg);
-        }
-
         // Single GPU flush
         this.app.render();
-    }
-
-    // ─── Wave Ribbons (glass reflection style) ─────────────────────
-    _drawWaveOverlay(g, w, h, waveCount) {
-        const t = performance.now() / 1000;
-
-        // Pre-compute ribbon colors once
-        if (!PixiNoteRenderer._RIBBON_COLORS) {
-            PixiNoteRenderer._RIBBON_COLORS = PixiNoteRenderer._RIBBONS.map(
-                r => this._hslToHex(r.hue, r.sat, 92)
-            );
-        }
-
-        const count = Math.min(waveCount, PixiNoteRenderer._RIBBONS.length);
-        const segments = 8;
-
-        // Pre-allocate point arrays once (reused each ribbon)
-        if (!this._waveTopPts) {
-            this._waveTopPts = new Float64Array((segments + 1) * 2);
-            this._waveBotPts = new Float64Array((segments + 1) * 2);
-        }
-        const topPts = this._waveTopPts;
-        const botPts = this._waveBotPts;
-        const s1 = segments + 1;
-
-        for (let ri = 0; ri < count; ri++) {
-            const ribbon = PixiNoteRenderer._RIBBONS[ri];
-
-            for (let i = 0; i <= segments; i++) {
-                const frac = i / segments;
-                const px = frac * w;
-                const phase = frac * Math.PI * 2 * ribbon.freq + t * ribbon.speed;
-                const wave  = Math.sin(phase) * ribbon.amp * h;
-                const wave2 = Math.sin(phase * 1.3 + 1.7) * ribbon.amp * h * 0.3;
-                const centerY = ribbon.yBase * h + wave + wave2;
-                const halfThick = ribbon.thickness * h * 0.5 * (0.7 + 0.3 * Math.sin(frac * Math.PI));
-                topPts[i * 2] = px;
-                topPts[i * 2 + 1] = centerY - halfThick;
-                botPts[i * 2] = px;
-                botPts[i * 2 + 1] = centerY + halfThick;
-            }
-
-            // Top edge (left → right) with smooth quadratic curves
-            g.moveTo(topPts[0], topPts[1]);
-            for (let i = 1; i < s1; i++) {
-                const px0 = topPts[(i - 1) * 2], py0 = topPts[(i - 1) * 2 + 1];
-                const px1 = topPts[i * 2], py1 = topPts[i * 2 + 1];
-                const cpx = (px0 + px1) / 2;
-                const cpy = (py0 + py1) / 2;
-                g.quadraticCurveTo(px0 + (px1 - px0) * 0.5, py0, cpx, cpy);
-            }
-            g.lineTo(topPts[(s1 - 1) * 2], topPts[(s1 - 1) * 2 + 1]);
-
-            // Bottom edge (right → left)
-            g.lineTo(botPts[(s1 - 1) * 2], botPts[(s1 - 1) * 2 + 1]);
-            for (let i = s1 - 2; i >= 0; i--) {
-                const px0 = botPts[(i + 1) * 2], py0 = botPts[(i + 1) * 2 + 1];
-                const px1 = botPts[i * 2], py1 = botPts[i * 2 + 1];
-                const cpx = (px0 + px1) / 2;
-                const cpy = (py0 + py1) / 2;
-                g.quadraticCurveTo(px0 + (px1 - px0) * 0.5, py0, cpx, cpy);
-            }
-            g.closePath();
-            // Subtle white glass reflection — low saturation, high lightness, very low alpha
-            g.fill({ color: PixiNoteRenderer._RIBBON_COLORS[ri], alpha: 0.08 });
-        }
     }
 
     // ─── Beam-style notes (laser beams) ──────────────────────────────
@@ -365,7 +266,6 @@ class PixiNoteRenderer {
 
     // ─── Classic-style notes (matching original Canvas 2D visuals) ──
     // Draws body fill on bg layer, glossy strip + border on overlay layer.
-    // Returns the note rect for wave masking.
     _drawNoteClassicBody(glow, bg, ov, note, pos, noteSpeed, speedMult, gameMode, heldFallingNotes, neonGlow) {
         const noteWidth = pos.width * 0.85;
         const dur = note.duration || 0.15;
@@ -426,7 +326,6 @@ class PixiNoteRenderer {
         ov.roundRect(x + 0.5, y + 0.5, noteWidth - 1, noteHeight - 1, r);
         ov.stroke({ color: this._hslToHex(hue, sat, Math.min(lum + 25, 80)), alpha: alpha * 0.5, width: 1 });
 
-        return { x, y, w: noteWidth, h: noteHeight, r };
     }
 
     // ─── Utility ─────────────────────────────────────────────────────
@@ -458,7 +357,6 @@ class PixiNoteRenderer {
     }
 
     destroy() {
-        if (this.waveGraphics) this.waveGraphics.mask = null;
         if (this.app) {
             this.app.destroy(true);
             this.app = null;
@@ -469,17 +367,3 @@ class PixiNoteRenderer {
 
 // Shared HSL→hex memo cache (small palette, ~tens of entries per session)
 PixiNoteRenderer._HSL_CACHE = new Map();
-
-// Static ribbon definitions (allocated once, reused every frame)
-PixiNoteRenderer._RIBBONS = [
-    { yBase: 0.18, thickness: 0.18, freq: 0.50, amp: 0.13, speed:  0.40, hue: 200, sat: 15 },
-    { yBase: 0.33, thickness: 0.20, freq: 0.65, amp: 0.11, speed: -0.30, hue: 210, sat: 12 },
-    { yBase: 0.48, thickness: 0.22, freq: 0.60, amp: 0.12, speed: -0.35, hue: 220, sat: 15 },
-    { yBase: 0.62, thickness: 0.17, freq: 0.55, amp: 0.10, speed:  0.45, hue: 190, sat: 12 },
-    { yBase: 0.75, thickness: 0.19, freq: 0.45, amp: 0.10, speed:  0.50, hue: 180, sat: 10 },
-    { yBase: 0.88, thickness: 0.15, freq: 0.70, amp: 0.09, speed: -0.40, hue: 200, sat: 14 },
-    { yBase: 0.10, thickness: 0.16, freq: 0.55, amp: 0.11, speed:  0.35, hue: 215, sat: 13 },
-    { yBase: 0.40, thickness: 0.18, freq: 0.48, amp: 0.10, speed: -0.42, hue: 195, sat: 11 },
-    { yBase: 0.68, thickness: 0.14, freq: 0.62, amp: 0.08, speed:  0.38, hue: 205, sat: 12 },
-    { yBase: 0.92, thickness: 0.13, freq: 0.58, amp: 0.07, speed: -0.33, hue: 185, sat: 10 },
-];

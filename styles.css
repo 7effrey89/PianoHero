@@ -1292,10 +1292,16 @@ body.compact-game #gameCanvas {
 }
 
 .key.white:active, .key.white.active {
-    background: linear-gradient(to bottom, #7c4dff 0%, #6a3de8 100%);
+    background: linear-gradient(to bottom, var(--key-press-tint-top, #7c4dff) 0%, var(--key-press-tint-bottom, #6a3de8) 100%);
     color: white;
     transform: translateY(2px);
     box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.3);
+}
+
+body.no-key-press-tint .key.white:active,
+body.no-key-press-tint .key.white.active {
+    background: linear-gradient(to bottom, #f0f0f0 0%, #e0e0e0 100%);
+    color: #333;
 }
 
 .key.black {
@@ -1313,9 +1319,14 @@ body.compact-game #gameCanvas {
 }
 
 .key.black:active, .key.black.active {
-    background: linear-gradient(to bottom, #7c4dff 0%, #6a3de8 100%);
+    background: linear-gradient(to bottom, var(--key-press-tint-top, #7c4dff) 0%, var(--key-press-tint-bottom, #6a3de8) 100%);
     transform: translateY(2px);
     box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.5);
+}
+
+body.no-key-press-tint .key.black:active,
+body.no-key-press-tint .key.black.active {
+    background: linear-gradient(to bottom, #444 0%, #111 100%);
 }
 
 .key-label {
@@ -1400,10 +1411,10 @@ body.compact-game #gameCanvas {
 /* Animations for hitting notes */
 @keyframes hitSuccess {
     0% {
-        box-shadow: 0 0 0 #7c4dff;
+        box-shadow: 0 0 0 var(--key-press-tint-top, #7c4dff);
     }
     50% {
-        box-shadow: 0 0 20px #7c4dff;
+        box-shadow: 0 0 20px var(--key-press-tint-top, #7c4dff);
     }
     100% {
         box-shadow: none;
@@ -1413,6 +1424,10 @@ body.compact-game #gameCanvas {
 .hit-success {
     animation: hitSuccess 0.3s ease;
     contain: layout style;
+}
+
+body.no-key-press-tint .hit-success {
+    animation: none;
 }
 
 @keyframes hitMiss {
@@ -1757,6 +1772,16 @@ body.compact-game #gameCanvas {
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.setting-row-indent {
+    padding-left: 18px;
+    opacity: 0.92;
+}
+
+.setting-row-indent label {
+    min-width: 62px;
+    font-size: 13px;
 }
 
 .setting-group {

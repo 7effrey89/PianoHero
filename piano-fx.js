@@ -13,6 +13,10 @@ class UnifiedPianoFX {
             this.splashes[i * 3 + 2] = -999;
         }
         this.activeKeys = new Float32Array(this.keyCount);
+        this.keyCenters = new Float32Array(this.keyCount);
+        for (let i = 0; i < this.keyCount; i++) {
+            this.keyCenters[i] = (i + 0.5) / this.keyCount;
+        }
 
         this.uniformGroup = new PIXI.UniformGroup({
             time: { value: 0, type: 'f32' },
@@ -30,6 +34,11 @@ class UnifiedPianoFX {
                 type: 'f32',
                 size: this.keyCount,
             },
+            keyCenters: {
+                value: this.keyCenters,
+                type: 'f32',
+                size: this.keyCount,
+            },
             ribbonStrength: { value: 0.22, type: 'f32' },
             ribbonY: { value: 0.965, type: 'f32' },
             ribbonThickness: { value: 0.08, type: 'f32' },
@@ -44,10 +53,12 @@ class UnifiedPianoFX {
             glowlineSat: { value: 0.6, type: 'f32' },
             glowlineVal: { value: 1.0, type: 'f32' },
             streamStrength: { value: 0.5, type: 'f32' },
+            streamWidth: { value: 1.0, type: 'f32' },
             splashStrength: { value: 0.85, type: 'f32' },
             glowStrength: { value: 0.6, type: 'f32' },
             splashColor: { value: [1.0, 1.0, 1.0], type: 'vec3<f32>' },
             glowSpread: { value: 0.0, type: 'f32' },
+            keyGlowStrength: { value: 1.0, type: 'f32' },
         });
 
         this.uniforms = this.uniformGroup.uniforms;
@@ -109,6 +120,15 @@ class UnifiedPianoFX {
         const idx = Math.max(0, Math.min(this.keyCount - 1, keyIndex));
         const v = Math.max(0, Math.min(1, velocity));
         if (v > this.activeKeys[idx]) this.activeKeys[idx] = v;
+    }
+
+    setKeyCenters(centers) {
+        if (!centers || !centers.length) return;
+        const n = Math.min(this.keyCount, centers.length);
+        for (let i = 0; i < n; i++) {
+            const value = Number.isFinite(centers[i]) ? centers[i] : (i + 0.5) / this.keyCount;
+            this.keyCenters[i] = Math.max(0, Math.min(1, value));
+        }
     }
 
     resize(width, height) {
@@ -271,6 +291,7 @@ uniform float time;
 uniform vec2 resolution;
 uniform vec3 splashes[32];
 uniform float activeKeys[88];
+uniform float keyCenters[88];
 uniform float ribbonStrength;
 uniform float ribbonY;
 uniform float ribbonThickness;
@@ -285,10 +306,12 @@ uniform float glowlineHueEnd;
 uniform float glowlineSat;
 uniform float glowlineVal;
 uniform float streamStrength;
+uniform float streamWidth;
 uniform float splashStrength;
 uniform float glowStrength;
 uniform vec3 splashColor;
 uniform float glowSpread;
+uniform float keyGlowStrength;
 
 float splashField(vec2 uv, vec2 center, float age) {
     vec2 p = uv - center;
@@ -335,21 +358,23 @@ float ribbon(vec2 uv, float t) {
 
 float keyGlow(vec2 uv) {
     float glow = 0.0;
-    // Over the keyboard area (lower ~18% of the canvas) the glow is forced
-    // narrow so it only lights the pressed key and its immediate neighbours,
-    // regardless of the wide/narrow spread setting. Above the keys the full
-    // glowSpread setting still applies.
     float overKeys = smoothstep(0.78, 0.92, uv.y);
     float spreadFactor = mix(glowSpread, 0.0, overKeys);
     for (int i = 0; i < 88; i++) {
         float v = activeKeys[i];
         if (v <= 0.001) continue;
-        float keyX = (float(i) + 0.5) / 88.0;
+        float keyX = keyCenters[i];
         float d = abs(uv.x - keyX);
-        // Tight per-key bloom when spreadFactor=0, legacy wide bloom when 1.
-        glow += exp(-(d * d) / mix(0.00006, 0.0018, spreadFactor)) * v;
+
+        float tightWidth = mix(0.000035, 0.0012, spreadFactor);
+        float core = exp(-(d * d) / tightWidth);
+        float halo = exp(-(d * d) / mix(0.00018, 0.0045, spreadFactor));
+        float keyTop = exp(-pow((uv.y - 0.93) / 0.028, 2.0));
+        float plume = exp(-pow((uv.y - 0.86) / 0.12, 2.0)) * smoothstep(0.98, 0.70, uv.y);
+        glow += (core * 2.8 * keyTop + halo * 1.25 * keyTop + core * 1.1 * plume) * v;
     }
-    return glow * smoothstep(1.0, 0.7, uv.y);
+    float keyboardFade = smoothstep(0.66, 0.92, uv.y);
+    return glow * keyGlowStrength * keyboardFade * 2.2;
 }
 
 vec3 hsv2rgb(vec3 c) {
@@ -364,13 +389,13 @@ vec3 noteStreamColor(vec2 uv) {
         float vel = activeKeys[i];
         if (vel <= 0.001) continue;
 
-        float keyX = (float(i) + 0.5) / 88.0;
+        float keyX = keyCenters[i];
         float dx = abs(uv.x - keyX);
 
         float streamHeight = mix(0.25, 0.95, vel);
         float verticalMask = smoothstep(streamHeight, 0.02, uv.y);
 
-        float width = mix(0.008, 0.035, 1.0 - uv.y);
+        float width = mix(0.008, 0.035, 1.0 - uv.y) * streamWidth;
         float beam = exp(-(dx * dx) / (width * width));
 
         float pulse = sin(uv.y * 26.0 - time * 3.8 + float(i) * 0.9) * 0.5 + 0.5;
@@ -420,8 +445,8 @@ void main() {
     vec3 streamCol = noteStreamColor(uv) * streamStrength;
     vec3 outColor = ribbonCol + lineCol + ambient + streamCol;
     float energy = length(outColor);
-    outColor *= 1.0 / (1.0 + energy * 0.9);
-    float alpha = clamp(length(outColor) * 0.16, 0.0, 1.0);
+    outColor *= 1.0 / (1.0 + energy * 0.65);
+    float alpha = clamp(length(outColor) * 0.24 + glowTerm * glowStrength * 0.18, 0.0, 1.0);
     gl_FragColor = vec4(outColor, alpha);
 }
 `;
@@ -445,7 +470,11 @@ class PianoFX {
         this._splashSpikeTexture = null;
         this._sparkFx = null;
         this._splashStrengthProfile = null;
-        this.fxMode = 'cinematic';
+        this._keyGlowColor = null;
+        this._keyCenters = null;
+        this.streamMode = 'off';
+        this.streamWidth = 'normal';
+        this.ribbonMode = 'strong';
         this.splashMode = 'classic';
         this.ready = this._init();
     }
@@ -482,7 +511,10 @@ class PianoFX {
 
         this._initTrailPass();
 
-        this.setFxMode(this.fxMode);
+        if (this._keyCenters) this.unified.setKeyCenters(this._keyCenters);
+        this.setStreamMode(this.streamMode);
+        this.setStreamWidth(this.streamWidth);
+        this.setRibbonMode(this.ribbonMode);
         this.setSplashMode(this.splashMode);
         this._applyAnchors();
 
@@ -557,9 +589,20 @@ class PianoFX {
         this._splashSpikeTexture = null;
         this._sparkFx = null;
         this._initTrailPass();
-        this.setFxMode(this.fxMode);
+        if (this._keyCenters) this.unified.setKeyCenters(this._keyCenters);
+        this.setStreamMode(this.streamMode);
+        this.setStreamWidth(this.streamWidth);
+        this.setRibbonMode(this.ribbonMode);
         this.setSplashMode(this.splashMode);
         this._applyAnchors();
+    }
+
+    setKeyCenters(centers) {
+        if (!centers || !centers.length) return;
+        this._keyCenters = Array.from(centers);
+        if (this.unified && typeof this.unified.setKeyCenters === 'function') {
+            this.unified.setKeyCenters(this._keyCenters);
+        }
     }
 
     _applyAnchors() {
@@ -689,24 +732,54 @@ class PianoFX {
         }
     }
 
-    setFxMode(mode) {
-        this.fxMode = mode || 'cinematic';
+    setStreamMode(mode) {
+        this.streamMode = (mode === 'cinematic' || mode === 'subtle') ? mode : 'off';
+        const strengths = { off: 0.0, subtle: 0.35, cinematic: 0.6 };
+        if (this.unified && this.unified.uniforms) {
+            this.unified.uniforms.streamStrength = strengths[this.streamMode];
+        }
+    }
+
+    setStreamWidth(mode) {
+        this.streamWidth = (mode === 'narrow' || mode === 'wide') ? mode : 'normal';
+        const widths = { narrow: 0.65, normal: 1.0, wide: 1.45 };
+        if (this.unified && this.unified.uniforms) {
+            this.unified.uniforms.streamWidth = widths[this.streamWidth];
+        }
+    }
+
+    setRibbonMode(mode) {
+        this.ribbonMode = (mode === 'off' || mode === 'hitbar' || mode === 'subtle' || mode === 'cinematic') ? mode : 'strong';
         const profiles = {
-            cinematic: {
-                ribbonActive: 0.16,
-                ribbonIdle: 0.06,
+            off: {
+                ribbonActive: 0.0,
+                ribbonIdle: 0.0,
                 ribbonOffsetPx: 4,
                 ribbonThicknessPx: 22,
-                glowlineStrength: 0.75,
+                glowlineStrength: 0.0,
                 glowlineOffsetPx: 3,
                 glowlineThicknessPx: 7,
-                streamStrength: 0.6,
-                splashStrength: 0.7,
-                glowStrength: 0.55,
-                trailAlpha: 0.6,
-                feedbackAlpha: 0.7,
-                bloomStrength: 0.45,
-                bloomBlur: 3,
+                splashStrength: 0.35,
+                glowStrength: 0.85,
+                trailAlpha: 0.35,
+                feedbackAlpha: 0.55,
+                bloomStrength: 0.2,
+                bloomBlur: 2,
+            },
+            hitbar: {
+                ribbonActive: 0.0,
+                ribbonIdle: 0.0,
+                ribbonOffsetPx: 4,
+                ribbonThicknessPx: 22,
+                glowlineStrength: 0.0,
+                glowlineOffsetPx: 3,
+                glowlineThicknessPx: 7,
+                splashStrength: 0.35,
+                glowStrength: 0.85,
+                trailAlpha: 0.35,
+                feedbackAlpha: 0.55,
+                bloomStrength: 0.2,
+                bloomBlur: 2,
             },
             subtle: {
                 ribbonActive: 0.1,
@@ -716,15 +789,29 @@ class PianoFX {
                 glowlineStrength: 0.55,
                 glowlineOffsetPx: 4,
                 glowlineThicknessPx: 6,
-                streamStrength: 0.35,
                 splashStrength: 0.45,
-                glowStrength: 0.35,
+                glowStrength: 0.9,
                 trailAlpha: 0.45,
                 feedbackAlpha: 0.62,
                 bloomStrength: 0.25,
                 bloomBlur: 2.5,
             },
-            ribbon: {
+            cinematic: {
+                ribbonActive: 0.16,
+                ribbonIdle: 0.06,
+                ribbonOffsetPx: 4,
+                ribbonThicknessPx: 22,
+                glowlineStrength: 0.75,
+                glowlineOffsetPx: 3,
+                glowlineThicknessPx: 7,
+                splashStrength: 0.7,
+                glowStrength: 1.05,
+                trailAlpha: 0.6,
+                feedbackAlpha: 0.7,
+                bloomStrength: 0.45,
+                bloomBlur: 3,
+            },
+            strong: {
                 ribbonActive: 0.22,
                 ribbonIdle: 0.09,
                 ribbonOffsetPx: 3,
@@ -732,19 +819,17 @@ class PianoFX {
                 glowlineStrength: 0.9,
                 glowlineOffsetPx: 2,
                 glowlineThicknessPx: 8,
-                streamStrength: 0.25,
                 splashStrength: 0.35,
-                glowStrength: 0.3,
+                glowStrength: 0.9,
                 trailAlpha: 0.55,
                 feedbackAlpha: 0.7,
                 bloomStrength: 0.35,
                 bloomBlur: 3.5,
             },
         };
-        const profile = profiles[this.fxMode] || profiles.cinematic;
+        const profile = profiles[this.ribbonMode] || profiles.strong;
 
         if (this.unified && this.unified.uniforms) {
-            this.unified.uniforms.streamStrength = profile.streamStrength;
             this._splashStrengthProfile = profile.splashStrength;
             this.unified.uniforms.splashStrength = (this.splashMode === 'burst') ? 0.0 : profile.splashStrength;
             this.unified.uniforms.glowStrength = profile.glowStrength;
@@ -767,10 +852,17 @@ class PianoFX {
         this._applyAnchors();
     }
 
+    setFxMode(mode) {
+        const legacy = mode || 'ribbon';
+        this.setStreamMode(legacy === 'ribbon' ? 'off' : legacy);
+        this.setRibbonMode(legacy === 'ribbon' ? 'strong' : legacy);
+    }
+
     setSplashMode(mode) {
         this.splashMode = mode || 'classic';
         // Sprite-based variants all use the PianoKeySparkFX system.
         const spriteVariants = ['spark', 'fog', 'cartoon', 'cartoonhalf', 'ash', 'sparkles'];
+        const useShaderSplash = this.splashMode === 'classic';
         const useBurst = this.splashMode === 'burst';
         const useSprites = spriteVariants.includes(this.splashMode);
         if (useBurst) this._ensureSplashEmitter();
@@ -784,8 +876,8 @@ class PianoFX {
         if (this._sparkFx && this._sparkFx.sprite) this._sparkFx.sprite.visible = useSprites;
         if (this.unified && this.unified.uniforms) {
             const base = (this._splashStrengthProfile != null) ? this._splashStrengthProfile : this.unified.uniforms.splashStrength;
-            this.unified.uniforms.splashStrength = (useBurst || useSprites) ? 0.0 : base;
-            // Tint the per-key ambient glow to match the active splash effect.
+            this.unified.uniforms.splashStrength = useShaderSplash ? base : 0.0;
+            // Tint the per-key ambient glow. User palette overrides effect preset tint.
             const colorMap = {
                 classic:     [0.20, 0.70, 1.00], // legacy cyan
                 burst:       [1.00, 0.95, 0.85], // warm white
@@ -796,10 +888,7 @@ class PianoFX {
                 ash:         [1.00, 0.70, 0.35], // ember
                 sparkles:    [1.00, 0.95, 1.00], // twinkle white
             };
-            // Legacy wide glow always uses the old cyan tint, regardless of variant.
-            const c = (this.glowSpread === 'wide')
-                ? [0.20, 0.70, 1.00]
-                : (colorMap[this.splashMode] || [1.0, 1.0, 1.0]);
+            const c = this._keyGlowColor || colorMap[this.splashMode] || [1.0, 1.0, 1.0];
             this.unified.uniforms.splashColor[0] = c[0];
             this.unified.uniforms.splashColor[1] = c[1];
             this.unified.uniforms.splashColor[2] = c[2];
@@ -808,13 +897,30 @@ class PianoFX {
     }
 
     setGlowSpread(mode) {
-        // 'narrow' (default) or 'wide'.
-        this.glowSpread = (mode === 'wide') ? 'wide' : 'narrow';
+        // 'none', 'narrow' (default), or 'wide'.
+        this.glowSpread = (mode === 'none' || mode === 'wide') ? mode : 'narrow';
         if (this.unified && this.unified.uniforms) {
             this.unified.uniforms.glowSpread = (this.glowSpread === 'wide') ? 1.0 : 0.0;
+            this.unified.uniforms.keyGlowStrength = (this.glowSpread === 'none') ? 0.0 : 1.0;
         }
-        // Re-apply splash mode so the per-key tint refreshes (wide forces cyan).
+        // Re-apply splash mode so the per-key tint refreshes.
         if (this.splashMode) this.setSplashMode(this.splashMode);
+    }
+
+    _hsvToRgb(h, s, v) {
+        const i = Math.floor(h * 6);
+        const f = h * 6 - i;
+        const p = v * (1 - s);
+        const q = v * (1 - f * s);
+        const t = v * (1 - (1 - f) * s);
+        switch (i % 6) {
+            case 0: return [v, t, p];
+            case 1: return [q, v, p];
+            case 2: return [p, v, t];
+            case 3: return [p, q, v];
+            case 4: return [t, p, v];
+            default: return [v, p, q];
+        }
     }
 
     setFxPalette(palette = {}) {
@@ -827,6 +933,15 @@ class PianoFX {
         if (palette.glowlineHueEnd != null) u.glowlineHueEnd = palette.glowlineHueEnd;
         if (palette.glowlineSat != null) u.glowlineSat = palette.glowlineSat;
         if (palette.glowlineVal != null) u.glowlineVal = palette.glowlineVal;
+        if (palette.keyGlowHue != null || palette.keyGlowSat != null || palette.keyGlowVal != null) {
+            const h = palette.keyGlowHue != null ? palette.keyGlowHue : 200 / 360;
+            const s = palette.keyGlowSat != null ? palette.keyGlowSat : 0.7;
+            const v = palette.keyGlowVal != null ? palette.keyGlowVal : 1.0;
+            this._keyGlowColor = this._hsvToRgb(h, s, v);
+            u.splashColor[0] = this._keyGlowColor[0];
+            u.splashColor[1] = this._keyGlowColor[1];
+            u.splashColor[2] = this._keyGlowColor[2];
+        }
     }
 
     onKeyPress(x, y, keyIndex = 0, velocity = 1) {
@@ -836,7 +951,7 @@ class PianoFX {
         if (this.splashMode === 'burst') {
             this._ensureSplashEmitter();
             if (this._splashEmitter) this._splashEmitter.emit(x, y, velocity);
-        } else if (this.splashMode !== 'classic') {
+        } else if (this.splashMode !== 'classic' && this.splashMode !== 'off') {
             this._ensureSparkFx();
             if (this._sparkFx) this._sparkFx.triggerKey(keyIndex, x, y, velocity);
         }
