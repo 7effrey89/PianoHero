@@ -2302,6 +2302,13 @@ class PianoHero {
             });
         }
 
+        const allSettingsResetBtn = document.getElementById('allSettingsResetBtn');
+        if (allSettingsResetBtn) {
+            allSettingsResetBtn.addEventListener('click', () => {
+                this._resetAllSettingsToDefaults();
+            });
+        }
+
         // ── Key Scale ──
         const scaleSlider = document.getElementById('keyScaleSlider');
         const scaleInput = document.getElementById('keyScaleInput');
@@ -2899,6 +2906,13 @@ class PianoHero {
         setSlider('keyPressTintVal', d.keyPressTintVal || 100, '%', (v) => { this.keyPressTintVal = v; this._applyKeyPressTintColor(); });
 
         this._applyFxPalette();
+    }
+
+    _resetAllSettingsToDefaults() {
+        try { localStorage.removeItem('pianoHeroSettings'); } catch (e) {}
+        try { localStorage.removeItem('pianoHeroBgImage'); } catch (e) {}
+        try { localStorage.removeItem('pianoHeroBgImageName'); } catch (e) {}
+        window.location.reload();
     }
 
     _getGraphicsPresetConfig(preset) {
