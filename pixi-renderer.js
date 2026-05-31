@@ -1,5 +1,4 @@
-// PixiJS-based note renderer for Piano Hero
-// Replaces gl-renderer.js with PixiJS v8 for smoother GPU-accelerated rendering
+// PixiJS-based note renderer for Piano Hero.
 class PixiNoteRenderer {
     constructor(canvas) {
         this.canvas = canvas;
@@ -126,7 +125,7 @@ class PixiNoteRenderer {
 
     /**
     * Main render call — draws notes, then flushes to GPU.
-    * Matches the GLNoteRenderer.renderNotes() signature.
+    * Main render call — draws notes, then flushes to GPU.
      */
     renderNotes(fallingNotes, keyPositions, config) {
         if (!this.available) return;

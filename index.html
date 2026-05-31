@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
     <link rel="icon" type="image/png" href="/images/logo.png">
-    <link rel="stylesheet" href="styles.css?v=21">
+    <link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body>
     <div class="container">
@@ -177,6 +177,14 @@
                     <h4>Sound</h4>
                     <div class="settings-panel-body" id="soundPanelBody">
                     <div class="sound-row">
+                        <label for="soundBankSelect">Sound Bank:</label>
+                        <select id="soundBankSelect">
+                            <option value="Salamander">Salamander Grand (Yamaha C5)</option>
+                            <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
+                            <option value="MusyngKite">MusyngKite (Bright)</option>
+                        </select>
+                    </div>
+                    <div class="sound-row sound-row-nested">
                         <label for="soundPreset">Instrument:</label>
                         <select id="soundPreset">
                             <optgroup label="Piano">
@@ -240,14 +248,6 @@
                             </optgroup>
                         </select>
                         <span id="soundfontStatus" class="soundfont-status"></span>
-                    </div>
-                    <div class="sound-row">
-                        <label for="soundBankSelect">Sound Bank:</label>
-                        <select id="soundBankSelect">
-                            <option value="Salamander">Salamander Grand (Yamaha C5)</option>
-                            <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
-                            <option value="MusyngKite">MusyngKite (Bright)</option>
-                        </select>
                     </div>
                     <div class="sound-row">
                         <label for="volumeSlider">Volume</label>
@@ -517,7 +517,7 @@
         <!-- Game Canvas with Piano Keys Integrated -->
         <div id="gameArea">
             <div id="gameCanvas">
-                <canvas id="glCanvas"></canvas>
+                <canvas id="pixiCanvas"></canvas>
                 <canvas id="notesCanvas"></canvas>
             </div>
 
@@ -538,10 +538,10 @@
     <script src="https://pixijs.download/v8.18.1/pixi.min.js"></script>
     <script src="https://unpkg.com/@pixi/mesh@8.18.1/dist/mesh.min.js"></script>
     <script src="https://unpkg.com/@pixi/filter-bloom@8.18.1/dist/filter-bloom.min.js"></script>
-    <script src="PianoKeySparkFX.js?v=17"></script>
-    <script src="pixi-renderer.js?v=6"></script>
-    <script src="piano-fx.js?v=16"></script>
-    <script src="app.js?v=74"></script>
+    <script src="PianoKeySparkFX.js?v=18"></script>
+    <script src="pixi-renderer.js?v=7"></script>
+    <script src="piano-fx.js?v=20"></script>
+    <script src="app.js?v=77"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

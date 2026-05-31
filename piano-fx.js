@@ -43,14 +43,14 @@ class UnifiedPianoFX {
             ribbonY: { value: 0.965, type: 'f32' },
             ribbonThickness: { value: 0.08, type: 'f32' },
             ribbonHue: { value: 0.08, type: 'f32' },
-            ribbonSat: { value: 0.7, type: 'f32' },
+            ribbonSat: { value: 0.95, type: 'f32' },
             ribbonVal: { value: 1.0, type: 'f32' },
             glowlineStrength: { value: 0.6, type: 'f32' },
             glowlineY: { value: 0.97, type: 'f32' },
             glowlineThickness: { value: 0.02, type: 'f32' },
             glowlineHueStart: { value: 0.58, type: 'f32' },
             glowlineHueEnd: { value: 0.95, type: 'f32' },
-            glowlineSat: { value: 0.6, type: 'f32' },
+            glowlineSat: { value: 0.95, type: 'f32' },
             glowlineVal: { value: 1.0, type: 'f32' },
             streamStrength: { value: 0.5, type: 'f32' },
             streamWidth: { value: 1.0, type: 'f32' },
@@ -413,14 +413,17 @@ vec3 noteStreamColor(vec2 uv) {
     return accum;
 }
 
-vec3 glowLine(vec2 uv, float t) {
+vec4 glowLine(vec2 uv, float t) {
     float y = glowlineY + sin(uv.x * 4.0 + t * 0.3) * glowlineThickness * 0.12;
     float d = abs(uv.y - y);
-    float core = exp(-pow(d / (glowlineThickness * 0.35), 2.0) * 6.0);
-    float halo = exp(-pow(d / (glowlineThickness * 1.8), 2.0) * 1.5);
+    float core = exp(-pow(d / (glowlineThickness * 0.22), 2.0) * 5.5);
+    float halo = exp(-pow(d / (glowlineThickness * 1.65), 2.0) * 1.35);
     float hue = mix(glowlineHueStart, glowlineHueEnd, uv.x);
     vec3 col = hsv2rgb(vec3(hue, glowlineSat, glowlineVal));
-    return col * (core * 1.2 + halo * 0.65);
+    vec3 coreCol = col * core * 1.85;
+    vec3 haloCol = col * halo * 0.45;
+    float alpha = clamp(core * 0.96 + halo * 0.24, 0.0, 1.0);
+    return vec4(coreCol + haloCol, alpha);
 }
 
 void main() {
@@ -440,13 +443,15 @@ void main() {
     float glowTerm = keyGlow(uv);
 
     vec3 ribbonCol = hsv2rgb(vec3(ribbonHue, ribbonSat, ribbonVal)) * ribbonTerm;
-    vec3 lineCol = glowLine(uv, time) * glowlineStrength;
+    vec4 glowline = glowLine(uv, time);
+    vec3 lineCol = glowline.rgb * glowlineStrength;
     vec3 ambient = splashColor * (splashTerm * splashStrength + glowTerm * glowStrength);
     vec3 streamCol = noteStreamColor(uv) * streamStrength;
     vec3 outColor = ribbonCol + lineCol + ambient + streamCol;
     float energy = length(outColor);
-    outColor *= 1.0 / (1.0 + energy * 0.65);
-    float alpha = clamp(length(outColor) * 0.24 + glowTerm * glowStrength * 0.18, 0.0, 1.0);
+    outColor *= 1.0 / (1.0 + energy * 0.48);
+    float ambilightAlpha = ribbonTerm * 0.95 + glowline.a * glowlineStrength;
+    float alpha = clamp(max(length(outColor) * 0.30, ambilightAlpha) + glowTerm * glowStrength * 0.18, 0.0, 1.0);
     gl_FragColor = vec4(outColor, alpha);
 }
 `;
@@ -469,6 +474,7 @@ class PianoFX {
         this._splashTexture = null;
         this._splashSpikeTexture = null;
         this._sparkFx = null;
+        this._recentSpriteImpacts = [];
         this._splashStrengthProfile = null;
         this._keyGlowColor = null;
         this._keyCenters = null;
@@ -714,7 +720,7 @@ class PianoFX {
         if (!window.PianoKeySparkFX) return;
         if (!this.app || !this.app.renderer) return;
         this._sparkFx = new window.PianoKeySparkFX(this.app, {
-            alpha: 0.9,
+            alpha: 0.72,
             bloomStrength: 2.4,
             bloomBlur: 10,
             bloomQuality: 4,
@@ -782,48 +788,48 @@ class PianoFX {
                 bloomBlur: 2,
             },
             subtle: {
-                ribbonActive: 0.1,
-                ribbonIdle: 0.035,
+                ribbonActive: 0.13,
+                ribbonIdle: 0.045,
                 ribbonOffsetPx: 5,
                 ribbonThicknessPx: 18,
-                glowlineStrength: 0.55,
+                glowlineStrength: 0.72,
                 glowlineOffsetPx: 4,
                 glowlineThicknessPx: 6,
                 splashStrength: 0.45,
                 glowStrength: 0.9,
-                trailAlpha: 0.45,
-                feedbackAlpha: 0.62,
-                bloomStrength: 0.25,
+                trailAlpha: 0.54,
+                feedbackAlpha: 0.68,
+                bloomStrength: 0.34,
                 bloomBlur: 2.5,
             },
             cinematic: {
-                ribbonActive: 0.16,
-                ribbonIdle: 0.06,
+                ribbonActive: 0.21,
+                ribbonIdle: 0.075,
                 ribbonOffsetPx: 4,
                 ribbonThicknessPx: 22,
-                glowlineStrength: 0.75,
+                glowlineStrength: 1.0,
                 glowlineOffsetPx: 3,
                 glowlineThicknessPx: 7,
                 splashStrength: 0.7,
                 glowStrength: 1.05,
-                trailAlpha: 0.6,
-                feedbackAlpha: 0.7,
-                bloomStrength: 0.45,
+                trailAlpha: 0.68,
+                feedbackAlpha: 0.76,
+                bloomStrength: 0.58,
                 bloomBlur: 3,
             },
             strong: {
-                ribbonActive: 0.22,
-                ribbonIdle: 0.09,
+                ribbonActive: 0.30,
+                ribbonIdle: 0.12,
                 ribbonOffsetPx: 3,
                 ribbonThicknessPx: 26,
-                glowlineStrength: 0.9,
+                glowlineStrength: 1.2,
                 glowlineOffsetPx: 2,
                 glowlineThicknessPx: 8,
                 splashStrength: 0.35,
                 glowStrength: 0.9,
-                trailAlpha: 0.55,
-                feedbackAlpha: 0.7,
-                bloomStrength: 0.35,
+                trailAlpha: 0.68,
+                feedbackAlpha: 0.78,
+                bloomStrength: 0.52,
                 bloomBlur: 3.5,
             },
         };
@@ -944,16 +950,40 @@ class PianoFX {
         }
     }
 
+    _spriteImpactScale(x) {
+        const now = this._fxTime;
+        const windowSec = 0.12;
+        const clusterPx = 120;
+        this._recentSpriteImpacts = this._recentSpriteImpacts.filter(hit => now - hit.t <= windowSec);
+        let nearby = 0;
+        for (let i = 0; i < this._recentSpriteImpacts.length; i++) {
+            if (Math.abs(this._recentSpriteImpacts[i].x - x) <= clusterPx) nearby++;
+        }
+        const globalDensity = this._recentSpriteImpacts.length;
+        this._recentSpriteImpacts.push({ t: now, x });
+
+        const brightModes = ['burst', 'fog', 'cartoon', 'cartoonhalf'];
+        const maxGlobal = brightModes.includes(this.splashMode) ? 6 : 12;
+        const maxNearby = brightModes.includes(this.splashMode) ? 3 : 7;
+        if (globalDensity >= maxGlobal || nearby >= maxNearby) return 0.0;
+
+        const density = Math.max(nearby, globalDensity * 0.55);
+        if (density <= 2) return 1.0;
+        return Math.max(0.22, 1 / Math.sqrt(1 + (density - 2) * 0.8));
+    }
+
     onKeyPress(x, y, keyIndex = 0, velocity = 1) {
         if (!this.isReady) return;
         this._lastImpact = this._fxTime;
         this.unified.triggerKey(keyIndex, x, y, velocity);
         if (this.splashMode === 'burst') {
             this._ensureSplashEmitter();
-            if (this._splashEmitter) this._splashEmitter.emit(x, y, velocity);
+            const scaledVelocity = velocity * this._spriteImpactScale(x);
+            if (this._splashEmitter && scaledVelocity > 0.2) this._splashEmitter.emit(x, y, scaledVelocity);
         } else if (this.splashMode !== 'classic' && this.splashMode !== 'off') {
             this._ensureSparkFx();
-            if (this._sparkFx) this._sparkFx.triggerKey(keyIndex, x, y, velocity);
+            const scaledVelocity = velocity * this._spriteImpactScale(x);
+            if (this._sparkFx && scaledVelocity > 0.18) this._sparkFx.triggerKey(keyIndex, x, y, scaledVelocity);
         }
     }
 

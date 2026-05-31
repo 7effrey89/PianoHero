@@ -96,9 +96,9 @@ class PianoHero {
         this._perfPrecomputeMs = null;
 
         // PixiJS GPU-accelerated note renderer (DOM-composited, no drawImage needed)
-        this.glCanvas = document.getElementById('glCanvas');
-        this.glRenderer = this.glCanvas ? new PixiNoteRenderer(this.glCanvas) : null;
-        if (this.glRenderer) console.log('[PianoHero] Using PixiJS note renderer');
+        this.pixiCanvas = document.getElementById('pixiCanvas');
+        this.noteRenderer = this.pixiCanvas ? new PixiNoteRenderer(this.pixiCanvas) : null;
+        if (this.noteRenderer) console.log('[PianoHero] Using PixiJS note renderer');
         else console.log('[PianoHero] PixiJS not available, using Canvas 2D fallback');
 
         // FX overlay (mist ribbon + liquid trails)
@@ -180,10 +180,10 @@ class PianoHero {
         this.fxSplashMode = 'classic';
         this.fxGlowlineHueStart = 210;
         this.fxGlowlineHueEnd = 320;
-        this.fxGlowlineSat = 60;
+        this.fxGlowlineSat = 95;
         this.fxGlowlineVal = 100;
         this.fxSmokeHue = 30;
-        this.fxSmokeSat = 55;
+        this.fxSmokeSat = 95;
         this.fxSmokeVal = 100;
         this.fxKeyGlowHue = 200;
         this.fxKeyGlowSat = 70;
@@ -195,10 +195,10 @@ class PianoHero {
         this._fxPaletteDefaults = {
             glowlineHueStart: 210,
             glowlineHueEnd: 320,
-            glowlineSat: 60,
+            glowlineSat: 95,
             glowlineVal: 100,
             smokeHue: 30,
-            smokeSat: 55,
+            smokeSat: 95,
             smokeVal: 100,
             keyGlowHue: 200,
             keyGlowSat: 70,
@@ -1236,20 +1236,20 @@ class PianoHero {
         container.style.width = fullWidth + 'px';
         this.canvas.width = fullWidth;
         this.canvas.height = fullHeight;
-        if (this.glRenderer) {
-            // Pixi owns the glCanvas backing buffer (its width/height depend on
+        if (this.noteRenderer) {
+            // Pixi owns the pixiCanvas backing buffer (its width/height depend on
             // the active resolution). Just hand it the CSS size — do NOT also
-            // set glCanvas.width/height directly, or we'll clobber the resolution
+            // set pixiCanvas.width/height directly, or we'll clobber the resolution
             // multiplier and desync drawing coords from layout.
-            this.glRenderer.resize(fullWidth, fullHeight);
+            this.noteRenderer.resize(fullWidth, fullHeight);
             // Keep CSS size in sync so the canvas lays out next to the 2D one.
-            if (this.glCanvas) {
-                this.glCanvas.style.width = fullWidth + 'px';
-                this.glCanvas.style.height = fullHeight + 'px';
+            if (this.pixiCanvas) {
+                this.pixiCanvas.style.width = fullWidth + 'px';
+                this.pixiCanvas.style.height = fullHeight + 'px';
             }
-        } else if (this.glCanvas) {
-            this.glCanvas.width = fullWidth;
-            this.glCanvas.height = fullHeight;
+        } else if (this.pixiCanvas) {
+            this.pixiCanvas.width = fullWidth;
+            this.pixiCanvas.height = fullHeight;
         }
         if (this.pianoFx && this.fxCanvas) {
             // Extend the FX overlay down to cover the keyboard so effects
@@ -1996,11 +1996,11 @@ class PianoHero {
         soundBankSelect.addEventListener('change', () => {
             if (soundBankSelect.value === 'Salamander') {
                 this.useSalamander = true;
-                presetSelect.disabled = true;
+                this._syncSoundBankInstrumentState();
                 if (this.currentSampleBank !== 'Salamander') this.loadSalamander();
             } else {
                 this.useSalamander = false;
-                presetSelect.disabled = false;
+                this._syncSoundBankInstrumentState();
                 this.soundfontBaseUrl = `https://gleitz.github.io/midi-js-soundfonts/${soundBankSelect.value}/`;
                 this.loadSoundfont(presetSelect.value);
             }
@@ -2107,7 +2107,18 @@ class PianoHero {
 
         // Don't load soundfont here — _loadSettings() will restore saved bank/instrument
         // and trigger the load. If no saved settings, we load the default after _loadSettings.
+        this._syncSoundBankInstrumentState();
         this._soundInitDeferred = true;
+    }
+
+    _syncSoundBankInstrumentState() {
+        const soundBankSelect = document.getElementById('soundBankSelect');
+        const presetSelect = document.getElementById('soundPreset');
+        if (!soundBankSelect || !presetSelect) return;
+        const salamanderActive = soundBankSelect.value === 'Salamander';
+        presetSelect.disabled = salamanderActive;
+        const instrumentRow = presetSelect.closest('.sound-row');
+        if (instrumentRow) instrumentRow.classList.toggle('is-disabled', salamanderActive);
     }
 
     // Called after _loadSettings to ensure a soundfont is loaded if settings didn't trigger one
@@ -2118,10 +2129,10 @@ class PianoHero {
             const currentBank = document.getElementById('soundBankSelect').value;
             if (currentBank === 'Salamander') {
                 this.useSalamander = true;
-                document.getElementById('soundPreset').disabled = true;
+                this._syncSoundBankInstrumentState();
                 this.loadSalamander();
             } else {
-                document.getElementById('soundPreset').disabled = false;
+                this._syncSoundBankInstrumentState();
                 this.loadSoundfont(this.currentInstrument);
             }
         }
@@ -2775,13 +2786,17 @@ class PianoHero {
 
     _applyFxPalette({ skipSave = false } = {}) {
         if (this.pianoFx && typeof this.pianoFx.setFxPalette === 'function') {
+            const colorSat = (v) => {
+                const s = Math.max(0, Math.min(1, (v || 0) / 100));
+                return 1 - Math.pow(1 - s, 1.8);
+            };
             this.pianoFx.setFxPalette({
                 glowlineHueStart: (this.fxGlowlineHueStart || 0) / 360,
                 glowlineHueEnd: (this.fxGlowlineHueEnd || 0) / 360,
-                glowlineSat: (this.fxGlowlineSat || 0) / 100,
+                glowlineSat: colorSat(this.fxGlowlineSat),
                 glowlineVal: (this.fxGlowlineVal || 0) / 100,
                 ribbonHue: (this.fxSmokeHue || 0) / 360,
-                ribbonSat: (this.fxSmokeSat || 0) / 100,
+                ribbonSat: colorSat(this.fxSmokeSat),
                 ribbonVal: (this.fxSmokeVal || 0) / 100,
                 keyGlowHue: (this.fxKeyGlowHue || 0) / 360,
                 keyGlowSat: (this.fxKeyGlowSat || 0) / 100,
@@ -2804,10 +2819,10 @@ class PianoHero {
 
         setSlider('fxGlowHueStart', d.glowlineHueStart || 210, '°', (v) => { this.fxGlowlineHueStart = v; });
         setSlider('fxGlowHueEnd', d.glowlineHueEnd || 320, '°', (v) => { this.fxGlowlineHueEnd = v; });
-        setSlider('fxGlowSat', d.glowlineSat || 60, '%', (v) => { this.fxGlowlineSat = v; });
+        setSlider('fxGlowSat', d.glowlineSat || 95, '%', (v) => { this.fxGlowlineSat = v; });
         setSlider('fxGlowVal', d.glowlineVal || 100, '%', (v) => { this.fxGlowlineVal = v; });
         setSlider('fxSmokeHue', d.smokeHue || 30, '°', (v) => { this.fxSmokeHue = v; });
-        setSlider('fxSmokeSat', d.smokeSat || 55, '%', (v) => { this.fxSmokeSat = v; });
+        setSlider('fxSmokeSat', d.smokeSat || 95, '%', (v) => { this.fxSmokeSat = v; });
         setSlider('fxSmokeVal', d.smokeVal || 100, '%', (v) => { this.fxSmokeVal = v; });
         setSlider('fxKeyGlowHue', d.keyGlowHue || 200, '°', (v) => { this.fxKeyGlowHue = v; });
         setSlider('fxKeyGlowSat', d.keyGlowSat || 70, '%', (v) => { this.fxKeyGlowSat = v; });
@@ -2864,9 +2879,9 @@ class PianoHero {
      * Ensure CSS filters are cleared; neon glow is now rendered per-note.
      */
     _applyNeonGlowCSS() {
-        const glC = document.getElementById('glCanvas');
+        const pixiC = document.getElementById('pixiCanvas');
         const notesC = document.getElementById('notesCanvas');
-        if (glC) glC.style.filter = '';
+        if (pixiC) pixiC.style.filter = '';
         if (notesC) notesC.style.filter = '';
     }
 
@@ -2920,7 +2935,7 @@ class PianoHero {
      * custom keeps whatever was last applied.
      */
     _applyPixiQuality(preset) {
-        if (!this.glRenderer || typeof this.glRenderer.setQuality !== 'function') return;
+        if (!this.noteRenderer || typeof this.noteRenderer.setQuality !== 'function') return;
         const dpr = window.devicePixelRatio || 1;
         let resolution;
         switch (preset) {
@@ -2930,7 +2945,7 @@ class PianoHero {
             case 'medium': resolution = Math.min(dpr, 1.5); break;
             default: return; // 'custom' — leave as-is
         }
-        this.glRenderer.setQuality({ resolution });
+        this.noteRenderer.setQuality({ resolution });
     }
 
     /** Toggle ultra-performance: hide #notesCanvas (2D overlay) and force beam style. */
@@ -3035,12 +3050,16 @@ class PianoHero {
             }
             if (settings.soundBank === 'Salamander') {
                 this.useSalamander = true;
+                this._syncSoundBankInstrumentState();
                 if (this.currentSampleBank !== 'Salamander') this.loadSalamander();
             } else {
                 this.useSalamander = false;
+                this._syncSoundBankInstrumentState();
                 this.soundfontBaseUrl = `https://gleitz.github.io/midi-js-soundfonts/${settings.soundBank}/`;
                 this.loadSoundfont(settings.instrument || this.currentInstrument);
             }
+        } else {
+            this._syncSoundBankInstrumentState();
         }
         if (settings.instrument) {
             const sel = document.getElementById('soundPreset');
@@ -5316,10 +5335,10 @@ class PianoHero {
         const ctx = this.ctx;
 
         // ── Ultra-performance: skip the entire Canvas 2D pipeline ──
-        if (this.ultraPerformance && this.glRenderer && this.glRenderer.available) {
+        if (this.ultraPerformance && this.noteRenderer && this.noteRenderer.available) {
             const canvasH = h + 50;
             const speed = this.speedMultiplier;
-            this.glRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
+            this.noteRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
                 noteSpeed: this.noteSpeed,
                 speedMultiplier: speed,
                 noteStyle: 'beam',
@@ -5360,9 +5379,9 @@ class PianoHero {
         const canvasH = h + 50;
         const speed = this.speedMultiplier;
 
-        if (this.glRenderer && this.glRenderer.available) {
+        if (this.noteRenderer && this.noteRenderer.available) {
             // === PixiJS GPU-accelerated note rendering ===
-            this.glRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
+            this.noteRenderer.renderNotes(this.fallingNotes, this.keyPositions, {
                 noteSpeed: this.noteSpeed,
                 speedMultiplier: speed,
                 noteStyle: this.noteStyle,
@@ -5456,7 +5475,7 @@ class PianoHero {
         if (style === 'synthesia') {
             // Synthesia-inspired: dark background with octave separator lines
             // When PixiJS renderer is active, bg overlay is drawn on GPU canvas instead
-            if (!this.glRenderer || !this.glRenderer.available) {
+            if (!this.noteRenderer || !this.noteRenderer.available) {
                 lctx.fillStyle = `rgba(14, 11, 34, ${this.bgOverlayOpacity})`;
                 lctx.fillRect(0, 0, w, h);
             }

@@ -32,6 +32,16 @@ class PianoKeySparkFX {
     this._applyVariantFilters();
   }
 
+  _addFlame(sprite) {
+    this.container.addChild(sprite);
+    this.flames.push(sprite);
+    while (this.flames.length > this.maxSparks) {
+      const old = this.flames.shift();
+      if (old && old.parent) old.parent.removeChild(old);
+      if (old && old.destroy) old.destroy();
+    }
+  }
+
   setVariant(name) {
     const valid = ['spark', 'fog', 'cartoon', 'cartoonhalf', 'ash', 'sparkles'];
     this.variant = valid.includes(name) ? name : 'spark';
@@ -62,7 +72,9 @@ class PianoKeySparkFX {
   }
 
   triggerKey(index, x, y, velocity = 1.0) {
-    const power = 0.7 + Math.max(0, Math.min(1, velocity)) * 0.7;
+    const v = Math.max(0, Math.min(1, velocity));
+    const brightVariant = this.variant === 'cartoon' || this.variant === 'cartoonhalf' || this.variant === 'fog';
+    const power = brightVariant ? (0.35 + v * 0.9) : (0.7 + v * 0.7);
     switch (this.variant) {
       case 'fog':      this._spawnFog(x, y, power); break;
       case 'cartoon':  this._spawnCartoon(x, y, power); break;
@@ -111,8 +123,7 @@ class PianoKeySparkFX {
       sp.scale.x *= 0.96;
       sp.scale.y *= 0.96;
     };
-    this.container.addChild(glow);
-    this.flames.push(glow);
+    this._addFlame(glow);
 
     // 6-10 flame petals shooting upward and sideways
     const count = 6 + ((Math.random() * 5) | 0);
@@ -143,8 +154,7 @@ class PianoKeySparkFX {
         sp.scale.x *= 0.965;
         sp.scale.y *= 0.965;
       };
-      this.container.addChild(s);
-      this.flames.push(s);
+      this._addFlame(s);
     }
   }
 
@@ -192,8 +202,7 @@ class PianoKeySparkFX {
         sp.scale.y += grow * dt * 0.02;
         sp.rotation += dt * 0.2;
       };
-      this.container.addChild(s);
-      this.flames.push(s);
+      this._addFlame(s);
     }
   }
 
@@ -223,18 +232,18 @@ class PianoKeySparkFX {
     glow.x = x;
     glow.y = centerY;
     glow.scale.set((140 / 64) * power, (140 / 64) * power);
-    glow.alpha = 0.30;
+    const intensity = Math.min(1.0, Math.max(0.18, power * 0.75));
+    glow.alpha = 0.20 * intensity;
     glow.blendMode = ADD_BLEND;
     glow.life = 0.70;
     glow.maxLife = glow.life;
     glow.tick = (dt, sp) => {
       const t = Math.max(0, sp.life / sp.maxLife);
-      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.30;
+      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.20 * intensity;
       sp.scale.x *= (1 - dt * 0.06);
       sp.scale.y *= (1 - dt * 0.06);
     };
-    this.container.addChild(glow);
-    this.flames.push(glow);
+    this._addFlame(glow);
 
     // --- Hot core -------------------------------------------------------
     const core = new PIXI.Sprite(this._textures.bokeh);
@@ -242,19 +251,18 @@ class PianoKeySparkFX {
     core.x = x;
     core.y = centerY;
     core.scale.set((28 / 64) * power, (28 / 64) * power);
-    core.alpha = 0.65;
+    core.alpha = 0.42 * intensity;
     core.blendMode = ADD_BLEND;
     core.life = 0.70;
     core.maxLife = core.life;
     core.tick = (dt, sp) => {
       const t = Math.max(0, sp.life / sp.maxLife);
       // Smooth ease-out: starts at 1, eases gently down to 0.
-      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.65;
+      sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.42 * intensity;
       sp.scale.x *= (1 - dt * 0.10);
       sp.scale.y *= (1 - dt * 0.10);
     };
-    this.container.addChild(core);
-    this.flames.push(core);
+    this._addFlame(core);
 
     // --- Radial light rays ----------------------------------------------
     // Thin elongated bokeh dots radiating outward like sun beams.
@@ -276,19 +284,18 @@ class PianoKeySparkFX {
       ray.rotation = ang;
       const len = 32 + Math.random() * 20;
       ray.scale.set(len / 64, 6 / 64);
-      ray.alpha = 0.35 + Math.random() * 0.15;
+      ray.alpha = (0.22 + Math.random() * 0.08) * intensity;
       ray.blendMode = ADD_BLEND;
       ray.life = 0.70;
       ray.maxLife = ray.life;
       ray.tick = (dt, sp) => {
         const t = Math.max(0, sp.life / sp.maxLife);
         // Same smooth ease-out as the core.
-        sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.45;
+        sp.alpha = Math.sin(t * Math.PI * 0.5) * 0.30 * intensity;
         sp.scale.x *= (1 + dt * 0.12);
         sp.scale.y *= (1 - dt * 0.08);
       };
-      this.container.addChild(ray);
-      this.flames.push(ray);
+      this._addFlame(ray);
     }
   }
 
@@ -349,8 +356,7 @@ class PianoKeySparkFX {
           sp.tint = (c << 16) | (c << 8) | c;
         }
       };
-      this.container.addChild(s);
-      this.flames.push(s);
+      this._addFlame(s);
     }
   }
 
@@ -384,8 +390,7 @@ class PianoKeySparkFX {
         sp.scale.x *= 0.97;
         sp.scale.y *= 0.97;
       };
-      this.container.addChild(s);
-      this.flames.push(s);
+      this._addFlame(s);
     }
   }
 

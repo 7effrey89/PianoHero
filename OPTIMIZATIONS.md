@@ -13,7 +13,7 @@ rounded rects + gradients + wave overlays) was the dominant frame cost on
 mid-tier machines.
 
 **Fix.** Introduced [`pixi-renderer.js`](pixi-renderer.js) — a Pixi v8 renderer
-that owns its own `#glCanvas` and draws notes, classic-bar fills, wave ribbons,
+that owns its own `#pixiCanvas` and draws notes, classic-bar fills, wave ribbons,
 and the background overlay via batched `Graphics` calls. The 2D `#notesCanvas`
 sits on top and is now used only for note-name labels, the force-field hit
 bar, and sparkle particles. Both canvases have transparent backgrounds and the
@@ -21,7 +21,7 @@ browser composites them natively (no `drawImage` blit per frame).
 
 Entry point: `PixiNoteRenderer.renderNotes(fallingNotes, keyPositions, config)`
 in [pixi-renderer.js](pixi-renderer.js#L130). Selected at runtime via
-`if (this.glRenderer && this.glRenderer.available)` in `_renderFrame`
+`if (this.noteRenderer && this.noteRenderer.available)` in `_renderFrame`
 ([app.js](app.js#L4660)). A Canvas 2D fallback still exists for the no-GPU
 case.
 
@@ -139,7 +139,7 @@ Because Pixi is the default renderer, the toggle did nothing on most setups.
 
 **Fix.** `_applyNeonGlowCSS()` ([app.js](app.js#L2325)) sets a CSS
 `drop-shadow(0 0 6px ...) drop-shadow(0 0 14px ...)` filter on both
-`#glCanvas` and `#notesCanvas`. The browser composites the glow against the
+`#pixiCanvas` and `#notesCanvas`. The browser composites the glow against the
 transparent canvas pixels, so it works regardless of which renderer is
 active and is essentially free on the GPU. Wired into the toggle change
 handler, `_applyGraphicsPreset`, and `_loadSettings`.
