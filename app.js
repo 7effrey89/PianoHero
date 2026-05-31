@@ -2795,7 +2795,7 @@ class PianoHero {
                 glowlineHueEnd: (this.fxGlowlineHueEnd || 0) / 360,
                 glowlineSat: colorSat(this.fxGlowlineSat),
                 glowlineVal: (this.fxGlowlineVal || 0) / 100,
-                ribbonHue: (this.fxSmokeHue || 0) / 360,
+                ribbonHue: (this.fxGlowlineHueStart || 0) / 360,
                 ribbonSat: colorSat(this.fxSmokeSat),
                 ribbonVal: (this.fxSmokeVal || 0) / 100,
                 keyGlowHue: (this.fxKeyGlowHue || 0) / 360,

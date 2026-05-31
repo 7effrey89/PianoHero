@@ -90,7 +90,7 @@ class UnifiedPianoFX {
         });
 
         this.mesh = new PIXI.Mesh(geometry, shader);
-        this.mesh.blendMode = 'add';
+        this.mesh.blendMode = 'normal';
         this.mesh.alpha = 1.0;
         this.display = this.mesh;
     }
@@ -352,7 +352,7 @@ float ribbon(vec2 uv, float t) {
 
     float vfade = smoothstep(ribbonY - thick * 3.0, ribbonY + thick * 0.6, uv.y)
         * (1.0 - smoothstep(ribbonY + thick * 3.0, ribbonY + thick * 6.0, uv.y));
-    float hfade = smoothstep(0.0, 0.08, uv.x) * (1.0 - smoothstep(0.92, 1.0, uv.x));
+    float hfade = 1.0;
     return mixFog * vfade * hfade;
 }
 
@@ -416,13 +416,13 @@ vec3 noteStreamColor(vec2 uv) {
 vec4 glowLine(vec2 uv, float t) {
     float y = glowlineY + sin(uv.x * 4.0 + t * 0.3) * glowlineThickness * 0.12;
     float d = abs(uv.y - y);
-    float core = exp(-pow(d / (glowlineThickness * 0.22), 2.0) * 5.5);
-    float halo = exp(-pow(d / (glowlineThickness * 1.65), 2.0) * 1.35);
+    float core = 1.0 - smoothstep(glowlineThickness * 0.18, glowlineThickness * 0.42, d);
+    float halo = exp(-pow(d / (glowlineThickness * 0.95), 2.0) * 2.1);
     float hue = mix(glowlineHueStart, glowlineHueEnd, uv.x);
     vec3 col = hsv2rgb(vec3(hue, glowlineSat, glowlineVal));
-    vec3 coreCol = col * core * 1.85;
-    vec3 haloCol = col * halo * 0.45;
-    float alpha = clamp(core * 0.96 + halo * 0.24, 0.0, 1.0);
+    vec3 coreCol = col * core;
+    vec3 haloCol = col * halo * 0.22;
+    float alpha = clamp(core + halo * 0.10, 0.0, 1.0);
     return vec4(coreCol + haloCol, alpha);
 }
 
@@ -442,15 +442,16 @@ void main() {
 
     float glowTerm = keyGlow(uv);
 
-    vec3 ribbonCol = hsv2rgb(vec3(ribbonHue, ribbonSat, ribbonVal)) * ribbonTerm;
+    float ambilightHue = mix(glowlineHueStart, glowlineHueEnd, uv.x);
+    vec3 ribbonCol = hsv2rgb(vec3(ambilightHue, ribbonSat, ribbonVal)) * ribbonTerm;
     vec4 glowline = glowLine(uv, time);
-    vec3 lineCol = glowline.rgb * glowlineStrength;
+    vec3 lineCol = glowline.rgb * min(glowlineStrength, 1.0);
     vec3 ambient = splashColor * (splashTerm * splashStrength + glowTerm * glowStrength);
     vec3 streamCol = noteStreamColor(uv) * streamStrength;
     vec3 outColor = ribbonCol + lineCol + ambient + streamCol;
     float energy = length(outColor);
-    outColor *= 1.0 / (1.0 + energy * 0.48);
-    float ambilightAlpha = ribbonTerm * 0.95 + glowline.a * glowlineStrength;
+    outColor *= 1.0 / (1.0 + energy * 0.36);
+    float ambilightAlpha = ribbonTerm * 0.72 + glowline.a;
     float alpha = clamp(max(length(outColor) * 0.30, ambilightAlpha) + glowTerm * glowStrength * 0.18, 0.0, 1.0);
     gl_FragColor = vec4(outColor, alpha);
 }
@@ -553,7 +554,7 @@ class PianoFX {
         this._trailContainer.addChild(this.unified.display);
 
         this._trailOutput = new PIXI.Sprite(this._trailRT[0]);
-        this._trailOutput.blendMode = 'add';
+        this._trailOutput.blendMode = 'normal';
         this._trailOutput.alpha = 0.55;
         this.app.stage.addChild(this._trailOutput);
 
@@ -797,7 +798,7 @@ class PianoFX {
                 glowlineThicknessPx: 6,
                 splashStrength: 0.45,
                 glowStrength: 0.9,
-                trailAlpha: 0.54,
+                trailAlpha: 0.75,
                 feedbackAlpha: 0.68,
                 bloomStrength: 0.34,
                 bloomBlur: 2.5,
@@ -812,7 +813,7 @@ class PianoFX {
                 glowlineThicknessPx: 7,
                 splashStrength: 0.7,
                 glowStrength: 1.05,
-                trailAlpha: 0.68,
+                trailAlpha: 0.9,
                 feedbackAlpha: 0.76,
                 bloomStrength: 0.58,
                 bloomBlur: 3,
@@ -827,7 +828,7 @@ class PianoFX {
                 glowlineThicknessPx: 8,
                 splashStrength: 0.35,
                 glowStrength: 0.9,
-                trailAlpha: 0.68,
+                trailAlpha: 1.0,
                 feedbackAlpha: 0.78,
                 bloomStrength: 0.52,
                 bloomBlur: 3.5,
@@ -995,13 +996,14 @@ class PianoFX {
             if (this.unified.activeKeys[i] > maxActive) maxActive = this.unified.activeKeys[i];
         }
         const active = (this._fxTime - this._lastImpact) < 0.8 || maxActive > 0.02;
+        const steadyTopVisual = this.ribbonMode !== 'off' && this.ribbonMode !== 'hitbar';
         const fxOnly = typeof window !== 'undefined' && window.pianoHero && window.pianoHero.fxOnlyMode;
         const idleAlpha = fxOnly ? 0.25 : 0.0;
-        this.unified.display.alpha = active ? 1.0 : idleAlpha;
+        this.unified.display.alpha = steadyTopVisual ? 1.0 : (active ? 1.0 : idleAlpha);
         const ribbonActive = this._ribbonActive != null ? this._ribbonActive : 0.12;
         const ribbonIdle = this._ribbonIdle != null ? this._ribbonIdle : 0.03;
         const idleRibbon = fxOnly ? Math.max(ribbonIdle, 0.05) : ribbonIdle;
-        this.unified.uniforms.ribbonStrength = active ? ribbonActive : idleRibbon;
+        this.unified.uniforms.ribbonStrength = steadyTopVisual ? ribbonActive : (active ? ribbonActive : idleRibbon);
         this.unified.update(delta);
 
         if (this._splashEmitter) {
