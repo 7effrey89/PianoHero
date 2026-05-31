@@ -8,9 +8,11 @@ import os
 import re
 import json
 import hashlib
+import queue
+import threading
 from html import unescape
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import requests as http_requests
 import mido
@@ -34,6 +36,22 @@ _onlineseq_cookie_store: dict[str, str | None] = {'cookie': None}
 
 # Last MIDI uploaded by the in-browser bookmarklet (consumed by the frontend poller)
 _onlineseq_last_upload: dict | None = None
+
+# Server-Sent Events: each connected client gets a Queue. When a bookmarklet
+# upload arrives, the result is pushed to every subscriber. Replaces the old
+# 2-second polling loop on the client.
+_onlineseq_upload_subscribers: list[queue.Queue] = []
+_onlineseq_subscribers_lock = threading.Lock()
+
+
+def _broadcast_onlineseq_upload(payload: dict) -> None:
+    with _onlineseq_subscribers_lock:
+        subs = list(_onlineseq_upload_subscribers)
+    for q in subs:
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            pass
 
 # Paths & configuration
 BASE_DIR = Path(__file__).parent
@@ -657,7 +675,43 @@ def onlineseq_upload_midi():
         'savedAs': midi_path.name,
     }
     _onlineseq_last_upload = result
+    _broadcast_onlineseq_upload(result)
     return jsonify({'ok': True, 'savedAs': midi_path.name, 'noteCount': len(notes)})
+
+
+@app.route('/api/onlineseq/upload_stream', methods=['GET'])
+def onlineseq_upload_stream():
+    """Server-Sent Events stream. The client opens this once; the server
+    pushes a message whenever the bookmarklet uploads a new MIDI. Replaces
+    the previous 2-second polling loop on /last_upload."""
+    q: queue.Queue = queue.Queue()
+    with _onlineseq_subscribers_lock:
+        _onlineseq_upload_subscribers.append(q)
+
+    def stream():
+        try:
+            # Initial comment so the connection is established immediately.
+            yield ': connected\n\n'
+            while True:
+                try:
+                    payload = q.get(timeout=25)
+                except queue.Empty:
+                    # Keep-alive ping so proxies / browsers don't time out.
+                    yield ': keepalive\n\n'
+                    continue
+                yield 'data: ' + json.dumps(payload) + '\n\n'
+        finally:
+            with _onlineseq_subscribers_lock:
+                try:
+                    _onlineseq_upload_subscribers.remove(q)
+                except ValueError:
+                    pass
+
+    return Response(stream(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive',
+    })
 
 
 @app.route('/api/onlineseq/last_upload', methods=['GET'])

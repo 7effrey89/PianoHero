@@ -21,4 +21,6 @@ node_modules/
 
 # Cache/output
 midi_cache/
+cookie.txt
+cookies.txt
 .DS_Store

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
     <link rel="icon" type="image/png" href="/images/logo.png">
-    <link rel="stylesheet" href="styles.css?v=15">
+    <link rel="stylesheet" href="styles.css?v=26">
 </head>
 <body>
     <div class="container">
@@ -101,6 +101,18 @@
             <div class="header-player-controls">
                 <button id="playPauseBtn" class="header-play-btn" disabled>&#9654;</button>
                 <button id="stopBtn" class="header-stop-btn" disabled>&#9632;</button>
+                <button class="header-speed-scrubber" id="headerSpeedScrubber" aria-label="Adjust playback speed" title="Drag the dial to change playback speed" aria-valuemin="25" aria-valuemax="150" aria-valuenow="100">
+                    <span class="header-speed-dial-face">
+                        <svg class="header-speed-dial-svg" viewBox="0 0 40 40" aria-hidden="true">
+                            <circle class="header-speed-dial-track" cx="20" cy="20" r="16"></circle>
+                            <circle class="header-speed-dial-progress" id="headerSpeedDialProgress" cx="20" cy="20" r="16"></circle>
+                            <circle class="header-speed-dial-thumb" id="headerSpeedDialThumb" cx="20" cy="4" r="2.4"></circle>
+                        </svg>
+                        <span class="header-speed-value" id="headerSpeedValue">100</span>
+                    </span>
+                    <span class="header-speed-caption">Speed</span>
+                </button>
+                <span class="header-divider"></span>
                 <label class="mode-toggle header-mode-toggle">
                     <input type="checkbox" id="modeToggleSwitch">
                     <span class="toggle-track"><span class="toggle-knob"></span></span>
@@ -134,15 +146,25 @@
             </div>
 
             <div class="header-spacer">
-                <p id="statusMessage" class="header-status-message"></p>
+                <div class="header-status-stack" id="headerStatusBar">
+                    <p id="statusMessage" class="header-status-message"></p>
+                    <div id="progressBar" class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Score stats -->
             <div class="header-score-section" id="headerScoreSection">
                 <div class="stat-item">Score: <span id="score">0</span></div>
-                <div class="stat-item">Combo: <span id="combo">0</span>x</div>
                 <div class="stat-item">Best Streak: <span id="streak">0</span></div>
                 <div class="stat-item">Accuracy: <span id="accuracy">0</span>%</div>
+                <div class="multiplier-tracker" id="multiplierTracker" aria-label="Score multiplier">
+                    <div class="multiplier-pips" id="multiplierPips"></div>
+                    <div class="multiplier-value">
+                        <span class="multiplier-x">×</span><span id="multiplierValue">1</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Settings gear -->
@@ -155,6 +177,14 @@
                     <h4>Sound</h4>
                     <div class="settings-panel-body" id="soundPanelBody">
                     <div class="sound-row">
+                        <label for="soundBankSelect">Sound Bank:</label>
+                        <select id="soundBankSelect">
+                            <option value="Salamander">Salamander Grand (Yamaha C5)</option>
+                            <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
+                            <option value="MusyngKite">MusyngKite (Bright)</option>
+                        </select>
+                    </div>
+                    <div class="sound-row sound-row-nested">
                         <label for="soundPreset">Instrument:</label>
                         <select id="soundPreset">
                             <optgroup label="Piano">
@@ -220,14 +250,6 @@
                         <span id="soundfontStatus" class="soundfont-status"></span>
                     </div>
                     <div class="sound-row">
-                        <label for="soundBankSelect">Sound Bank:</label>
-                        <select id="soundBankSelect">
-                            <option value="Salamander">Salamander Grand (Yamaha C5)</option>
-                            <option value="FluidR3_GM">FluidR3 GM (Warm)</option>
-                            <option value="MusyngKite">MusyngKite (Bright)</option>
-                        </select>
-                    </div>
-                    <div class="sound-row">
                         <label for="volumeSlider">Volume</label>
                         <input type="range" id="volumeSlider" min="0" max="100" value="80">
                         <span id="volumeVal">80%</span>
@@ -282,6 +304,9 @@
                     <div class="setting-row">
                         <span class="setting-info" id="bpmDisplay">BPM: --</span>
                     </div>
+                    <div class="setting-row">
+                        <span class="setting-info" id="perfDebugStatus">Perf: Worker init | WASM init | Precompute --</span>
+                    </div>
                     <div class="setting-row coplay-hint" id="coplayHint" style="display:none">
                         <span class="setting-info">Use the selectors above each key to pick your manual lanes. Click a selected lane again to remap its keyboard key.</span>
                     </div>
@@ -299,47 +324,71 @@
                         <input type="file" id="bgImageInput" accept="image/*" style="display:none">
                     </div>
                     <div class="setting-row">
-                        <label for="bgOpacitySlider">Overlay Opacity</label>
-                        <input type="range" id="bgOpacitySlider" min="0" max="100" value="25" />
-                        <span id="bgOpacityVal">25%</span>
+                        <label for="currentBackgroundLabel">Current BG</label>
+                        <span id="currentBackgroundLabel" class="current-background-label">None</span>
                     </div>
                 </div>
                 </div>
                 <div class="settings-panel">
                     <h4>UI Effects</h4>
                     <div class="settings-panel-body" id="uiEffectsBody">
-                    <div class="setting-row">
-                        <label for="timingFeedbackToggle">Hit Feedback</label>
-                        <label class="toggle-small">
-                            <input type="checkbox" id="timingFeedbackToggle" checked>
-                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
-                        </label>
-                    </div>
-                    <div class="setting-row">
-                        <label for="sparkleToggle">Sparkle Effects</label>
-                        <label class="toggle-small">
-                            <input type="checkbox" id="sparkleToggle" checked>
-                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
-                        </label>
-                    </div>
-                    <div class="setting-row" id="particleStyleRow">
-                        <label for="particleStyleSelect">Particle Style</label>
-                        <select id="particleStyleSelect">
-                            <option value="sparkle">Sparkle (beams)</option>
-                            <option value="splash">Splash (droplets)</option>
+                    <div class="setting-row" title="Controls only the vertical columns above pressed keys">
+                        <label for="fxStreamSelect">Stream Effect</label>
+                        <select id="fxStreamSelect">
+                            <option value="off" selected>Off</option>
+                            <option value="subtle">Subtle</option>
+                            <option value="cinematic">Cinematic</option>
                         </select>
                     </div>
-                    <div class="setting-row" id="sparkleSliderRow">
-                        <label for="sparkleSlider">Particle FX</label>
-                        <input type="range" id="sparkleSlider" min="0" max="100" step="5" value="100">
-                        <span id="sparkleValue">100%</span>
+                    <div class="setting-row setting-row-indent" id="fxStreamWidthRow" title="Controls only the width of the vertical stream columns">
+                        <label for="fxStreamWidthSelect">Stream Width</label>
+                        <select id="fxStreamWidthSelect">
+                            <option value="narrow">Narrow</option>
+                            <option value="normal" selected>Normal</option>
+                            <option value="wide">Wide</option>
+                        </select>
                     </div>
-                    <div class="setting-row" id="sparkleHeightRow">
-                        <label for="sparkleHeightSlider">Sparkle Height</label>
-                        <input type="range" id="sparkleHeightSlider" min="10" max="200" step="5" value="100">
-                        <span id="sparkleHeightValue">100%</span>
+                    <div class="setting-row" title="Controls the visual drawn along the top of the keyboard">
+                        <label for="fxRibbonSelect">Keyboard Top Visual</label>
+                        <select id="fxRibbonSelect">
+                            <option value="off">Off</option>
+                            <option value="hitbar">Note Hit Bar</option>
+                            <option value="subtle">Subtle Ribbon Effect</option>
+                            <option value="cinematic">Cinematic Ribbon Effect</option>
+                            <option value="strong" selected>Strong Ribbon Effect</option>
+                        </select>
                     </div>
-                    <div class="setting-row">
+                    <div class="setting-row" title="Splash effect style">
+                        <label for="fxSplashSelect">Key Stroke Effect</label>
+                        <select id="fxSplashSelect">
+                            <option value="off">Off</option>
+                            <option value="classic">Water rings</option>
+                            <option value="cartoon">Light burst</option>
+                            <option value="burst">Burst (premium)</option>
+                            <option value="spark">Explosion (anime)</option>
+                            <option value="fog">Fog (cinematic mist)</option>
+                            <option value="cartoonhalf">Light burst (half)</option>
+                            <option value="ash">Ash (wind-blown embers)</option>
+                            <option value="sparkles">Sparkles (twinkles)</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" title="How far the ambient glow under the pressed key spreads">
+                        <label for="fxGlowSpreadSelect">Key Stroke Glow</label>
+                        <select id="fxGlowSpreadSelect">
+                            <option value="none">None</option>
+                            <option value="narrow">Narrow</option>
+                            <option value="wide">Wide</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" title="Choose how piano keys are colored while pressed">
+                        <label for="keyPressTintSelect">Key Press Tint</label>
+                        <select id="keyPressTintSelect">
+                            <option value="off" selected>Off</option>
+                            <option value="solid">Solid Color</option>
+                            <option value="glow">Glow Color</option>
+                        </select>
+                    </div>
+                    <div class="setting-row" title="Legacy vertical lane guide overlay">
                         <label for="laneStyleSelect">Lane Lines</label>
                         <select id="laneStyleSelect">
                             <option value="full">Full (borders + fill)</option>
@@ -350,51 +399,113 @@
                             <option value="none">None</option>
                         </select>
                     </div>
-                    <div class="setting-row">
+                    <div class="setting-row" title="Falling note rendering style">
                         <label for="noteStyleSelect">Note Style</label>
                         <select id="noteStyleSelect">
                             <option value="beam">Light Beam</option>
-                            <option value="classic">Classic Bars</option>
+                            <option value="classic" selected>Classic Bars</option>
                         </select>
                     </div>
-                    <div class="setting-row" title="Number of animated wave reflections inside classic note bars (0 = off)">
-                        <label for="waveToggle">Wave Ribbons</label>
+                    <div class="setting-row" title="Overlay the note name on each falling note">
+                        <label for="showNoteNamesToggle">Note Text</label>
                         <label class="toggle-small">
-                            <input type="checkbox" id="waveToggle" checked>
+                            <input type="checkbox" id="showNoteNamesToggle">
                             <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
                         </label>
                     </div>
-                    <div class="setting-row" id="waveCountRow" title="Number of animated wave ribbons">
-                        <label for="waveCountSlider">Wave Count</label>
-                        <input type="range" id="waveCountSlider" min="1" max="10" step="1" value="6">
-                        <span id="waveCountVal">6</span>
-                    </div>
-                    <div class="setting-row" title="Adds a multi-layer neon bloom glow around falling notes, inspired by glowing tube effects">
-                        <label for="neonGlowToggle">Neon Glow</label>
+                    <div class="setting-row" title="Adds neon bloom around falling notes">
+                        <label for="neonGlowToggle">Note Neon Glow</label>
                         <label class="toggle-small">
                             <input type="checkbox" id="neonGlowToggle">
                             <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
                         </label>
                     </div>
-                    <div class="setting-row" title="Replaces the static hit bar with an animated flowing energy force field">
-                        <label for="forceFieldToggle">Force Field Bar</label>
-                        <label class="toggle-small">
-                            <input type="checkbox" id="forceFieldToggle">
-                            <span class="toggle-track-small"><span class="toggle-knob-small"></span></span>
-                        </label>
+                    <div class="setting-group" id="fxPaletteGroup">
+                        <div class="setting-group-title">Keyboard Ambilight</div>
+                        <div class="setting-row keyboard-top-color-control" title="Glowline gradient start hue">
+                            <label for="fxGlowHueStart">Glowline Hue Start</label>
+                            <input type="range" id="fxGlowHueStart" min="0" max="360" value="0">
+                            <span id="fxGlowHueStartVal">0°</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Glowline gradient end hue">
+                            <label for="fxGlowHueEnd">Glowline Hue End</label>
+                            <input type="range" id="fxGlowHueEnd" min="0" max="360" value="306">
+                            <span id="fxGlowHueEndVal">306°</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Glowline saturation">
+                            <label for="fxGlowSat">Glowline Saturation</label>
+                            <input type="range" id="fxGlowSat" min="0" max="100" value="95">
+                            <span id="fxGlowSatVal">95%</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Glowline brightness">
+                            <label for="fxGlowVal">Glowline Brightness</label>
+                            <input type="range" id="fxGlowVal" min="20" max="100" value="100">
+                            <span id="fxGlowValVal">100%</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Ribbon follows the glowline hue range" style="display: none;">
+                            <label for="fxSmokeHue">Ribbon Hue</label>
+                            <input type="range" id="fxSmokeHue" min="0" max="360" value="30">
+                            <span id="fxSmokeHueVal">30°</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Ribbon saturation">
+                            <label for="fxSmokeSat">Ribbon Saturation</label>
+                            <input type="range" id="fxSmokeSat" min="0" max="100" value="49">
+                            <span id="fxSmokeSatVal">49%</span>
+                        </div>
+                        <div class="setting-row keyboard-top-color-control" title="Ribbon brightness">
+                            <label for="fxSmokeVal">Ribbon Brightness</label>
+                            <input type="range" id="fxSmokeVal" min="20" max="100" value="55">
+                            <span id="fxSmokeValVal">55%</span>
+                        </div>
+                        <div class="setting-row" title="Stroke glow hue follows the glowline hue range" style="display: none;">
+                            <label for="fxKeyGlowHue">Stroke Glow Hue</label>
+                            <input type="range" id="fxKeyGlowHue" min="0" max="360" value="200">
+                            <span id="fxKeyGlowHueVal">200°</span>
+                        </div>
+                        <div class="setting-row" title="Key stroke glow saturation">
+                            <label for="fxKeyGlowSat">Stroke Glow Saturation</label>
+                            <input type="range" id="fxKeyGlowSat" min="0" max="100" value="70">
+                            <span id="fxKeyGlowSatVal">70%</span>
+                        </div>
+                        <div class="setting-row" title="Key stroke glow brightness">
+                            <label for="fxKeyGlowVal">Stroke Glow Brightness</label>
+                            <input type="range" id="fxKeyGlowVal" min="20" max="100" value="100">
+                            <span id="fxKeyGlowValVal">100%</span>
+                        </div>
+                        <div class="setting-row" title="Pressed key tint hue">
+                            <label for="keyPressTintHue">Key Tint Hue</label>
+                            <input type="range" id="keyPressTintHue" min="0" max="360" value="256">
+                            <span id="keyPressTintHueVal">256°</span>
+                        </div>
+                        <div class="setting-row" title="Pressed key tint saturation">
+                            <label for="keyPressTintSat">Key Tint Saturation</label>
+                            <input type="range" id="keyPressTintSat" min="0" max="100" value="70">
+                            <span id="keyPressTintSatVal">70%</span>
+                        </div>
+                        <div class="setting-row" title="Pressed key tint brightness">
+                            <label for="keyPressTintVal">Key Tint Brightness</label>
+                            <input type="range" id="keyPressTintVal" min="20" max="100" value="100">
+                            <span id="keyPressTintValVal">100%</span>
+                        </div>
+                        <div class="setting-row">
+                            <label>FX Colors</label>
+                            <button id="fxPaletteResetBtn" class="setting-btn-small">Reset to Default</button>
+                            <button id="allSettingsResetBtn" class="setting-btn-small">Reset All Settings</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" id="timingFeedbackModeRow">
+                        <label for="timingFeedbackModeSelect">Feedback Mode</label>
+                        <select id="timingFeedbackModeSelect">
+                            <option value="none">None</option>
+                            <option value="individual">Individual</option>
+                            <option value="consolidated">Consolidated</option>
+                        </select>
                     </div>
                 </div>
                 </div>
                 </div>
             </div>
         </header>
-
-        <!-- Status bar (below header, minimal) -->
-        <div class="header-status-bar" id="headerStatusBar">
-            <div id="progressBar" class="progress-bar">
-                <div id="progressFill" class="progress-fill"></div>
-            </div>
-        </div>
 
         <!-- Song Timeline -->
         <div class="stats-bar">
@@ -408,9 +519,11 @@
         <!-- Game Canvas with Piano Keys Integrated -->
         <div id="gameArea">
             <div id="gameCanvas">
-                <canvas id="glCanvas"></canvas>
+                <canvas id="pixiCanvas"></canvas>
                 <canvas id="notesCanvas"></canvas>
             </div>
+
+            <div id="timingFeedbackCenter" class="timing-feedback timing-feedback-center"></div>
             
             <!-- Piano Keys -->
             <div id="piano">
@@ -418,12 +531,19 @@
                     <!-- Keys generated dynamically by app.js -->
                 </div>
             </div>
+
+            <!-- FX overlay spans the entire game area so effects can sit on top of the keyboard -->
+            <canvas id="fxCanvas"></canvas>
         </div>
     </div>
 
     <script src="https://pixijs.download/v8.18.1/pixi.min.js"></script>
-    <script src="pixi-renderer.js?v=1"></script>
-    <script src="app.js?v=35"></script>
+    <script src="https://unpkg.com/@pixi/mesh@8.18.1/dist/mesh.min.js"></script>
+    <script src="https://unpkg.com/@pixi/filter-bloom@8.18.1/dist/filter-bloom.min.js"></script>
+    <script src="PianoKeySparkFX.js?v=18"></script>
+    <script src="pixi-renderer.js?v=7"></script>
+    <script src="piano-fx.js?v=32"></script>
+    <script src="app.js?v=88"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

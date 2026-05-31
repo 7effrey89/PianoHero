@@ -6,6 +6,8 @@ package-lock.json
 
 # Environment variables
 .env
+cookie.txt
+cookies.txt
 
 # Python
 __pycache__/
