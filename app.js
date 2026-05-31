@@ -1289,6 +1289,7 @@ class PianoHero {
     }
 
     _applyFxKeyFill(note, x, velocity = 1, duration = null) {
+        if (this.keyPressTint !== 'glow') return;
         const keyElement = document.querySelector(`.key[data-note="${note}"]`);
         if (!keyElement || !this.canvas || !this.canvas.width) return;
         const t = Math.max(0, Math.min(1, x / this.canvas.width));
@@ -2782,11 +2783,12 @@ class PianoHero {
     }
 
     _applyKeyPressTint(mode, { skipSave = false } = {}) {
-        const m = mode === 'on' || mode === 'purple' ? 'on' : 'off';
+        const m = (mode === 'on' || mode === 'purple' || mode === 'solid') ? 'solid' : (mode === 'glow' ? 'glow' : 'off');
         const select = document.getElementById('keyPressTintSelect');
         if (select) select.value = m;
         this.keyPressTint = m;
-        document.body.classList.toggle('no-key-press-tint', m === 'off');
+        document.body.classList.toggle('no-key-press-tint', m !== 'solid');
+        if (m !== 'glow') this._clearAllFxKeyFills();
         this._updateKeyPressTintColorControls();
         this._applyKeyPressTintColor();
         if (!skipSave) this._saveSettings();
@@ -2825,7 +2827,7 @@ class PianoHero {
     }
 
     _updateKeyPressTintColorControls() {
-        const disabled = this.keyPressTint === 'off';
+        const disabled = this.keyPressTint !== 'solid';
         ['keyPressTintHue', 'keyPressTintSat', 'keyPressTintVal'].forEach((id) => {
             const input = document.getElementById(id);
             if (!input) return;

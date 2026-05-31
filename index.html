@@ -380,11 +380,12 @@
                             <option value="wide">Wide</option>
                         </select>
                     </div>
-                    <div class="setting-row" title="Controls the built-in purple tint applied directly to piano keys while pressed">
+                    <div class="setting-row" title="Choose how piano keys are colored while pressed">
                         <label for="keyPressTintSelect">Key Press Tint</label>
                         <select id="keyPressTintSelect">
                             <option value="off" selected>Off</option>
-                            <option value="on">On</option>
+                            <option value="solid">Solid Color</option>
+                            <option value="glow">Glow Color</option>
                         </select>
                     </div>
                     <div class="setting-row" title="Legacy vertical lane guide overlay">
@@ -541,7 +542,7 @@
     <script src="PianoKeySparkFX.js?v=18"></script>
     <script src="pixi-renderer.js?v=7"></script>
     <script src="piano-fx.js?v=32"></script>
-    <script src="app.js?v=86"></script>
+    <script src="app.js?v=87"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">
