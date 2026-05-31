@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Piano Hero</title>
     <link rel="icon" type="image/png" href="/images/logo.png">
-    <link rel="stylesheet" href="styles.css?v=24">
+    <link rel="stylesheet" href="styles.css?v=26">
 </head>
 <body>
     <div class="container">
@@ -423,18 +423,18 @@
                         <div class="setting-group-title">Keyboard Ambilight</div>
                         <div class="setting-row keyboard-top-color-control" title="Glowline gradient start hue">
                             <label for="fxGlowHueStart">Glowline Hue Start</label>
-                            <input type="range" id="fxGlowHueStart" min="0" max="360" value="210">
-                            <span id="fxGlowHueStartVal">210°</span>
+                            <input type="range" id="fxGlowHueStart" min="0" max="360" value="0">
+                            <span id="fxGlowHueStartVal">0°</span>
                         </div>
                         <div class="setting-row keyboard-top-color-control" title="Glowline gradient end hue">
                             <label for="fxGlowHueEnd">Glowline Hue End</label>
-                            <input type="range" id="fxGlowHueEnd" min="0" max="360" value="320">
-                            <span id="fxGlowHueEndVal">320°</span>
+                            <input type="range" id="fxGlowHueEnd" min="0" max="360" value="306">
+                            <span id="fxGlowHueEndVal">306°</span>
                         </div>
                         <div class="setting-row keyboard-top-color-control" title="Glowline saturation">
                             <label for="fxGlowSat">Glowline Saturation</label>
-                            <input type="range" id="fxGlowSat" min="0" max="100" value="60">
-                            <span id="fxGlowSatVal">60%</span>
+                            <input type="range" id="fxGlowSat" min="0" max="100" value="95">
+                            <span id="fxGlowSatVal">95%</span>
                         </div>
                         <div class="setting-row keyboard-top-color-control" title="Glowline brightness">
                             <label for="fxGlowVal">Glowline Brightness</label>
@@ -448,13 +448,13 @@
                         </div>
                         <div class="setting-row keyboard-top-color-control" title="Ribbon saturation">
                             <label for="fxSmokeSat">Ribbon Saturation</label>
-                            <input type="range" id="fxSmokeSat" min="0" max="100" value="95">
-                            <span id="fxSmokeSatVal">95%</span>
+                            <input type="range" id="fxSmokeSat" min="0" max="100" value="49">
+                            <span id="fxSmokeSatVal">49%</span>
                         </div>
                         <div class="setting-row keyboard-top-color-control" title="Ribbon brightness">
                             <label for="fxSmokeVal">Ribbon Brightness</label>
-                            <input type="range" id="fxSmokeVal" min="20" max="100" value="100">
-                            <span id="fxSmokeValVal">100%</span>
+                            <input type="range" id="fxSmokeVal" min="20" max="100" value="55">
+                            <span id="fxSmokeValVal">55%</span>
                         </div>
                         <div class="setting-row" title="Stroke glow hue follows the glowline hue range" style="display: none;">
                             <label for="fxKeyGlowHue">Stroke Glow Hue</label>
@@ -540,8 +540,8 @@
     <script src="https://unpkg.com/@pixi/filter-bloom@8.18.1/dist/filter-bloom.min.js"></script>
     <script src="PianoKeySparkFX.js?v=18"></script>
     <script src="pixi-renderer.js?v=7"></script>
-    <script src="piano-fx.js?v=27"></script>
-    <script src="app.js?v=80"></script>
+    <script src="piano-fx.js?v=32"></script>
+    <script src="app.js?v=86"></script>
 
     <!-- Key Mapping Modal (Co-Play / Assistant Mode) -->
     <div id="keyMapModal" class="keymap-modal hidden" role="dialog" aria-modal="true" aria-labelledby="keyMapTitle">

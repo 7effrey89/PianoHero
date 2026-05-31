@@ -1294,6 +1294,19 @@ body.no-key-press-tint .key.white.active {
     color: #333;
 }
 
+.key.white.fx-key-glow-fill,
+body.no-key-press-tint .key.white.fx-key-glow-fill,
+body.no-key-press-tint .key.white.fx-key-glow-fill.active {
+    background:
+        linear-gradient(to bottom, var(--fx-key-fill-top, rgba(124, 77, 255, 0.58)) 0%, var(--fx-key-fill-bottom, rgba(106, 61, 232, 0.42)) 100%),
+        linear-gradient(to bottom, #ffffff 0%, #f4f4f4 58%, #e7e7e7 100%) !important;
+    color: #222;
+    box-shadow:
+        inset 0 0 22px var(--fx-key-glow-shadow, rgba(124, 77, 255, 0.38)),
+        0 0 14px var(--fx-key-glow-shadow, rgba(124, 77, 255, 0.30)),
+        0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
 .key.black {
     position: absolute;
     /* width set inline by JS */
@@ -1317,6 +1330,19 @@ body.no-key-press-tint .key.white.active {
 body.no-key-press-tint .key.black:active,
 body.no-key-press-tint .key.black.active {
     background: linear-gradient(to bottom, #444 0%, #111 100%);
+}
+
+.key.black.fx-key-glow-fill,
+body.no-key-press-tint .key.black.fx-key-glow-fill,
+body.no-key-press-tint .key.black.fx-key-glow-fill.active {
+    background:
+        linear-gradient(to bottom, var(--fx-key-fill-top, rgba(124, 77, 255, 0.62)) 0%, var(--fx-key-fill-bottom, rgba(106, 61, 232, 0.45)) 100%),
+        linear-gradient(to bottom, #333 0%, #000 100%) !important;
+    color: #fff;
+    box-shadow:
+        inset 0 0 16px var(--fx-key-glow-shadow, rgba(124, 77, 255, 0.42)),
+        0 0 12px var(--fx-key-glow-shadow, rgba(124, 77, 255, 0.34)),
+        0 4px 8px rgba(0, 0, 0, 0.5);
 }
 
 .key-label {

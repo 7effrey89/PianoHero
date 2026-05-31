@@ -364,21 +364,22 @@ float keyGlow(vec2 uv) {
     float glow = 0.0;
     float overKeys = smoothstep(0.78, 0.92, uv.y);
     float spreadFactor = mix(glowSpread, 0.0, overKeys);
+    float keyboardTop = glowlineY;
+    float topRim = exp(-pow((uv.y - keyboardTop) / 0.012, 2.0));
+    float upwardGlow = smoothstep(keyboardTop - 0.18, keyboardTop - 0.018, uv.y)
+        * (1.0 - smoothstep(keyboardTop - 0.015, keyboardTop + 0.01, uv.y));
     for (int i = 0; i < 88; i++) {
         float v = activeKeys[i];
         if (v <= 0.001) continue;
         float keyX = keyCenters[i];
         float d = abs(uv.x - keyX);
 
-        float tightWidth = mix(0.000035, 0.0012, spreadFactor);
-        float core = exp(-(d * d) / tightWidth);
-        float halo = exp(-(d * d) / mix(0.00018, 0.0045, spreadFactor));
-        float keyTop = exp(-pow((uv.y - 0.93) / 0.028, 2.0));
-        float plume = exp(-pow((uv.y - 0.86) / 0.12, 2.0)) * smoothstep(0.98, 0.70, uv.y);
-        glow += (core * 2.8 * keyTop + halo * 1.25 * keyTop + core * 1.1 * plume) * v;
+        float keyWidth = mix(0.012, 0.022, spreadFactor);
+        float keyFill = 1.0 - smoothstep(keyWidth * 0.84, keyWidth, d);
+        float softBeam = exp(-(d * d) / (keyWidth * keyWidth * 0.95));
+        glow += (softBeam * upwardGlow * 0.28 + keyFill * topRim * 0.18) * v;
     }
-    float keyboardFade = smoothstep(0.66, 0.92, uv.y);
-    return glow * keyGlowStrength * keyboardFade * 2.2;
+    return glow * keyGlowStrength * 0.78;
 }
 
 vec3 hsv2rgb(vec3 c) {
