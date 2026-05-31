@@ -145,6 +145,7 @@ class PianoHero {
         // Hold-note tracking
         this.heldKeys = new Set();                // keyboard keys currently held down
         this.activeNoteSources = new Map();       // note name → { source, noteGain, fadeStart, fadeEnd }
+        this._fxKeyFillTimers = new Map();        // note name -> DOM fill cleanup timer
         this.heldFallingNotes = new Map();        // note name → falling note being held
 
         this.laneStyle = 'synthesia';
@@ -178,13 +179,13 @@ class PianoHero {
         this.fxStreamWidth = 'normal';
         this.fxRibbonMode = 'strong';
         this.fxSplashMode = 'classic';
-        this.fxGlowlineHueStart = 210;
-        this.fxGlowlineHueEnd = 320;
+        this.fxGlowlineHueStart = 0;
+        this.fxGlowlineHueEnd = 306;
         this.fxGlowlineSat = 95;
         this.fxGlowlineVal = 100;
         this.fxSmokeHue = 30;
-        this.fxSmokeSat = 95;
-        this.fxSmokeVal = 100;
+        this.fxSmokeSat = 49;
+        this.fxSmokeVal = 55;
         this.fxKeyGlowHue = 200;
         this.fxKeyGlowSat = 70;
         this.fxKeyGlowVal = 100;
@@ -193,13 +194,13 @@ class PianoHero {
         this.keyPressTintSat = 70;
         this.keyPressTintVal = 100;
         this._fxPaletteDefaults = {
-            glowlineHueStart: 210,
-            glowlineHueEnd: 320,
+            glowlineHueStart: 0,
+            glowlineHueEnd: 306,
             glowlineSat: 95,
             glowlineVal: 100,
             smokeHue: 30,
-            smokeSat: 95,
-            smokeVal: 100,
+            smokeSat: 49,
+            smokeVal: 55,
             keyGlowHue: 200,
             keyGlowSat: 70,
             keyGlowVal: 100,
@@ -1272,7 +1273,7 @@ class PianoHero {
         this._laneCacheDirty = true;
     }
 
-    _emitPianoFxForNote(note, velocity = 1) {
+    _emitPianoFxForNote(note, velocity = 1, duration = null) {
         if (!this.pianoFx || !this.pianoFx.isReady) return;
         const pos = this.keyPositions && this.keyPositions[note];
         if (!pos) return;
@@ -1284,6 +1285,67 @@ class PianoHero {
         const x = pos.left + pos.width / 2;
         const y = this.canvas.height - 10;
         this.pianoFx.onKeyPress(x, y, keyIndex, velocity);
+        this._applyFxKeyFill(note, x, velocity, duration);
+    }
+
+    _applyFxKeyFill(note, x, velocity = 1, duration = null) {
+        const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+        if (!keyElement || !this.canvas || !this.canvas.width) return;
+        const t = Math.max(0, Math.min(1, x / this.canvas.width));
+        const start = Number.isFinite(this.fxGlowlineHueStart) ? this.fxGlowlineHueStart : 0;
+        const end = Number.isFinite(this.fxGlowlineHueEnd) ? this.fxGlowlineHueEnd : start;
+        const hue = (start + (end - start) * t + 360) % 360;
+        const sat = Number.isFinite(this.fxKeyGlowSat) ? this.fxKeyGlowSat : 70;
+        const val = Number.isFinite(this.fxKeyGlowVal) ? this.fxKeyGlowVal : 100;
+        const [r, g, b] = this._hsvToRgb255(hue, sat, val);
+        const bottom = this._hsvToRgb255(hue, sat, Math.max(0, val - 14));
+        const alpha = Math.min(0.46, 0.24 + Math.max(0, Math.min(1, velocity)) * 0.18);
+        keyElement.style.setProperty('--fx-key-fill-top', `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`);
+        keyElement.style.setProperty('--fx-key-fill-bottom', `rgba(${bottom[0]}, ${bottom[1]}, ${bottom[2]}, ${(alpha * 0.72).toFixed(2)})`);
+        keyElement.style.setProperty('--fx-key-glow-shadow', `rgba(${r}, ${g}, ${b}, ${(alpha * 0.9).toFixed(2)})`);
+        keyElement.classList.add('fx-key-glow-fill');
+
+        const existingTimer = this._fxKeyFillTimers.get(note);
+        if (existingTimer) clearTimeout(existingTimer);
+        if (duration != null) {
+            const flashMs = 240;
+            this._fxKeyFillTimers.set(note, setTimeout(() => this._clearFxKeyFill(note), flashMs));
+        } else {
+            this._fxKeyFillTimers.delete(note);
+        }
+    }
+
+    _clearFxKeyFill(note) {
+        const existingTimer = this._fxKeyFillTimers.get(note);
+        if (existingTimer) clearTimeout(existingTimer);
+        this._fxKeyFillTimers.delete(note);
+        const keyElement = document.querySelector(`.key[data-note="${note}"]`);
+        if (!keyElement) return;
+        keyElement.classList.remove('fx-key-glow-fill');
+        keyElement.style.removeProperty('--fx-key-fill-top');
+        keyElement.style.removeProperty('--fx-key-fill-bottom');
+        keyElement.style.removeProperty('--fx-key-glow-shadow');
+    }
+
+    _cleanupFxKeyFills() {
+        document.querySelectorAll('.key.fx-key-glow-fill').forEach(keyElement => {
+            const note = keyElement.dataset.note;
+            if (!note) return;
+            if (this._fxKeyFillTimers.has(note)) return;
+            if (keyElement.classList.contains('active')) return;
+            if (this.activeNoteSources.has(note)) return;
+            this._clearFxKeyFill(note);
+        });
+    }
+
+    _clearAllFxKeyFills() {
+        for (const note of Array.from(this._fxKeyFillTimers.keys())) {
+            this._clearFxKeyFill(note);
+        }
+        document.querySelectorAll('.key.fx-key-glow-fill').forEach(keyElement => {
+            const note = keyElement.dataset.note;
+            if (note) this._clearFxKeyFill(note);
+        });
     }
 
     _syncPianoFxKeyCenters() {
@@ -2790,15 +2852,18 @@ class PianoHero {
                 const s = Math.max(0, Math.min(1, (v || 0) / 100));
                 return 1 - Math.pow(1 - s, 1.8);
             };
+            const glowHueStart = this.fxGlowlineHueStart || 0;
+            const glowHueEnd = this.fxGlowlineHueEnd || 0;
+            const strokeGlowHue = ((glowHueStart + glowHueEnd) * 0.5) % 360;
             this.pianoFx.setFxPalette({
-                glowlineHueStart: (this.fxGlowlineHueStart || 0) / 360,
-                glowlineHueEnd: (this.fxGlowlineHueEnd || 0) / 360,
+                glowlineHueStart: glowHueStart / 360,
+                glowlineHueEnd: glowHueEnd / 360,
                 glowlineSat: colorSat(this.fxGlowlineSat),
                 glowlineVal: (this.fxGlowlineVal || 0) / 100,
-                ribbonHue: (this.fxGlowlineHueStart || 0) / 360,
+                ribbonHue: glowHueStart / 360,
                 ribbonSat: colorSat(this.fxSmokeSat),
                 ribbonVal: (this.fxSmokeVal || 0) / 100,
-                keyGlowHue: (this.fxKeyGlowHue || 0) / 360,
+                keyGlowHue: strokeGlowHue / 360,
                 keyGlowSat: (this.fxKeyGlowSat || 0) / 100,
                 keyGlowVal: (this.fxKeyGlowVal || 0) / 100,
             });
@@ -2817,13 +2882,13 @@ class PianoHero {
             setter(value);
         };
 
-        setSlider('fxGlowHueStart', d.glowlineHueStart || 210, '°', (v) => { this.fxGlowlineHueStart = v; });
-        setSlider('fxGlowHueEnd', d.glowlineHueEnd || 320, '°', (v) => { this.fxGlowlineHueEnd = v; });
+        setSlider('fxGlowHueStart', d.glowlineHueStart ?? 0, '°', (v) => { this.fxGlowlineHueStart = v; });
+        setSlider('fxGlowHueEnd', d.glowlineHueEnd ?? 306, '°', (v) => { this.fxGlowlineHueEnd = v; });
         setSlider('fxGlowSat', d.glowlineSat || 95, '%', (v) => { this.fxGlowlineSat = v; });
         setSlider('fxGlowVal', d.glowlineVal || 100, '%', (v) => { this.fxGlowlineVal = v; });
         setSlider('fxSmokeHue', d.smokeHue || 30, '°', (v) => { this.fxSmokeHue = v; });
-        setSlider('fxSmokeSat', d.smokeSat || 95, '%', (v) => { this.fxSmokeSat = v; });
-        setSlider('fxSmokeVal', d.smokeVal || 100, '%', (v) => { this.fxSmokeVal = v; });
+        setSlider('fxSmokeSat', d.smokeSat ?? 49, '%', (v) => { this.fxSmokeSat = v; });
+        setSlider('fxSmokeVal', d.smokeVal ?? 55, '%', (v) => { this.fxSmokeVal = v; });
         setSlider('fxKeyGlowHue', d.keyGlowHue || 200, '°', (v) => { this.fxKeyGlowHue = v; });
         setSlider('fxKeyGlowSat', d.keyGlowSat || 70, '%', (v) => { this.fxKeyGlowSat = v; });
         setSlider('fxKeyGlowVal', d.keyGlowVal || 100, '%', (v) => { this.fxKeyGlowVal = v; });
@@ -3336,6 +3401,7 @@ class PianoHero {
         this.autoPlayTimeouts.forEach(t => clearTimeout(t));
         this.autoPlayTimeouts = [];
         document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+        this._clearAllFxKeyFills();
         for (const note of this.activeNoteSources.keys()) {
             this.stopNoteSound(note);
         }
@@ -4435,6 +4501,7 @@ class PianoHero {
             if (note) {
                 // Always update visual held state on release
                 this.heldFallingNotes.delete(note);
+                this._clearFxKeyFill(note);
                 if (this.sustainEnabled) {
                     this.sustainedNotes.add(note);
                 } else {
@@ -4481,7 +4548,7 @@ class PianoHero {
         // Default velocity: 1.0 for manual, 0.8 for auto-play
         if (velocity == null) velocity = (duration != null) ? 0.8 : 1.0;
         const fxVelocity = Math.max(0, Math.min(1, velocity));
-        this._emitPianoFxForNote(note, fxVelocity);
+        this._emitPianoFxForNote(note, fxVelocity, duration);
 
         // Stop any existing source for the same note to prevent polyphony buildup
         const existing = this.activeNoteSources.get(note);
@@ -4613,6 +4680,7 @@ class PianoHero {
         noteGain.gain.linearRampToValueAtTime(0, now + 0.08);
         try { source.stop(now + 0.08); } catch (e) { /* already stopped */ }
         this.activeNoteSources.delete(note);
+        this._clearFxKeyFill(note);
     }
 
     setupAudioGraph() {
@@ -4742,6 +4810,7 @@ class PianoHero {
         if (note) {
             // Always update visual held state on release
             this.heldFallingNotes.delete(note);
+            this._clearFxKeyFill(note);
             if (this.sustainEnabled) {
                 this.sustainedNotes.add(note);
             } else {
@@ -5453,6 +5522,7 @@ class PianoHero {
             this._lastFxFrame = this._frameTime;
             this.pianoFx.update(delta || 1);
         }
+        this._cleanupFxKeyFills();
         
         if (scheduleNext) requestAnimationFrame(this._boundRender);
     }

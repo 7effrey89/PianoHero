@@ -59,6 +59,8 @@ class UnifiedPianoFX {
             splashColor: { value: [1.0, 1.0, 1.0], type: 'vec3<f32>' },
             glowSpread: { value: 0.0, type: 'f32' },
             keyGlowStrength: { value: 1.0, type: 'f32' },
+            keyGlowSat: { value: 0.7, type: 'f32' },
+            keyGlowVal: { value: 1.0, type: 'f32' },
         });
 
         this.uniforms = this.uniformGroup.uniforms;
@@ -312,6 +314,8 @@ uniform float glowStrength;
 uniform vec3 splashColor;
 uniform float glowSpread;
 uniform float keyGlowStrength;
+uniform float keyGlowSat;
+uniform float keyGlowVal;
 
 float splashField(vec2 uv, vec2 center, float age) {
     vec2 p = uv - center;
@@ -446,7 +450,8 @@ void main() {
     vec3 ribbonCol = hsv2rgb(vec3(ambilightHue, ribbonSat, ribbonVal)) * ribbonTerm;
     vec4 glowline = glowLine(uv, time);
     vec3 lineCol = glowline.rgb * min(glowlineStrength, 1.0);
-    vec3 ambient = splashColor * (splashTerm * splashStrength + glowTerm * glowStrength);
+    vec3 keyGlowCol = hsv2rgb(vec3(ambilightHue, keyGlowSat, keyGlowVal));
+    vec3 ambient = splashColor * (splashTerm * splashStrength) + keyGlowCol * (glowTerm * glowStrength);
     vec3 streamCol = noteStreamColor(uv) * streamStrength;
     vec3 outColor = ribbonCol + lineCol + ambient + streamCol;
     float energy = length(outColor);
@@ -944,6 +949,8 @@ class PianoFX {
             const h = palette.keyGlowHue != null ? palette.keyGlowHue : 200 / 360;
             const s = palette.keyGlowSat != null ? palette.keyGlowSat : 0.7;
             const v = palette.keyGlowVal != null ? palette.keyGlowVal : 1.0;
+            u.keyGlowSat = s;
+            u.keyGlowVal = v;
             this._keyGlowColor = this._hsvToRgb(h, s, v);
             u.splashColor[0] = this._keyGlowColor[0];
             u.splashColor[1] = this._keyGlowColor[1];
